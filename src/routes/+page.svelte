@@ -29,7 +29,6 @@
 		</a>
 		<a class="card" href="/history">
 			<h3>History</h3>
-			<p>Review completed sessions, edit notes/RPE, and copy plans to start again.</p>
 			<span>View history →</span>
 		</a>
 		<a class="card" href="/auth">

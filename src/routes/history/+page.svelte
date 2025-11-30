@@ -1437,7 +1437,6 @@
 <main class="page">
   <header>
     <h1>History</h1>
-    <p>Completed workouts saved from the summary modal.</p>
   </header>
 
   {#if loading}

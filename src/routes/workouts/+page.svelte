@@ -66,7 +66,6 @@
 <main class="page">
   <header>
     <h1>Workouts</h1>
-    <p>Browse templates and your saved workouts. Copy YAML or delete your own.</p>
   </header>
 
   {#if loading}
