@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  kb-suite:
+    build: .
+    ports:
+      - "4173:4173"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    volumes:
+      - kb_suite_data:/app/data
+
+volumes:
+  kb_suite_data:

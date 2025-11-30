@@ -52,12 +52,187 @@
   let templates: { id: string; name: string; description?: string; yaml_source?: string; plan_json?: any }[] = []
   let templateModalOpen = false
   let confirmDeleteId: string | null = null
+  let viewMode: 'list' | 'calendar' = 'list'
+  let calendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()
+  let selectedDateKey = ''
   let shareItem: CompletedWorkout | null = null
   let shareRoundCol = 120
   let shareShowReps = true
   let shareShowWork = true
   let shareShowSets = true
+  let shareShowDividers = true
+  let shareShowTagPills = true
+  let shareShowNoise = true
+  let shareColorCodeRests = true
+  let shareShowBadge = true
+  let shareShowHrBlock = true
+  let shareHighlightEnabled = false
+  let shareHighlights: Set<number> = new Set()
+  let shareHighlightsKey = ''
+  let sharePreviewRows: CompletedSet[] = []
+  let shareSelectableRows: { label: string; index: number }[] = []
+  let hrAttached: Record<string, boolean> = {}
+  let uploadTargetId: string | null = null
+  let uploadStatus: Record<string, string> = {}
+  let fileInputEl: HTMLInputElement | null = null
   let sharePreviewUrl = ''
+  let hrDetails: Record<string, { avgHr: number | null; maxHr: number | null; samples?: { t: number; hr: number }[] }> = {}
+  let hrSummary: Record<string, { avgHr: number | null; maxHr: number | null }> = {}
+  let filterHasHr = false
+  let sortBy: 'dateDesc' | 'dateAsc' | 'durationDesc' | 'durationAsc' | 'hrDesc' | 'rpeDesc' = 'dateDesc'
+  let expanded: Record<string, boolean> = {}
+  type HrSparkColors = { bg: string; border: string; line: string; avg: string; max: string }
+  const defaultSparkColors: HrSparkColors = {
+    bg: 'rgba(255,255,255,0.04)',
+    border: 'rgba(255,255,255,0.08)',
+    line: 'rgba(255,255,255,0.9)',
+    avg: 'rgba(255,255,255,0.35)',
+    max: 'rgba(255,170,120,0.9)'
+  }
+  let hrSparkColors: HrSparkColors = { ...defaultSparkColors }
+
+  const toRgba = (color: string, alpha = 1) => {
+    const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)))
+    if (color.startsWith('#')) {
+      const hex = color.slice(1)
+      const full =
+        hex.length === 3
+          ? hex
+              .split('')
+              .map((c) => c + c)
+              .join('')
+          : hex
+      const num = parseInt(full, 16)
+      const r = (num >> 16) & 255
+      const g = (num >> 8) & 255
+      const b = num & 255
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`
+    }
+    const m = color.match(/rgba?\(([^)]+)\)/)
+    if (m) {
+      const parts = m[1].split(',').map((p) => parseFloat(p.trim()))
+      const [r, g, b, a = 1] = parts
+      return `rgba(${clamp(r)}, ${clamp(g)}, ${clamp(b)}, ${Math.max(0, Math.min(1, a * alpha))})`
+    }
+    return color
+  }
+
+  const parseRgb = (color: string): { r: number; g: number; b: number } | null => {
+    if (color.startsWith('#')) {
+      const hex = color.slice(1)
+      const full = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex
+      const num = parseInt(full, 16)
+      return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 }
+    }
+    const m = color.match(/rgba?\(([^)]+)\)/)
+    if (m) {
+      const parts = m[1].split(',').map((p) => parseFloat(p.trim()))
+      const [r, g, b] = parts
+      return { r, g, b }
+    }
+    return null
+  }
+
+  const luminance = (rgb: { r: number; g: number; b: number } | null) => {
+    if (!rgb) return 0
+    const toLin = (c: number) => {
+      const v = c / 255
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+    }
+    return 0.2126 * toLin(rgb.r) + 0.7152 * toLin(rgb.g) + 0.0722 * toLin(rgb.b)
+  }
+
+  const getCssColor = (name: string, fallback: string) => {
+    if (typeof window === 'undefined') return fallback
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+    return v || fallback
+  }
+
+  const removeHrFile = async (id: string) => {
+    uploadStatus = { ...uploadStatus, [id]: 'Removing…' }
+    try {
+      const res = await fetch(`/api/completed-workouts/${id}/hr`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data?.ok) throw new Error(data?.error ?? 'Failed to remove')
+      const { [id]: _summary, ...restSummary } = hrSummary
+      const { [id]: _details, ...restDetails } = hrDetails
+      hrSummary = restSummary
+      hrDetails = restDetails
+      hrAttached = { ...hrAttached, [id]: false }
+      uploadStatus = { ...uploadStatus, [id]: 'Removed' }
+    } catch (err) {
+      uploadStatus = { ...uploadStatus, [id]: (err as any)?.message ?? 'Remove failed' }
+    } finally {
+      setTimeout(() => {
+        uploadStatus = { ...uploadStatus, [id]: '' }
+      }, 2000)
+    }
+  }
+
+  const toggleExpanded = (id: string, state?: boolean) => {
+    const next = { ...expanded, [id]: state ?? !expanded[id] }
+    expanded = next
+  }
+
+  const monthLabel = (ts: number) => {
+    const d = new Date(ts)
+    return d.toLocaleString(undefined, { month: 'long', year: 'numeric' })
+  }
+
+  const dayKey = (ts: number) => {
+    const d = new Date(ts)
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  const daysInMonth = (ts: number) => {
+    const d = new Date(ts)
+    const year = d.getFullYear()
+    const month = d.getMonth()
+    return new Date(year, month + 1, 0).getDate()
+  }
+
+  const startOfMonthWeekday = (ts: number) => {
+    const d = new Date(ts)
+    d.setDate(1)
+    const dow = d.getDay() // 0 = Sunday
+    return (dow + 6) % 7 // shift so Monday = 0
+  }
+
+  const moveMonth = (delta: number) => {
+    const d = new Date(calendarMonth)
+    d.setMonth(d.getMonth() + delta)
+    calendarMonth = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
+    selectedDateKey = ''
+  }
+
+  const dateMatchesMonth = (ts: number, monthTs: number) => {
+    const d = new Date(ts)
+    const m = new Date(monthTs)
+    return d.getFullYear() === m.getFullYear() && d.getMonth() === m.getMonth()
+  }
+
+  const selectDate = (key: string) => {
+    selectedDateKey = key
+  }
+
+  const computeHrSparkColors = () => {
+    const surface1 = getCssColor('--color-surface-1', '#0c1220')
+    const textPrimary = getCssColor('--color-text-primary', '#f8fbff')
+    const textMuted = getCssColor('--color-text-muted', 'rgba(255,255,255,0.7)')
+    const accent = getCssColor('--color-accent', '#4dabf7')
+    const isLightTheme = luminance(parseRgb(surface1)) > 0.5
+    hrSparkColors = {
+      bg: isLightTheme ? 'rgba(0,0,0,0.02)' : toRgba(textPrimary, 0.02),
+      border: isLightTheme ? 'rgba(0,0,0,0.1)' : toRgba(textPrimary, 0.08),
+      line: isLightTheme ? 'rgba(0,0,0,0.75)' : toRgba(textPrimary, 0.9),
+      avg: isLightTheme ? 'rgba(0,0,0,0.35)' : toRgba(textMuted, 0.35),
+      max: toRgba(accent, 0.9)
+    }
+  }
+  computeHrSparkColors()
 
   const loadHistory = async () => {
     loading = true
@@ -88,11 +263,75 @@
             .filter(Boolean)
         )
       ).slice(0, 30)
+      // probe hr
+      items.forEach((it) => checkHrStatus(it.id))
     } catch (err) {
       const message = (err as any)?.message ?? 'Failed to load history'
       error = message
     } finally {
       loading = false
+    }
+  }
+
+  const checkHrStatus = async (id: string) => {
+    try {
+      const res = await fetch(`/api/completed-workouts/${id}/hr?details=1`)
+      const data = await res.json().catch(() => ({}))
+      hrAttached = { ...hrAttached, [id]: !!data?.attached }
+      if (data?.summary) {
+        hrSummary = {
+          ...hrSummary,
+          [id]: {
+            avgHr: data.summary.avgHr ?? null,
+            maxHr: data.summary.maxHr ?? null
+          }
+        }
+        if (data.summary.samples) {
+          hrDetails = {
+            ...hrDetails,
+            [id]: { avgHr: data.summary.avgHr ?? null, maxHr: data.summary.maxHr ?? null, samples: data.summary.samples }
+          }
+        }
+        if (data.summary.samples) {
+          hrDetails = {
+            ...hrDetails,
+            [id]: {
+              avgHr: data.summary.avgHr ?? null,
+              maxHr: data.summary.maxHr ?? null,
+              samples: data.summary.samples ?? []
+            }
+          }
+        }
+      }
+    } catch {
+      hrAttached = { ...hrAttached, [id]: false }
+    }
+  }
+
+  const loadHrDetails = async (id: string) => {
+    try {
+      const res = await fetch(`/api/completed-workouts/${id}/hr?details=1`)
+      const data = await res.json().catch(() => ({}))
+      if (data?.summary) {
+        hrSummary = {
+          ...hrSummary,
+          [id]: {
+            avgHr: data.summary.avgHr ?? null,
+            maxHr: data.summary.maxHr ?? null
+          }
+        }
+        hrDetails = {
+          ...hrDetails,
+          [id]: {
+            avgHr: data.summary.avgHr ?? null,
+            maxHr: data.summary.maxHr ?? null,
+            samples: data.summary.samples ?? []
+          }
+        }
+        hrAttached = { ...hrAttached, [id]: !!data.attached }
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -144,7 +383,46 @@
     }
   }
 
-  $: visibleItems = items.filter((item) => matchesFilters(item, searchTerm, dateFilter))
+  $: visibleItems = (() => {
+    const list = items
+      .filter((item) => matchesFilters(item, searchTerm, dateFilter))
+      .filter((item) => !filterHasHr || !!hrAttached[item.id] || !!hrSummary[item.id])
+    const keyTs = (it: CompletedWorkout) => it.started_at ?? it.created_at ?? 0
+    const keyDuration = (it: CompletedWorkout) => Number(it.duration_s) || 0
+    const keyHr = (it: CompletedWorkout) => hrSummary[it.id]?.avgHr ?? -Infinity
+    const keyRpe = (it: CompletedWorkout) => Number(it.rpe) || -Infinity
+    list.sort((a, b) => {
+      if (sortBy === 'durationDesc') return keyDuration(b) - keyDuration(a)
+      if (sortBy === 'durationAsc') return keyDuration(a) - keyDuration(b)
+      if (sortBy === 'hrDesc') return keyHr(b) - keyHr(a)
+      if (sortBy === 'rpeDesc') return keyRpe(b) - keyRpe(a)
+      if (sortBy === 'dateAsc') return keyTs(a) - keyTs(b)
+      return keyTs(b) - keyTs(a)
+    })
+    // reference hrSummary/hrAttached so reactive responds to changes
+    hrSummary && hrAttached
+    return list
+  })()
+
+  $: monthItems = visibleItems.filter((item) => {
+    const ts = item.started_at ?? item.created_at
+    if (!ts) return false
+    return dateMatchesMonth(ts, calendarMonth)
+  })
+
+  $: dailyBuckets = (() => {
+    const buckets: Record<string, CompletedWorkout[]> = {}
+    monthItems.forEach((item) => {
+      const ts = item.started_at ?? item.created_at
+      if (!ts) return
+      const key = dayKey(ts)
+      buckets[key] = buckets[key] ? [...buckets[key], item] : [item]
+    })
+    return buckets
+  })()
+
+  $: selectedDayItems =
+    selectedDateKey && dailyBuckets[selectedDateKey] ? dailyBuckets[selectedDateKey] : []
   $: availableTags = Array.from(
     new Set(
       items
@@ -577,7 +855,20 @@
 
   const saveShareCard = async (
     item: CompletedWorkout,
-    opts?: { showReps?: boolean; showWork?: boolean; showSets?: boolean; previewEl?: HTMLImageElement }
+    opts?: {
+      showReps?: boolean
+      showWork?: boolean
+      showSets?: boolean
+      showDividers?: boolean
+      showTagPills?: boolean
+      showNoise?: boolean
+      colorCodeRests?: boolean
+      showBadge?: boolean
+      showHrBlock?: boolean
+      hrData?: { avgHr?: number | null; maxHr?: number | null; samples?: { t: number; hr: number }[] }
+      highlights?: Set<number>
+      previewEl?: HTMLImageElement
+    }
   ) => {
     if (!browser) return
     const { totalReps, totalWorkSeconds, totalSets } = computeTotals(item)
@@ -588,20 +879,24 @@
     const rowsForHeight = Math.min(sets.length || 1, maxRows)
     const width = 1200
     const pad = 60
+    const dividerGap = opts?.showDividers === false ? 0 : 18
+    let dividerCount = 0
+    if (opts?.showDividers ?? true) {
+      let prevRound: string | null = null
+      for (const s of sets.slice(0, rowsForHeight)) {
+        const curr = s.round_label ?? ''
+        if (curr && prevRound && curr !== prevRound) dividerCount += 1
+        if (curr) prevRound = curr
+      }
+    }
     const headerBlock = 360 // title + stats + spacing before rows
-    const contentHeight = headerBlock + rowsForHeight * rowHeight + 80
-    const height = Math.max(750, pad + contentHeight + pad)
+    const rowsHeight = rowsForHeight * rowHeight + dividerCount * dividerGap + 80
+    const height = Math.max(750, pad + headerBlock + rowsHeight + pad)
     const canvas = document.createElement('canvas')
     canvas.width = width
     canvas.height = height
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-
-    const getCssColor = (name: string, fallback: string) => {
-      if (typeof window === 'undefined') return fallback
-      const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-      return v || fallback
-    }
 
     const surface1 = getCssColor('--color-surface-1', '#0c1220')
     const surface2 = getCssColor('--color-surface-2', '#0d2038')
@@ -609,6 +904,7 @@
     const textPrimary = getCssColor('--color-text-primary', '#f8fbff')
     const textMuted = getCssColor('--color-text-muted', 'rgba(255,255,255,0.7)')
     const accent = getCssColor('--color-accent', '#4dabf7')
+    const isLightTheme = luminance(parseRgb(surface1)) > 0.5
 
     // Background gradient
     const gradient = ctx.createLinearGradient(0, 0, width, height)
@@ -638,6 +934,17 @@
     ctx.closePath()
     ctx.fill()
     ctx.stroke()
+
+    // HR helpers (used for tags positioning and block)
+    const hrSamplesPreview = opts?.hrData?.samples ?? []
+    const hrActive =
+      (opts?.showHrBlock ?? true) &&
+      opts?.hrData &&
+      (opts.hrData.avgHr || opts.hrData.maxHr || hrSamplesPreview.length)
+    const hrPanelW = 360
+    const hrPanelH = 170
+    const hrPanelX = pad + cardWidth - hrPanelW - 20
+    const hrPanelY = pad + 115
 
     // Text helpers
     const title = item.title ?? 'Workout'
@@ -683,21 +990,121 @@
     // Tags
     if (tags.length) {
       ctx.font = '20px "Inter", system-ui, -apple-system, sans-serif'
-      ctx.fillStyle = 'rgba(255,255,255,0.8)'
-      ctx.fillText('Tags:', pad + 36, pillY + 70)
-      let tagX = pad + 110
-      tags.forEach((t) => {
-        const txt = `#${t}`
+      const label = 'Tags:'
+      const labelW = ctx.measureText(label).width + 10
+      let tagY = hrActive ? hrPanelY + hrPanelH + 16 : pillY + 20
+      let tagX = hrActive ? hrPanelX + hrPanelW - 20 : pad + cardWidth - 52 // avoid overlapping HR card
+      // place from right to left
+      for (let i = tags.length - 1; i >= 0; i--) {
+        const txt = `#${tags[i]}`
         const w = ctx.measureText(txt).width + 26
-      ctx.fillStyle = 'rgba(255,255,255,0.08)'
-      ctx.beginPath()
-      ctx.roundRect(tagX, pillY + 44, w, 34, 12)
-      ctx.fill()
-      ctx.fillStyle = textPrimary
-      ctx.fillText(txt, tagX + 12, pillY + 68)
-      tagX += w + 10
-    })
-  }
+        tagX -= w
+        if (opts?.showTagPills ?? true) {
+          ctx.fillStyle = 'rgba(255,255,255,0.1)'
+          ctx.strokeStyle = 'rgba(255,255,255,0.2)'
+          ctx.beginPath()
+          ctx.roundRect(tagX, tagY, w, 34, 12)
+          ctx.fill()
+          ctx.stroke()
+          ctx.fillStyle = textPrimary
+          ctx.fillText(txt, tagX + 12, tagY + 24)
+        } else {
+          ctx.fillStyle = textPrimary
+          ctx.fillText(txt, tagX, tagY + 24)
+        }
+        tagX -= 8
+      }
+      // label to the left of pills
+      tagX -= labelW
+      ctx.fillStyle = 'rgba(255,255,255,0.8)'
+      ctx.fillText(label, tagX, tagY + 24)
+    }
+
+    // HR block (top right)
+    if (hrActive && opts?.hrData) {
+      const hrSamples = opts.hrData.samples ?? []
+      if (opts.hrData.avgHr || opts.hrData.maxHr || hrSamples.length) {
+        const panelBg = isLightTheme ? 'rgba(0,0,0,0.03)' : toRgba(textPrimary, 0.05)
+        const panelBorder = isLightTheme ? 'rgba(0,0,0,0.14)' : toRgba(textPrimary, 0.12)
+        const plotBg = isLightTheme ? 'rgba(0,0,0,0.02)' : toRgba(textPrimary, 0.02)
+        const plotBorder = isLightTheme ? 'rgba(0,0,0,0.1)' : toRgba(textPrimary, 0.08)
+        const avgLineColor = isLightTheme ? 'rgba(0,0,0,0.35)' : toRgba(textMuted, 0.35)
+        const lineColor = isLightTheme ? 'rgba(0,0,0,0.75)' : toRgba(textPrimary, 0.9)
+        const maxDotColor = toRgba(accent, 0.9)
+
+        ctx.fillStyle = panelBg
+        ctx.strokeStyle = panelBorder
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.roundRect(hrPanelX, hrPanelY, hrPanelW, hrPanelH, 14)
+        ctx.fill()
+        ctx.stroke()
+        // header stats
+        ctx.font = '18px "Inter", system-ui, -apple-system, sans-serif'
+        ctx.fillStyle = textMuted
+        ctx.fillText('HR', hrPanelX + 12, hrPanelY + 24)
+        ctx.textAlign = 'right'
+        ctx.fillText(
+          `${opts.hrData.avgHr ? `Avg ${opts.hrData.avgHr} bpm` : ''}${
+            opts.hrData.maxHr ? `  Max ${opts.hrData.maxHr} bpm` : ''
+          }`,
+          hrPanelX + hrPanelW - 12,
+          hrPanelY + 24
+        )
+        ctx.textAlign = 'left'
+        // plot area
+        const plotX = hrPanelX + 12
+        const plotY = hrPanelY + 36
+        const plotW = hrPanelW - 24
+        const plotH = hrPanelH - 48
+        ctx.fillStyle = plotBg
+        ctx.strokeStyle = plotBorder
+        ctx.beginPath()
+        ctx.roundRect(plotX, plotY, plotW, plotH, 12)
+        ctx.fill()
+        ctx.stroke()
+        if (hrSamples.length) {
+          const maxT = Math.max(...hrSamples.map((p) => p.t), 1)
+          const minHrRaw = Math.min(...hrSamples.map((p) => p.hr))
+          const maxHrRaw = Math.max(...hrSamples.map((p) => p.hr))
+          const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))
+          const minHr = minHrRaw - padding
+          const maxHr = maxHrRaw + padding
+          const avgLine = opts.hrData.avgHr ?? null
+          const maxPoint = hrSamples.reduce((acc, p) => (p.hr > acc.hr ? p : acc), hrSamples[0])
+          // avg line
+          if (avgLine) {
+            const y =
+              plotY + plotH - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * plotH
+            ctx.strokeStyle = avgLineColor
+            ctx.setLineDash([4, 4])
+            ctx.beginPath()
+            ctx.moveTo(plotX, y)
+            ctx.lineTo(plotX + plotW, y)
+            ctx.stroke()
+            ctx.setLineDash([])
+          }
+          // polyline
+          ctx.strokeStyle = lineColor
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          hrSamples.forEach((p, idx) => {
+            const x = plotX + (p.t / maxT) * plotW
+            const y = plotY + plotH - ((p.hr - minHr) / Math.max(1, maxHr - minHr)) * plotH
+            if (idx === 0) ctx.moveTo(x, y)
+            else ctx.lineTo(x, y)
+          })
+          ctx.stroke()
+          // max point
+          const mx = plotX + (maxPoint.t / maxT) * plotW
+          const my = plotY + plotH - ((maxPoint.hr - minHr) / Math.max(1, maxHr - minHr)) * plotH
+          ctx.fillStyle = maxDotColor
+          ctx.beginPath()
+          ctx.arc(mx, my, 4.5, 0, Math.PI * 2)
+          ctx.fill()
+        }
+      }
+    }
 
     // Column measurements for rows
     ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
@@ -722,23 +1129,52 @@
     const rows = sets.slice(0, maxRows)
     ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
     ctx.textBaseline = 'middle'
+    let lastRound = ''
+    let yCursor = listY + 38
     rows.forEach((s, i) => {
-      const rowTop = listY + 38 + i * rowHeight
-      const rowCenter = rowTop + rowHeight / 2
       const isRest = s.type && s.type !== 'work'
-      const label = isRest ? 'Rest' : s.set_label ?? s.round_label ?? `Set ${i + 1}`
       const roundLabel = !isRest ? s.round_label ?? '' : ''
+      if ((opts?.showDividers ?? true) && roundLabel && lastRound && roundLabel !== lastRound) {
+        yCursor += dividerGap
+        const lineWidth = 5
+        const lineRadius = 8
+        const dividerWidth = (endX - startX) * 0.7
+        const x = startX + (endX - startX - dividerWidth) / 2
+        const y = yCursor - dividerGap / 2 - lineWidth / 2
+        ctx.fillStyle = 'rgba(255,255,255,0.16)'
+        const w = dividerWidth
+        const h = lineWidth
+        ctx.beginPath()
+        ctx.moveTo(x + lineRadius, y)
+        ctx.lineTo(x + w - lineRadius, y)
+        ctx.quadraticCurveTo(x + w, y, x + w, y + lineRadius)
+        ctx.lineTo(x + w, y + h - lineRadius)
+        ctx.quadraticCurveTo(x + w, y + h, x + w - lineRadius, y + h)
+        ctx.lineTo(x + lineRadius, y + h)
+        ctx.quadraticCurveTo(x, y + h, x, y + h - lineRadius)
+        ctx.lineTo(x, y + lineRadius)
+        ctx.quadraticCurveTo(x, y, x + lineRadius, y)
+        ctx.closePath()
+        ctx.fill()
+      }
+      const rowTop = yCursor
+      const rowCenter = rowTop + rowHeight / 2
+      const label = isRest ? 'Rest' : s.set_label ?? s.round_label ?? `Set ${i + 1}`
       const duration = s.duration_s ? formatShort(s.duration_s) : ''
       const reps =
         !isRest && s.reps !== null && s.reps !== undefined ? `${s.reps} reps` : ''
       const weight =
         !isRest && s.weight !== null && s.weight !== undefined ? `@ ${s.weight}` : ''
       const rpe = !isRest && s.rpe !== null && s.rpe !== undefined ? `RPE ${s.rpe}` : ''
+      const isHighlighted = opts?.highlights ? opts.highlights.has(i) : false
+      lastRound = roundLabel || lastRound
 
       // row background
       const inset = 20
-      ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.07)'
-      ctx.fillRect(startX - inset, rowTop + 4 , endX - startX + inset * 2, rowHeight - 10)
+      const restBg = opts?.colorCodeRests ?? true ? 'rgba(255, 170, 120, 0.12)' : 'rgba(255,255,255,0.07)'
+      const workBg = i % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.07)'
+      ctx.fillStyle = isHighlighted ? 'rgba(255,255,255,0.12)' : isRest ? restBg : workBg
+      ctx.fillRect(startX - inset, rowTop + 4, endX - startX + inset * 2, rowHeight - 10)
 
       // Round
       ctx.font = '23px "Inter", system-ui, -apple-system, sans-serif'
@@ -779,8 +1215,46 @@
       drawMetric(reps ?? '', repsCol)
       drawMetric(duration ?? '', durationCol)
       ctx.textAlign = 'left'
+      yCursor += rowHeight
     })
     ctx.textBaseline = 'alphabetic'
+
+    // Noise overlay
+    if (opts?.showNoise ?? true) {
+      const noiseDensity = 0.05
+      const particles = Math.floor(width * height * 0.00004)
+      ctx.fillStyle = 'rgba(255,255,255,' + noiseDensity + ')'
+      for (let i = 0; i < particles; i++) {
+        const x = Math.random() * width
+        const y = Math.random() * height
+        ctx.fillRect(x, y, 1, 1)
+      }
+    }
+
+    // Footer badge
+    if (opts?.showBadge ?? true) {
+      ctx.font = '16px "Inter", system-ui, -apple-system, sans-serif'
+      const badge = 'Logged with KB Suite'
+      const textW = ctx.measureText(badge).width
+      const w = textW + 22
+      const h = 30
+      const margin = 20
+      const x = pad + cardWidth - w - margin
+      const y = pad + cardHeight - h - margin
+      ctx.fillStyle = 'rgba(255,255,255,0.08)'
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.roundRect(x, y, w, h, 10)
+      ctx.fill()
+      ctx.stroke()
+      ctx.fillStyle = 'rgba(255,255,255,0.9)'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(badge, x + w / 2, y + h / 2 + 1)
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'alphabetic'
+    }
 
     const dataUrl = canvas.toDataURL('image/png')
 
@@ -897,27 +1371,66 @@
   onMount(async () => {
     await loadTemplates()
   })
+  onMount(() => {
+    computeHrSparkColors()
+    if (!browser) return
+    const observer = new MutationObserver(() => computeHrSparkColors())
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => observer.disconnect()
+  })
+
+  const refreshSharePreview = async () => {
+    if (!browser || !shareItem) return
+    // Build rows exactly as the renderer uses (filtered/merged)
+    const filtered = (shareItem.sets ?? []).filter((s) => (s.type ?? '').toLowerCase() !== 'prep')
+    const merged = mergeRests(filtered)
+    sharePreviewRows = merged
+    const selectable = merged
+      .map((s, idx) => ({ s, idx }))
+      .filter(({ s }) => !s.type || s.type === 'work')
+      .map(({ s, idx }) => ({
+        label: s.set_label ?? s.round_label ?? `Set ${idx + 1}`,
+        index: idx
+      }))
+    shareSelectableRows = selectable
+    // prune highlights to valid indices
+    const valid = new Set(selectable.map((r) => r.index))
+    shareHighlights = new Set([...shareHighlights].filter((i) => valid.has(i)))
+    const img = new Image()
+    const hrData = hrDetails[shareItem.id] ?? hrSummary[shareItem.id]
+    await saveShareCard(shareItem, {
+      showReps: shareShowReps,
+      showWork: shareShowWork,
+      showSets: shareShowSets,
+      showDividers: shareShowDividers,
+      showTagPills: shareShowTagPills,
+      showNoise: shareShowNoise,
+      colorCodeRests: shareColorCodeRests,
+      showBadge: shareShowBadge,
+      showHrBlock: shareShowHrBlock,
+      hrData,
+      highlights: shareHighlightEnabled ? shareHighlights : new Set(),
+      previewEl: img
+    })
+    sharePreviewUrl = img.src
+  }
+
+  $: shareHighlightsKey = JSON.stringify([...shareHighlights])
 
   $: if (shareItem) {
     const longest =
       shareItem.sets?.reduce((max, s) => Math.max(max, (s.round_label ?? '').length), 0) ?? 0
     shareRoundCol = Math.max(80, Math.min(180, longest * 8 + 16))
-    // Refresh preview when share modal opens or toggles change
-    if (browser) {
-      setTimeout(async () => {
-        if (shareItem) {
-          // Generate a temporary image element
-          const img = new Image()
-          await saveShareCard(shareItem, {
-            showReps: shareShowReps,
-            showWork: shareShowWork,
-            showSets: shareShowSets,
-            previewEl: img
-          })
-          sharePreviewUrl = img.src
-        }
-      }, 0)
-    }
+    // react to toggles as well
+    shareShowReps && shareShowWork && shareShowSets // no-op to create dependencies
+    shareShowDividers &&
+      shareShowTagPills &&
+      shareShowNoise &&
+      shareColorCodeRests &&
+      shareShowBadge &&
+      shareShowHrBlock
+    shareHighlightEnabled && shareHighlightsKey
+    refreshSharePreview()
   }
 </script>
 
@@ -948,6 +1461,18 @@
           <option value="7">Past 7 days</option>
           <option value="30">Past 30 days</option>
         </select>
+        <select bind:value={sortBy} class="compact">
+          <option value="dateDesc">Newest first</option>
+          <option value="dateAsc">Oldest first</option>
+          <option value="durationDesc">Longest duration</option>
+          <option value="durationAsc">Shortest duration</option>
+          <option value="hrDesc">Highest avg HR</option>
+          <option value="rpeDesc">Highest RPE</option>
+        </select>
+        <label class="inline-filter">
+          <input type="checkbox" bind:checked={filterHasHr} />
+          Has HR
+        </label>
         {#if availableTags.length}
           <div class="tag-filter">
             {#each availableTags as tag}
@@ -962,20 +1487,270 @@
             {/each}
           </div>
         {/if}
+        <div class="view-toggle">
+          <button class:active={viewMode === 'list'} on:click={() => (viewMode = 'list')}>List</button>
+          <button class:active={viewMode === 'calendar'} on:click={() => (viewMode = 'calendar')}>
+            Calendar
+          </button>
+        </div>
       </div>
       {#if newWorkoutStatus}
         <span class="status">{newWorkoutStatus}</span>
       {/if}
     </div>
 
-    {#if visibleItems.length === 0}
+    {#if viewMode === 'calendar'}
+      <section class="calendar-shell">
+        <div class="calendar-head">
+          <div class="month-nav">
+            <button class="ghost" on:click={() => moveMonth(-1)}>←</button>
+            <strong>{monthLabel(calendarMonth)}</strong>
+            <button class="ghost" on:click={() => moveMonth(1)}>→</button>
+          </div>
+          <p class="muted small">
+            Showing {monthItems.length} session{monthItems.length === 1 ? '' : 's'} in this month (filters applied).
+          </p>
+        </div>
+        <div class="calendar-grid">
+          <div class="dow">Mon</div>
+          <div class="dow">Tue</div>
+          <div class="dow">Wed</div>
+          <div class="dow">Thu</div>
+          <div class="dow">Fri</div>
+          <div class="dow">Sat</div>
+          <div class="dow">Sun</div>
+          {#each Array(startOfMonthWeekday(calendarMonth)).fill(0) as _}
+            <div class="day empty"></div>
+          {/each}
+          {#each Array(daysInMonth(calendarMonth)).fill(0).map((_, i) => i + 1) as day}
+            {@const key = dayKey(new Date(new Date(calendarMonth).getFullYear(), new Date(calendarMonth).getMonth(), day).getTime())}
+            {@const itemsForDay = dailyBuckets[key] ?? []}
+            <button
+              type="button"
+              class="day"
+              class:active={selectedDateKey === key}
+              on:click={() => selectDate(key)}
+              aria-pressed={selectedDateKey === key}
+            >
+              <div class="day-top">
+                <span class="day-num">{day}</span>
+                {#if itemsForDay.length}
+                  <span class="day-count">{itemsForDay.length}</span>
+                {/if}
+              </div>
+              {#if itemsForDay.length}
+                <div class="day-list">
+                  {#each itemsForDay as it}
+                    {@const dur = it.duration_s || 0}
+                    {@const hrTag = hrAttached[it.id] || hrSummary[it.id]}
+                    <div class="day-row" title={`${it.title || 'Workout'}${dur ? ` · ${formatShort(dur)}` : ''}${hrTag ? ' · HR attached' : ''}`}>
+                      <span class="dot" style={`opacity:${Math.min(1, dur / 3600 + 0.3)}`}></span>
+                      <div class="day-row-body">
+                        <span class="day-row-title">{it.title || 'Workout'}</span>
+                        <div class="day-row-meta">
+                          <span class="day-row-badge">{dur ? formatShort(dur) : '-'}</span>
+                          {#if hrTag}<span class="day-row-hr">HR</span>{/if}
+                        </div>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      </section>
+      <div class="calendar-detail">
+        {#if selectedDayItems.length === 0}
+          <p class="muted small">Select a day to view sessions.</p>
+        {:else}
+          <h4>
+            {selectedDateKey}
+            <span class="muted small">({selectedDayItems.length} session{selectedDayItems.length === 1 ? '' : 's'})</span>
+          </h4>
+          <div class="list compact-list">
+            {#each selectedDayItems as item}
+            {@const totals = computeTotals(item)}
+            {@const isExpanded = editingId === item.id || expanded[item.id]}
+            <article class="card">
+              <div class="card-header two-col">
+                <div class="header-left">
+                  <h3>{item.title || 'Workout'}</h3>
+                  <div class="meta-row">
+                    <span class="muted small">{formatDate(item.started_at || item.created_at)}</span>
+                    {#if item.duration_s}
+                      <span class="badge subtle">{formatDuration(item.duration_s)}</span>
+                    {/if}
+                  </div>
+                  {#if item.tags?.length}
+                    <div class="tag-row inline">
+                      {#each item.tags as tag}
+                        <span class="tag-chip selected">{tag}</span>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+                <div class="header-right">
+                  <div class="summary-chips">
+                    <span class="chip">{totals.totalSets || '-'} sets</span>
+                    <span class="chip">{totals.totalReps || '-'} reps</span>
+                    <span class="chip">{formatShort(totals.totalWorkSeconds) || '-'} work</span>
+                    {#if item.rpe}<span class="chip">RPE {item.rpe}</span>{/if}
+                    {#if hrSummary[item.id]}
+                      <span class="chip hr">
+                        HR {hrSummary[item.id].avgHr ?? '-'} / {hrSummary[item.id].maxHr ?? '-'}
+                      </span>
+                    {/if}
+                  </div>
+                  {#if hrSummary[item.id]}
+                    <div class="hr-card">
+                      <div class="hr-card-top">
+                        <span class="muted small">HR</span>
+                        <div class="hr-stats">
+                          {#if hrSummary[item.id].avgHr}<span>Avg {hrSummary[item.id].avgHr} bpm</span>{/if}
+                          {#if hrSummary[item.id].maxHr}<span>Max {hrSummary[item.id].maxHr} bpm</span>{/if}
+                        </div>
+                      </div>
+                      {#if hrDetails[item.id]?.samples && hrDetails[item.id]?.samples?.length}
+                        {#key hrDetails[item.id]?.samples}
+                          {@const s = hrDetails[item.id]?.samples ?? []}
+                          {@const maxT = Math.max(...s.map((p) => p.t), 1)}
+                          {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
+                          {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
+                          {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
+                          {@const minHr = minHrRaw - padding}
+                          {@const maxHr = maxHrRaw + padding}
+                          {@const avgLine = hrSummary[item.id].avgHr ?? null}
+                          {@const maxPoint = s.reduce((acc, p) => (p.hr > acc.hr ? p : acc), s[0] ?? { t: 0, hr: 0 })}
+                          <svg
+                            class="hr-spark"
+                            viewBox="0 0 320 120"
+                            preserveAspectRatio="none"
+                            style:--hr-spark-bg={hrSparkColors.bg}
+                            style:--hr-spark-border={hrSparkColors.border}
+                            style:--hr-spark-line={hrSparkColors.line}
+                            style:--hr-spark-avg={hrSparkColors.avg}
+                            style:--hr-spark-max={hrSparkColors.max}
+                          >
+                            {#if avgLine}
+                              <line
+                                class="avg-line"
+                                x1="0"
+                                x2="320"
+                                y1={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                                y2={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                                stroke-dasharray="4 4"
+                                stroke-width="1.25"
+                              />
+                            {/if}
+                            <polyline
+                              class="hr-line"
+                              fill="none"
+                              stroke-width="2"
+                              points={s
+                                .map((p) => {
+                                  const x = (p.t / maxT) * 320
+                                  const y = 120 - ((p.hr - minHr) / Math.max(1, maxHr - minHr)) * 120
+                                  return `${x},${y}`
+                                })
+                                .join(' ')}
+                            />
+                            {#if s.length}
+                              <circle
+                                class="hr-max"
+                                cx={(maxPoint.t / maxT) * 320}
+                                cy={120 - ((maxPoint.hr - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                                r="5"
+                              />
+                            {/if}
+                          </svg>
+                      {/key}
+                      {/if}
+                    </div>
+                  {:else}
+                    <div class="hr-card placeholder" aria-hidden="true">
+                      <div class="hr-card-top">
+                        <span class="muted small">HR</span>
+                        <div class="hr-stats"></div>
+                      </div>
+                      <div class="hr-spark"></div>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+              <div class="summary-actions">
+                <button class="ghost small" on:click={() => toggleExpanded(item.id, !isExpanded)}>
+                  {isExpanded ? 'Collapse' : 'Expand'}
+                </button>
+                <button class="ghost small" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
+                <button class="ghost small" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
+                <button class="ghost small" on:click={() => duplicateLog(item)}>Log again</button>
+              </div>
+              {#if isExpanded}
+                <div class="sets">
+                  {#each item.sets as set, idx}
+                    {@const isRest = set.type && set.type !== 'work'}
+                    <div class="set-row view-row" class:rest-row={isRest}>
+                      {#if isRest}
+                        <span class="muted small rest-label">
+                          Rest {set.duration_s ? `(${formatDuration(set.duration_s)})` : ''}
+                        </span>
+                      {:else}
+                        <span class="muted small">{set.round_label ?? 'Round'}</span>
+                        <strong>{set.set_label ?? `Set ${idx + 1}`}</strong>
+                        <span class="muted small">
+                          {set.duration_s ? formatDuration(set.duration_s) : ''}
+                        </span>
+                        <span>{set.reps ?? '-'}</span>
+                        {#if set.weight}
+                          <span class="muted small">@ {set.weight}</span>
+                        {:else}
+                          <span></span>
+                        {/if}
+                        {#if set.rpe}
+                          <span class="muted small">RPE {set.rpe}</span>
+                        {:else}
+                          <span></span>
+                        {/if}
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+                <div class="actions">
+                  <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
+                  <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
+                  <button class="ghost" on:click={() => {
+                    uploadTargetId = item.id
+                    if (fileInputEl) fileInputEl.click()
+                  }}>
+                    {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
+                  </button>
+                  {#if hrAttached[item.id] || hrSummary[item.id]}
+                    <button class="ghost danger" on:click={() => removeHrFile(item.id)}>Remove HR file</button>
+                  {/if}
+                  <button class="danger" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
+                </div>
+                {#if uploadStatus[item.id]}
+                  <p class="muted small">{uploadStatus[item.id]}</p>
+                {:else if hrAttached[item.id]}
+                  <p class="muted small">HR file attached</p>
+                {/if}
+              {/if}
+            </article>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else if visibleItems.length === 0}
       <p class="muted">No matching workouts.</p>
     {:else}
       <div class="list">
         {#each visibleItems as item}
+        {@const totals = computeTotals(item)}
+        {@const isExpanded = editingId === item.id || expanded[item.id]}
         <article class="card">
-          <div class="card-header">
-            <div>
+          <div class="card-header two-col">
+            <div class="header-left">
               {#if editingId === item.id}
                 <input
                   class="title-input"
@@ -984,12 +1759,102 @@
                 />
               {:else}
                 <h3>{item.title || 'Workout'}</h3>
-                <p class="muted small">{formatDate(item.started_at || item.created_at)}</p>
+              {/if}
+              <div class="meta-row">
+                <span class="muted small">{formatDate(item.started_at || item.created_at)}</span>
+                {#if item.duration_s}
+                  <span class="badge subtle">{formatDuration(item.duration_s)}</span>
+                {/if}
+              </div>
+              {#if item.tags?.length}
+                <div class="tag-row inline">
+                  {#each item.tags as tag}
+                    <span class="tag-chip selected">{tag}</span>
+                  {/each}
+                </div>
               {/if}
             </div>
-            {#if item.duration_s}
-              <span class="badge">{formatDuration(item.duration_s)}</span>
-            {/if}
+            <div class="header-right">
+              <div class="summary-chips">
+                <span class="chip">{totals.totalSets || '-'} sets</span>
+                <span class="chip">{totals.totalReps || '-'} reps</span>
+                <span class="chip">{formatShort(totals.totalWorkSeconds) || '-'} work</span>
+                {#if item.rpe}<span class="chip">RPE {item.rpe}</span>{/if}
+                {#if hrSummary[item.id]}
+                  <span class="chip hr">
+                    HR {hrSummary[item.id].avgHr ?? '-'} / {hrSummary[item.id].maxHr ?? '-'}
+                  </span>
+                {/if}
+              </div>
+              {#if hrSummary[item.id]}
+                <div class="hr-card">
+                  <div class="hr-card-top">
+                    <span class="muted small">HR</span>
+                    <div class="hr-stats">
+                      {#if hrSummary[item.id].avgHr}<span>Avg {hrSummary[item.id].avgHr} bpm</span>{/if}
+                      {#if hrSummary[item.id].maxHr}<span>Max {hrSummary[item.id].maxHr} bpm</span>{/if}
+                    </div>
+                  </div>
+                  {#if hrDetails[item.id]?.samples && hrDetails[item.id]?.samples?.length}
+                    {#key hrDetails[item.id]?.samples}
+                      {@const s = hrDetails[item.id]?.samples ?? []}
+                      {@const maxT = Math.max(...s.map((p) => p.t), 1)}
+                      {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
+                      {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
+                      {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
+                      {@const minHr = minHrRaw - padding}
+                      {@const maxHr = maxHrRaw + padding}
+                      {@const avgLine = hrSummary[item.id].avgHr ?? null}
+                      {@const maxPoint = s.reduce((acc, p) => (p.hr > acc.hr ? p : acc), s[0] ?? { t: 0, hr: 0 })}
+                      <svg
+                        class="hr-spark"
+                        viewBox="0 0 320 120"
+                        preserveAspectRatio="none"
+                        style:--hr-spark-bg={hrSparkColors.bg}
+                        style:--hr-spark-border={hrSparkColors.border}
+                        style:--hr-spark-line={hrSparkColors.line}
+                        style:--hr-spark-avg={hrSparkColors.avg}
+                        style:--hr-spark-max={hrSparkColors.max}
+                      >
+                        {#if avgLine}
+                          <line
+                            class="avg-line"
+                            x1="0"
+                            x2="320"
+                            y1={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                            y2={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                            stroke-dasharray="4 4"
+                            stroke-width="1.25"
+                          />
+                        {/if}
+                        <polyline
+                          class="hr-line"
+                          fill="none"
+                          stroke-width="2"
+                          points={s
+                            .map((p) => {
+                              const x = (p.t / maxT) * 320
+                              const y = 120 - ((p.hr - minHr) / Math.max(1, maxHr - minHr)) * 120
+                              return `${x},${y}`
+                            })
+                            .join(' ')}
+                        />
+                        {#if s.length}
+                          <circle
+                            class="hr-max"
+                            cx={(maxPoint.t / maxT) * 320}
+                            cy={120 - ((maxPoint.hr - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                            r="5"
+                          />
+                        {/if}
+                      </svg>
+                  {/key}
+                  {/if}
+                </div>
+              {:else if item.duration_s}
+                <span class="badge">{formatDuration(item.duration_s)}</span>
+              {/if}
+            </div>
           </div>
           {#if editingId === item.id}
             <div class="meta-edit">
@@ -1059,13 +1924,6 @@
               </label>
             </div>
           {:else}
-            {#if item.tags?.length}
-              <div class="tag-row">
-                {#each item.tags as tag}
-                  <span class="tag-chip selected">{tag}</span>
-                {/each}
-              </div>
-            {/if}
             {#if item.notes}
               <p class="muted small">Notes: {item.notes}</p>
             {/if}
@@ -1191,40 +2049,11 @@
               <button class="ghost" on:click={cancelEdit}>Cancel</button>
             </div>
           {:else}
-            <div class="sets">
-              {#each item.sets as set, idx}
-                {@const isRest = set.type && set.type !== 'work'}
-                <div class="set-row view-row" class:rest-row={isRest}>
-                  {#if isRest}
-                    <span class="muted small rest-label">
-                      Rest {set.duration_s ? `(${formatDuration(set.duration_s)})` : ''}
-                    </span>
-                  {:else}
-                    <span class="muted small">{set.round_label ?? 'Round'}</span>
-                    <strong>{set.set_label ?? `Set ${idx + 1}`}</strong>
-                    <span class="muted small">
-                      {set.duration_s ? formatDuration(set.duration_s) : ''}
-                    </span>
-                    <span>{set.reps ?? '-'}</span>
-                    {#if set.weight}
-                      <span class="muted small">@ {set.weight}</span>
-                    {:else}
-                      <span></span>
-                    {/if}
-                    {#if set.rpe}
-                      <span class="muted small">RPE {set.rpe}</span>
-                    {:else}
-                      <span></span>
-                    {/if}
-                  {/if}
-                </div>
-              {/each}
-            </div>
-            <div class="actions">
-              <button class="ghost" on:click={() => copySummary(item)}>Copy summary</button>
-              <button class="ghost" on:click={() => copyCsv(item)}>Copy CSV</button>
+            <div class="summary-actions">
+              <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
+              <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
               <button
-                class="ghost"
+                class="ghost small"
                 on:click={() => {
                   shareItem = item
                   shareShowReps = true
@@ -1232,15 +2061,68 @@
                   shareShowSets = true
                 }}
               >
-                Share card
+                Share
               </button>
-              <button class="ghost" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Load in timer</button>
-              <button class="ghost" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Load in Big Picture</button>
-              <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
-              <button class="ghost" on:click={() => duplicateLog(item)}>Log again</button>
-              <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
-              <button class="danger" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
+              <button class="ghost small" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
+              <button class="ghost small" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
+              <button class="ghost small" on:click={() => duplicateLog(item)}>Log again</button>
+              <button class="ghost small" on:click={() => toggleExpanded(item.id, !isExpanded)}>
+                {isExpanded ? 'Collapse' : 'Expand'}
+              </button>
             </div>
+            {#if isExpanded}
+              {#if item.notes}
+                <p class="muted small">Notes: {item.notes}</p>
+              {/if}
+              <div class="sets">
+                {#each item.sets as set, idx}
+                  {@const isRest = set.type && set.type !== 'work'}
+                  <div class="set-row view-row" class:rest-row={isRest}>
+                    {#if isRest}
+                      <span class="muted small rest-label">
+                        Rest {set.duration_s ? `(${formatDuration(set.duration_s)})` : ''}
+                      </span>
+                    {:else}
+                      <span class="muted small">{set.round_label ?? 'Round'}</span>
+                      <strong>{set.set_label ?? `Set ${idx + 1}`}</strong>
+                      <span class="muted small">
+                        {set.duration_s ? formatDuration(set.duration_s) : ''}
+                      </span>
+                      <span>{set.reps ?? '-'}</span>
+                      {#if set.weight}
+                        <span class="muted small">@ {set.weight}</span>
+                      {:else}
+                        <span></span>
+                      {/if}
+                      {#if set.rpe}
+                        <span class="muted small">RPE {set.rpe}</span>
+                      {:else}
+                        <span></span>
+                      {/if}
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+              <div class="actions">
+                <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
+                <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
+                <button class="ghost" on:click={() => {
+                  uploadTargetId = item.id
+                  if (fileInputEl) fileInputEl.click()
+                }}>
+                  {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
+                </button>
+                {#if hrAttached[item.id] || hrSummary[item.id]}
+                  <button class="ghost danger" on:click={() => removeHrFile(item.id)}>Remove HR file</button>
+                {/if}
+                <button class="danger" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
+              </div>
+              {#if uploadStatus[item.id]}
+                <p class="muted small">{uploadStatus[item.id]}</p>
+              {:else if hrAttached[item.id]}
+                <p class="muted small">HR file attached</p>
+              {/if}
+            {/if}
           {/if}
         </article>
       {/each}
@@ -1282,7 +2164,37 @@
           <label><input type="checkbox" bind:checked={shareShowReps} /> Include total reps</label>
           <label><input type="checkbox" bind:checked={shareShowWork} /> Include total work time</label>
           <label><input type="checkbox" bind:checked={shareShowSets} /> Include total sets</label>
+          <label><input type="checkbox" bind:checked={shareShowDividers} /> Show round dividers</label>
+          <label><input type="checkbox" bind:checked={shareShowTagPills} /> Tag pills</label>
+          <label><input type="checkbox" bind:checked={shareShowNoise} /> Noise texture</label>
+          <label><input type="checkbox" bind:checked={shareColorCodeRests} /> Color-code rests</label>
+          <label><input type="checkbox" bind:checked={shareShowBadge} /> Footer badge</label>
+          <label><input type="checkbox" bind:checked={shareShowHrBlock} /> HR block</label>
+          <label><input type="checkbox" bind:checked={shareHighlightEnabled} /> Highlight rows</label>
         </div>
+        {#if shareHighlightEnabled && shareItem}
+          <div class="share-config share-highlights">
+            <p class="muted small">Select rows to highlight:</p>
+            <div class="highlight-grid">
+              {#each shareSelectableRows as row}
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={shareHighlights.has(row.index)}
+                    on:change={(e) => {
+                      const next = new Set(shareHighlights)
+                      if (e.currentTarget.checked) next.add(row.index)
+                      else next.delete(row.index)
+                      shareHighlights = next
+                      refreshSharePreview()
+                    }}
+                  />
+                  {row.label}
+                </label>
+              {/each}
+            </div>
+          </div>
+        {/if}
         <div class="actions">
           <button
             class="primary"
@@ -1291,7 +2203,15 @@
               saveShareCard(shareItem, {
                 showReps: shareShowReps,
                 showWork: shareShowWork,
-                showSets: shareShowSets
+                showSets: shareShowSets,
+                showDividers: shareShowDividers,
+                showTagPills: shareShowTagPills,
+                showNoise: shareShowNoise,
+                colorCodeRests: shareColorCodeRests,
+                showBadge: shareShowBadge,
+                showHrBlock: shareShowHrBlock,
+                hrData: hrDetails[shareItem.id] ?? hrSummary[shareItem.id],
+                highlights: shareHighlights
               })
             }
           >
@@ -1339,6 +2259,80 @@
       </div>
     </div>
   {/if}
+  <input
+    type="file"
+    accept=".fit,.tcx"
+    class="sr-only"
+    bind:this={fileInputEl}
+    on:change={(e) => {
+      const file = e.currentTarget.files?.[0]
+      if (!file || !uploadTargetId) {
+        uploadTargetId = null
+        return
+      }
+      const form = new FormData()
+      form.append('file', file)
+      fetch(`/api/completed-workouts/${uploadTargetId}/hr`, {
+        method: 'POST',
+        body: form
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          uploadStatus = { ...uploadStatus, [uploadTargetId!]: data?.ok ? 'Uploaded' : 'Failed' }
+          if (data?.ok) {
+            hrAttached = { ...hrAttached, [uploadTargetId!]: true }
+            if (data.summary?.avgHr || data.summary?.maxHr) {
+              hrSummary = {
+                ...hrSummary,
+                [uploadTargetId!]: {
+                  avgHr: data.summary.avgHr ?? null,
+                  maxHr: data.summary.maxHr ?? null
+                }
+              }
+            }
+            if (data.summary?.samples) {
+              hrDetails = {
+                ...hrDetails,
+                [uploadTargetId!]: {
+                  avgHr: data.summary.avgHr ?? null,
+                  maxHr: data.summary.maxHr ?? null,
+                  samples: data.summary.samples ?? []
+                }
+              }
+            }
+            if (data.summary?.durationSeconds) {
+              items = items.map((it) =>
+                it.id === uploadTargetId
+                  ? {
+                      ...it,
+                      duration_s: data.summary.durationSeconds,
+                      started_at: data.summary.startTime ?? it.started_at,
+                      finished_at:
+                        data.summary.startTime && data.summary.durationSeconds
+                          ? data.summary.startTime + data.summary.durationSeconds * 1000
+                          : it.finished_at
+                    }
+                  : it
+              )
+            }
+            checkHrStatus(uploadTargetId!)
+          }
+          setTimeout(() => {
+            uploadStatus = { ...uploadStatus, [uploadTargetId!]: '' }
+          }, 2000)
+        })
+        .catch(() => {
+          uploadStatus = { ...uploadStatus, [uploadTargetId!]: 'Failed' }
+          setTimeout(() => {
+            uploadStatus = { ...uploadStatus, [uploadTargetId!]: '' }
+          }, 2000)
+        })
+        .finally(() => {
+          uploadTargetId = null
+          if (fileInputEl) fileInputEl.value = ''
+        })
+    }}
+  />
 </main>
 
 <style>
@@ -1383,10 +2377,102 @@
     justify-content: space-between;
     align-items: center;
   }
+  .card-header.two-col {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 0.75rem;
+    align-items: center;
+  }
+  .header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .meta-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+  .tag-row.inline {
+    display: inline-flex;
+    gap: 0.35rem;
+  }
+  .header-right {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.5rem;
+  }
   .badge {
     padding: 0.25rem 0.6rem;
     border-radius: 10px;
     border: 1px solid var(--color-border);
+  }
+  .badge.subtle {
+    background: color-mix(in srgb, var(--color-surface-1) 50%, transparent);
+  }
+  .summary-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    justify-content: flex-end;
+  }
+  .chip {
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-surface-1) 70%, transparent);
+    font-size: 0.9rem;
+    color: var(--color-text-primary);
+  }
+  .chip.hr {
+    border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  }
+  .hr-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    align-items: flex-end;
+    min-width: 320px;
+    justify-content: center;
+  }
+  .hr-card.placeholder {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .hr-card.placeholder .hr-spark {
+    min-height: 120px;
+  }
+  .hr-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+  }
+  .hr-stats {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    color: var(--color-text-muted);
+    font-size: 0.95rem;
+  }
+  .hr-spark {
+    width: 320px;
+    height: 120px;
+    background: var(--hr-spark-bg, color-mix(in srgb, var(--color-surface-1) 70%, transparent));
+    border: 1px solid var(--hr-spark-border, color-mix(in srgb, var(--color-border) 60%, transparent));
+    border-radius: 10px;
+  }
+  .hr-spark .hr-line {
+    stroke: var(--hr-spark-line, var(--color-text-primary));
+  }
+  .hr-spark .avg-line {
+    stroke: var(--hr-spark-avg, color-mix(in srgb, var(--color-text-muted) 70%, transparent));
+  }
+  .hr-spark .hr-max {
+    fill: var(--hr-spark-max, var(--color-accent));
   }
   .meta-edit {
     display: grid;
@@ -1425,6 +2511,20 @@
     padding: 0.4rem 0.6rem;
     background: var(--color-surface-1);
     color: var(--color-text-primary);
+  }
+  .filters select.compact {
+    min-width: 150px;
+  }
+  .inline-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--color-text-muted);
+    font-size: 0.95rem;
+  }
+  .inline-filter input {
+    width: 16px;
+    height: 16px;
   }
   .tag-filter {
     display: flex;
@@ -1567,6 +2667,213 @@
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+  .summary-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+    margin-top: 0.35rem;
+  }
+  .summary-actions button.small {
+    padding: 0.35rem 0.6rem;
+    font-size: 0.9rem;
+  }
+  .summary-actions button {
+    white-space: nowrap;
+  }
+  .summary-actions + .sets {
+    margin-top: 0.25rem;
+  }
+  .summary-actions + p.muted {
+    margin-top: 0.2rem;
+  }
+  .summary-actions + .sets + .actions {
+    margin-top: 0.35rem;
+  }
+  .summary-actions + .sets + .actions + p {
+    margin-top: 0.15rem;
+  }
+  .summary-actions button:hover:not(:disabled) {
+    border-color: var(--color-border-hover);
+  }
+.summary-actions .ghost.small {
+  background: transparent;
+}
+.summary-actions .ghost.small:disabled {
+  opacity: 0.5;
+}
+.view-toggle {
+  display: inline-flex;
+  gap: 0.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 0.15rem;
+}
+.view-toggle button {
+  border: none;
+  background: transparent;
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+  color: var(--color-text-primary);
+}
+.view-toggle button.active {
+  background: color-mix(in srgb, var(--color-accent) 25%, var(--color-surface-1));
+  color: var(--color-accent-muted);
+}
+.calendar-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.calendar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.month-nav {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.45rem;
+  background: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 1rem;
+}
+.dow {
+  text-align: center;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+.day {
+  min-height: 110px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  border-radius: 10px;
+  padding: 0.55rem 0.55rem 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.day:hover {
+  border-color: var(--color-border-hover);
+}
+.day.empty {
+  background: transparent;
+  border: none;
+  cursor: default;
+}
+.day.active {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-2));
+}
+.day-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.day-num {
+  font-weight: 600;
+}
+.day-count {
+  font-size: 0.85rem;
+  background: color-mix(in srgb, var(--color-accent) 25%, var(--color-surface-1));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+  color: var(--color-text-primary);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  opacity: 0.6;
+}
+.day-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.day-row {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.15rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-surface-1) 30%, transparent);
+  min-width: 0;
+}
+.day-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+.day-row-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  font-size: 0.62rem;
+}
+.day-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.55rem;
+  color: var(--color-text-muted);
+}
+.day-row-badge {
+  font-size: 0.55rem;
+}
+.day-row-hr {
+  font-size: 0.55rem;
+  padding: 0.08rem 0.3rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, var(--color-border));
+  color: var(--color-accent);
+}
+.calendar-detail {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 0.9rem;
+  background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.calendar-detail h4 {
+  margin: 0;
+}
+.compact-list .card {
+  grid-template-columns: 1fr;
+  min-width: 0;
+}
+@media (max-width: 980px) {
+  .calendar-grid {
+    grid-template-columns: repeat(7, minmax(38px, 1fr));
+    padding: 0.75rem;
+  }
+}
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
   }
   .mini-buttons {
     display: inline-flex;
