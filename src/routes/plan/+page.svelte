@@ -2,6 +2,11 @@
   import { onMount } from 'svelte'
   import YAML from 'yaml'
   import defaultPlanSource from '$lib/timer/config/default-plan.yaml?raw'
+  import { buildTimeline } from '$lib/timer/lib/timeline.js'
+  import { settings, openSettingsModal } from '$lib/stores/settings'
+  import LibraryModal from '$lib/timer/components/LibraryModal.svelte'
+  import PhaseQueue from '$lib/timer/components/PhaseQueue.svelte'
+  import { libraryTemplates } from '$lib/timer/library/index.js'
 
   type Planned = {
     id: string
@@ -28,7 +33,22 @@
   let editTags: string[] = []
   let newTag = ''
   let templates: WorkoutTemplate[] = []
+  let libraryWorkouts: WorkoutTemplate[] = []
+  let libraryModalOpen = false
   let todayPlan: Planned | null = null
+  let previewResult: { plan: any | null; error: Error | null } = { plan: null, error: null }
+  let previewTotals: { work: number; rest: number; total: number } | null = null
+  let aiPrompt = ''
+  let aiStatus = ''
+  let aiError = ''
+  let isGenerating = false
+  let aiEditInstructions = ''
+  let aiEditStatus = ''
+  let aiEditError = ''
+  let isAiEditing = false
+  const OPENAI_CHAT_MODEL = 'gpt-4o-mini'
+  let openAiKey = ''
+  $: openAiKey = $settings.openAiKey ?? ''
 
   const dayKey = (ts: number) => {
     const d = new Date(ts)
@@ -86,11 +106,35 @@
     }
   }
 
+  const buildLibraryWorkouts = () =>
+    libraryTemplates
+      .map((template) => {
+        try {
+          const source = (template?.source ?? '').trim()
+          if (!source) return null
+          const parsed = YAML.parse(source)
+          const plan = normalizePlan(parsed)
+          const totals = computePlanTotals(plan)
+          return {
+            id: template?.id ?? plan.title ?? crypto.randomUUID(),
+            name: plan.title ?? 'Untitled session',
+            description: plan.description ?? '',
+            roundCount: plan.rounds.length,
+            totals,
+            yaml_source: source
+          }
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean) as WorkoutTemplate[]
+
   const selectTemplate = (tmpl: WorkoutTemplate) => {
     if (tmpl?.yaml_source) {
       editTitle = tmpl.name ?? editTitle
       editYaml = tmpl.yaml_source
     }
+    libraryModalOpen = false
   }
 
   const openNew = (dateKey?: string) => {
@@ -166,6 +210,391 @@
     }
     editTags = [...editTags, t].slice(0, 8)
     newTag = ''
+  }
+
+  const openSettings = () => openSettingsModal()
+
+  const coerceSeconds = (value: any) => {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0
+  }
+
+  const coerceRepetitions = (value: any) => {
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric) || numeric <= 0) return 1
+    return Math.max(1, Math.round(numeric))
+  }
+
+  const normalizePlan = (candidate: any) => {
+    if (!candidate || typeof candidate !== 'object') {
+      throw new Error('Plan must be a YAML mapping/object')
+    }
+    if (!Array.isArray(candidate.rounds) || candidate.rounds.length === 0) {
+      throw new Error('Plan must include at least one round')
+    }
+    const preStartSeconds = coerceSeconds(candidate.preStartSeconds)
+    const preStartLabel =
+      typeof candidate.preStartLabel === 'string' && candidate.preStartLabel.trim().length > 0
+        ? candidate.preStartLabel.trim()
+        : 'Prepare'
+    const description =
+      typeof candidate.description === 'string' ? candidate.description.trim() : ''
+
+    const rounds = candidate.rounds.map((round: any, roundIndex: number) => {
+      if (!round || typeof round !== 'object') {
+        throw new Error(`Round ${roundIndex + 1} must be an object`)
+      }
+      if (!Array.isArray(round.sets) || round.sets.length === 0) {
+        throw new Error(
+          `Round "${round.label ?? `#${roundIndex + 1}`}" requires a sets array`
+        )
+      }
+
+      const roundId = round.id ?? `round-${roundIndex + 1}`
+
+      return {
+        id: roundId,
+        label: typeof round.label === 'string' ? round.label : `Round ${roundIndex + 1}`,
+        repetitions: coerceRepetitions(round.repetitions ?? 1),
+        restAfterSeconds: coerceSeconds(round.restAfterSeconds ?? 0),
+        sets: round.sets.map((set: any, setIndex: number) => {
+          if (!set || typeof set !== 'object') {
+            throw new Error(`Set ${setIndex + 1} in round ${roundIndex + 1} must be an object`)
+          }
+          const workSeconds = coerceSeconds(set.workSeconds ?? set.work)
+          const restSeconds = coerceSeconds(set.restSeconds ?? set.rest ?? 0)
+          const repetitions = coerceRepetitions(set.repetitions ?? 1)
+          const transitionSeconds = coerceSeconds(set.transitionSeconds ?? set.transition ?? 0)
+          return {
+            id: set.id ?? `set-${setIndex + 1}`,
+            label: typeof set.label === 'string' ? set.label : `Set ${setIndex + 1}`,
+            workSeconds,
+            restSeconds,
+            repetitions,
+            transitionSeconds,
+            targetRpm: Number.isFinite(Number(set.targetRpm)) ? Number(set.targetRpm) : null,
+            announcements: Array.isArray(set.announcements) ? set.announcements : [],
+            restAnnouncements: Array.isArray(set.restAnnouncements) ? set.restAnnouncements : []
+          }
+        })
+      }
+    })
+
+    return { ...candidate, preStartSeconds, preStartLabel, description, rounds }
+  }
+
+  const tryParsePlan = (source: string) => {
+    if (!source) return { plan: null, error: new Error('Empty source') }
+    try {
+      const raw = YAML.parse(source)
+      const plan = normalizePlan(raw)
+      return { plan, error: null }
+    } catch (err) {
+      return { plan: null, error: err as Error }
+    }
+  }
+
+  const durationOf = (phase: any) => {
+    const raw = phase?.durationSeconds ?? phase?.duration ?? 0
+    const seconds = Number(raw)
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : 0
+  }
+
+  const formatDuration = (seconds?: number | null) => {
+    const safe = Number(seconds)
+    if (!Number.isFinite(safe) || safe <= 0) return '0s'
+    const mins = Math.floor(safe / 60)
+    const secs = Math.round(safe % 60)
+    if (mins <= 0) return `${secs}s`
+    return `${mins}m ${secs}s`
+  }
+
+  const computePlanTotals = (planToMeasure: any) => {
+    if (!planToMeasure || !Array.isArray(planToMeasure.rounds)) {
+      return { work: 0, rest: 0, total: 0 }
+    }
+    const derivedTimeline = buildTimeline(planToMeasure)
+    return derivedTimeline.reduce(
+      (totals, phase) => {
+        const duration = durationOf(phase)
+        totals.total += duration
+        if (phase.type === 'work') totals.work += duration
+        else totals.rest += duration
+        return totals
+      },
+      { work: 0, rest: 0, total: 0 }
+    )
+  }
+
+  const roundKeyFor = (round: any, index: number) => round?.id ?? `round-${index + 1}`
+
+  const buildRoundTotalsMap = (phases: any[]) => {
+    const map = new Map()
+    if (!Array.isArray(phases)) return map
+
+    phases.forEach((phase) => {
+      const roundIndex = Number(phase?.roundIndex)
+      if (!Number.isInteger(roundIndex) || roundIndex < 0) {
+        return
+      }
+      const key = phase.roundId ?? `round-${roundIndex + 1}`
+      const duration = durationOf(phase)
+      if (duration <= 0) {
+        return
+      }
+      const bucket = map.get(key) ?? { work: 0, rest: 0, total: 0 }
+      bucket.total += duration
+      if (phase.type === 'work') {
+        bucket.work += duration
+      } else {
+        bucket.rest += duration
+      }
+      map.set(key, bucket)
+    })
+
+    return map
+  }
+
+  const getRoundTotals = (round: any, index: number, totalsMap: Map<string, any>) =>
+    totalsMap.get(roundKeyFor(round, index)) ?? { work: 0, rest: 0, total: 0 }
+
+  const buildSetSegments = (
+    set: any,
+    nextSetLabel: string,
+    roundRepetitions = 1,
+    roundRestAfterSeconds = 0,
+    hasSubsequentRound = false
+  ) => {
+    const repetitions = Math.max(Number(set?.repetitions) || 1, 1)
+    const workSeconds = Math.max(Number(set?.workSeconds) || 0, 0)
+    const restSeconds = Math.max(Number(set?.restSeconds) || 0, 0)
+    const transitionSeconds = Math.max(Number(set?.transitionSeconds) || 0, 0)
+    const roundRestAfter = Math.max(Number(roundRestAfterSeconds) || 0, 0)
+    const hasNextRound = Boolean(hasSubsequentRound)
+
+    const sequence = []
+    let totalWork = 0
+    let totalRest = 0
+    for (let rep = 0; rep < repetitions; rep += 1) {
+      if (workSeconds > 0) {
+        sequence.push({
+          type: 'work',
+          duration: workSeconds,
+          label: repetitions > 1 ? `Work ${rep + 1}/${repetitions}` : 'Work'
+        })
+        totalWork += workSeconds
+      }
+
+      const isLastRep = rep === repetitions - 1
+      const hasNextSet = Boolean(nextSetLabel)
+      const hasAnotherRound = roundRepetitions > 1
+      const hasNextRoundTransition = hasNextRound || roundRestAfter > 0
+      const shouldAddRest =
+        restSeconds > 0 &&
+        (!isLastRep ||
+          (isLastRep &&
+            (hasNextSet || (hasAnotherRound && roundRestAfter <= 0) || hasNextRoundTransition)))
+      if (shouldAddRest) {
+        sequence.push({
+          type: 'rest',
+          duration: restSeconds,
+          label: repetitions > 1 ? `Rest ${rep + 1}` : 'Rest'
+        })
+        totalRest += restSeconds
+      }
+    }
+
+    const transitionSegment =
+      transitionSeconds > 0 && nextSetLabel
+        ? {
+            type: 'transition',
+            duration: transitionSeconds,
+            label: `Transition → ${nextSetLabel}`
+          }
+        : null
+
+    return {
+      setRepetitions: repetitions,
+      roundRepetitions: Math.max(Number(roundRepetitions) || 1, 1),
+      work: workSeconds,
+      rest: restSeconds,
+      workTotal: totalWork,
+      restTotal: totalRest,
+      total: totalWork + totalRest + (transitionSegment ? transitionSeconds : 0),
+      sequence,
+      transitionSegment
+    }
+  }
+
+  const systemPrompt = `You are an expert kettlebell and interval-training coach. Output ONLY valid YAML that fits this schema (no prose):
+title: string (required)
+description: string (optional)
+preStartSeconds: number >= 0
+preStartLabel: string
+rounds: array of objects, in order
+  - id: string (optional)
+    label: string (mandatory)
+    repetitions: integer >= 1
+    restAfterSeconds: number >= 0 (optional)
+    sets: array of objects, in order
+      - id: string (optional)
+        label: string (mandatory)
+        workSeconds: number > 0
+        restSeconds: number >= 0 (optional)
+        repetitions: integer >= 1 (optional, default 1)
+        transitionSeconds: number >= 0 (optional, default 0)
+        targetRpm: number > 0 (optional)
+        announcements: optional array of objects
+          - text: string
+            atSeconds: number or array (>=0; negative means seconds before end)
+            once: boolean (optional)
+            voice: string (optional)
+        restAnnouncements: optional array of objects (same shape)`
+
+  const extractYaml = (content: string) => {
+    if (!content) return ''
+    const fenceMatch = content.match(/```(?:yaml)?\s*([\s\S]*?)```/i)
+    if (fenceMatch) return fenceMatch[1].trim()
+    return content.trim()
+  }
+
+  const applyYamlSource = (yaml: string) => {
+    const result = tryParsePlan(yaml)
+    if (result.error || !result.plan) {
+      throw result.error ?? new Error('Invalid workout YAML')
+    }
+    editYaml = yaml
+    previewResult = result
+    previewTotals = computePlanTotals(result.plan)
+  }
+
+  $: previewResult = tryParsePlan(editYaml)
+  $: previewTotals = previewResult.plan ? computePlanTotals(previewResult.plan) : null
+  $: timelinePreview = previewResult.plan ? buildTimeline(previewResult.plan) : []
+  $: roundTotalsMapPreview = buildRoundTotalsMap(timelinePreview)
+
+  const generateWorkoutFromAi = async () => {
+    const description = aiPrompt.trim()
+    if (!description) {
+      aiError = 'Describe the workout before generating.'
+      aiStatus = ''
+      return
+    }
+    const key = openAiKey.trim()
+    if (!key) {
+      aiError = 'Add your OpenAI API key to generate workouts.'
+      aiStatus = ''
+      return
+    }
+
+    aiError = ''
+    aiStatus = 'Contacting OpenAI…'
+    isGenerating = true
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${key}`
+        },
+        body: JSON.stringify({
+          model: OPENAI_CHAT_MODEL,
+          temperature: 0.7,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            {
+              role: 'user',
+              content: `Create a workout YAML configuration that matches this description:\n${description}`
+            }
+          ]
+        })
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`OpenAI request failed: ${response.status} ${errorText}`)
+      }
+
+      const data = await response.json()
+      const content = data?.choices?.[0]?.message?.content ?? ''
+      const yaml = extractYaml(content)
+      if (!yaml) {
+        throw new Error('OpenAI response did not contain YAML output.')
+      }
+
+      applyYamlSource(yaml)
+      editTitle = previewResult.plan?.title ?? editTitle
+      aiStatus = 'Workout generated. Review and adjust as needed.'
+      aiError = ''
+    } catch (error) {
+      console.warn('OpenAI workout generation error', error)
+      aiError = (error as any)?.message ?? 'Failed to generate workout.'
+      aiStatus = ''
+    } finally {
+      isGenerating = false
+    }
+  }
+
+  const modifyWorkoutWithAi = async () => {
+    const instructions = aiEditInstructions.trim()
+    if (!instructions) {
+      aiEditError = 'Describe how to modify the current workout.'
+      aiEditStatus = ''
+      return
+    }
+    const key = openAiKey.trim()
+    if (!key) {
+      aiEditError = 'Add your OpenAI API key to modify workouts.'
+      aiEditStatus = ''
+      return
+    }
+
+    aiEditError = ''
+    aiEditStatus = 'Contacting OpenAI…'
+    isAiEditing = true
+
+    const userContent = `Here is the current workout YAML:\n${editYaml}\n\nApply these changes:\n${instructions}\n\nKeep IDs stable when possible and return YAML only.`
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${key}`
+        },
+        body: JSON.stringify({
+          model: OPENAI_CHAT_MODEL,
+          temperature: 0.7,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userContent }
+          ]
+        })
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`OpenAI request failed: ${response.status} ${errorText}`)
+      }
+
+      const data = await response.json()
+      const content = data?.choices?.[0]?.message?.content ?? ''
+      const yaml = extractYaml(content)
+      if (!yaml) {
+        throw new Error('OpenAI response did not contain YAML output.')
+      }
+
+      applyYamlSource(yaml)
+      aiEditStatus = 'Workout updated. Review and apply changes as needed.'
+      aiEditError = ''
+    } catch (error) {
+      console.warn('OpenAI workout edit error', error)
+      aiEditError = (error as any)?.message ?? 'Failed to modify workout.'
+      aiEditStatus = ''
+    } finally {
+      isAiEditing = false
+    }
   }
 
   const dayPlans = (key: string) => plans.filter((p) => dayKey(p.planned_for) === key)
@@ -335,9 +764,9 @@
     </section>
   {/if}
 
-  {#if editOpen}
-    <div class="modal-backdrop"></div>
-    <div class="edit-modal">
+{#if editOpen}
+  <div class="modal-backdrop"></div>
+  <div class="edit-modal">
       <header>
         <h3>{editId ? 'Edit planned workout' : 'Add planned workout'}</h3>
         <button class="ghost" on:click={() => (editOpen = false)}>✕</button>
@@ -372,7 +801,14 @@
         </label>
         <label class="yaml-field">
           <span class="muted small">YAML</span>
-          <textarea bind:value={editYaml} rows="18"></textarea>
+          <textarea bind:value={editYaml} rows="18" spellcheck="false"></textarea>
+          {#if previewResult.error}
+            <p class="status error">Parse error: {previewResult.error.message}</p>
+          {:else if previewTotals}
+            <p class="status ok">
+              Work: {Math.round((previewTotals?.work ?? 0) / 60)}m · Rest: {Math.round((previewTotals?.rest ?? 0) / 60)}m · Total: {Math.round((previewTotals?.total ?? 0) / 60)}m
+            </p>
+          {/if}
         </label>
         {#if templates.length}
           <div class="template-list">
@@ -384,7 +820,168 @@
                 </button>
               {/each}
             </div>
+            <button class="ghost small" type="button" on:click={() => (libraryModalOpen = true)}>
+              Load from library
+            </button>
+  </div>
+  <LibraryModal
+    open={libraryModalOpen}
+    workouts={libraryWorkouts}
+    on:close={() => (libraryModalOpen = false)}
+    on:select={(e) => selectTemplate(e.detail?.workout)}
+  />
+{/if}
+        <section class="ai-panel">
+          <h3>AI Assistant</h3>
+          <p class="muted small">
+            Uses your OpenAI key from Settings. Generate or modify the YAML below.
+            <button class="ghost small" type="button" on:click={openSettings}>Open settings</button>
+          </p>
+          <textarea
+            rows="3"
+            placeholder="Describe the workout you want..."
+            bind:value={aiPrompt}
+          ></textarea>
+          <div class="actions ai-actions">
+            <button
+              class="primary"
+              type="button"
+              on:click={generateWorkoutFromAi}
+              disabled={isGenerating}
+            >
+              {#if isGenerating}Generating…{:else}Generate{/if}
+            </button>
+            {#if aiStatus}<span class="muted small">{aiStatus}</span>{/if}
+            {#if aiError}<span class="error small">{aiError}</span>{/if}
           </div>
+          <textarea
+            rows="3"
+            placeholder="Tell AI how to change current YAML…"
+            bind:value={aiEditInstructions}
+          ></textarea>
+          <div class="actions ai-actions">
+            <button
+              class="secondary"
+              type="button"
+              on:click={modifyWorkoutWithAi}
+              disabled={isAiEditing}
+            >
+              {#if isAiEditing}Applying…{:else}Modify YAML{/if}
+            </button>
+            {#if aiEditStatus}<span class="muted small">{aiEditStatus}</span>{/if}
+            {#if aiEditError}<span class="error small">{aiEditError}</span>{/if}
+          </div>
+        </section>
+
+        {#if timelinePreview.length}
+          <section class="overview">
+            <h3>Session overview</h3>
+            <PhaseQueue phases={timelinePreview} activeIndex={-1} />
+            <div class="overview__grid">
+              <div class="overview__item">
+                <span>Total work</span>
+                <strong>{formatDuration(previewTotals?.work ?? 0)}</strong>
+              </div>
+              <div class="overview__item">
+                <span>Total rest</span>
+                <strong>{formatDuration(previewTotals?.rest ?? 0)}</strong>
+              </div>
+              <div class="overview__item">
+                <span>Rounds</span>
+                <strong>{previewResult.plan?.rounds?.length ?? 0}</strong>
+              </div>
+            </div>
+            <div class="rounds-list">
+              {#each previewResult.plan?.rounds ?? [] as round, roundIndex}
+                {@const roundTotals = getRoundTotals(round, roundIndex, roundTotalsMapPreview)}
+                <article class="round">
+                  <header class="round__header">
+                    <div>
+                      <h4>Round {roundIndex + 1}: {round.label}</h4>
+                      <p>
+                        Repetitions: {round.repetitions} · Rest after round: {formatDuration(round.restAfterSeconds || 0)}
+                      </p>
+                    </div>
+                    <div class="round__badges">
+                      {#if round.repetitions > 1}
+                        <span class="round__badge"> {round.repetitions}× cycle </span>
+                      {/if}
+                      <span class="round__badge">
+                        {formatDuration(roundTotals.total)}
+                      </span>
+                    </div>
+                  </header>
+                  <ul class="set-list">
+                    {#each round.sets as set, setIndex (set.id)}
+                      {@const segments = buildSetSegments(
+                        set,
+                        round.sets[setIndex + 1]?.label,
+                        round.repetitions,
+                        round.restAfterSeconds,
+                        roundIndex < (previewResult.plan?.rounds?.length ?? 0) - 1
+                      )}
+                      <li class="set">
+                        <div class="set__header">
+                          <div>
+                            <h5>{set.label}</h5>
+                            <p>
+                              {set.repetitions} × {formatDuration(set.workSeconds)} work
+                              {#if set.restSeconds}
+                                · rest {formatDuration(set.restSeconds)} between reps
+                              {/if}
+                              {#if set.targetRpm}
+                                · {set.targetRpm} RPM
+                              {/if}
+                            </p>
+                          </div>
+                          <div class="set__meta">
+                            <span class="set__meta-total">
+                              Total: {formatDuration(segments.total)}
+                            </span>
+                            {#if setIndex < round.sets.length - 1 && set.transitionSeconds}
+                              <span class="set__meta-transition">
+                                Next transition: {formatDuration(set.transitionSeconds)}
+                              </span>
+                            {/if}
+                          </div>
+                        </div>
+                        <div class="set-timeline" class:set-timeline--compact={!(segments.work || segments.rest)}>
+                          <div class="set-timeline__segments">
+                            {#if segments.work}
+                              <div class="segment-block segment-block--work">
+                                <span class="segment-block__label">
+                                  {segments.setRepetitions > 1 ? 'Work per rep' : 'Work'}
+                                </span>
+                                <span class="segment-block__time">{formatDuration(segments.work)}</span>
+                              </div>
+                            {/if}
+                            {#if segments.rest}
+                              <div class="segment-block segment-block--rest">
+                                <span class="segment-block__label">
+                                  {segments.setRepetitions > 1 ? 'Rest between reps' : 'Rest'}
+                                </span>
+                                <span class="segment-block__time">{formatDuration(segments.rest)}</span>
+                              </div>
+                            {/if}
+                            {#if segments.transitionSegment}
+                              <div class="segment-block segment-block--transition">
+                                <span class="segment-block__label">
+                                  {segments.transitionSegment.label}
+                                </span>
+                                <span class="segment-block__time">
+                                  {formatDuration(segments.transitionSegment.duration)}
+                                </span>
+                              </div>
+                            {/if}
+                          </div>
+                        </div>
+                      </li>
+                    {/each}
+                  </ul>
+                </article>
+              {/each}
+            </div>
+          </section>
         {/if}
       </div>
       <div class="actions">
@@ -646,6 +1243,140 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
+  }
+  .ai-panel {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
+  }
+  .ai-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .status.ok {
+    color: var(--color-text-muted);
+  }
+  .overview__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.65rem;
+    margin: 0.5rem 0;
+  }
+  .overview__item {
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    padding: 0.5rem 0.65rem;
+    background: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
+  }
+  .overview__item span {
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+  }
+  .overview__item strong {
+    display: block;
+    font-size: 1.2rem;
+  }
+  .rounds-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-top: 0.5rem;
+  }
+  .round {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 0.65rem 0.75rem;
+    background: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .round__header {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .round__badges {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .round__badge {
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.85rem;
+  }
+  .set-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .set {
+    border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+    padding-top: 0.4rem;
+  }
+  .set__header {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .set__meta {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+  }
+  .set-timeline {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin-top: 0.2rem;
+  }
+  .set-timeline__segments {
+    display: inline-flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .segment-block {
+    border-radius: 8px;
+    padding: 0.35rem 0.5rem;
+    background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+  }
+  .segment-block__label {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+  }
+  .segment-block__time {
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+  .segment-block--work {
+    border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+  }
+  .segment-block--rest {
+    border-color: color-mix(in srgb, var(--color-text-muted) 50%, var(--color-border));
+  }
+  .segment-block--transition {
+    border-color: color-mix(in srgb, var(--color-accent) 20%, var(--color-border));
   }
   button {
     padding: 0.5rem 0.8rem;
