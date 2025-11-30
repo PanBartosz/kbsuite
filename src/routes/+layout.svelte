@@ -60,7 +60,6 @@
 			<span class="dot"></span>
 			<div>
 				<p class="eyebrow">KB Suite</p>
-				<strong>Timer · Counter · Big Picture</strong>
 			</div>
 		</div>
 		<nav>
