@@ -935,6 +935,7 @@ rounds: array of objects, in order
                         round.restAfterSeconds,
                         roundIndex < (previewResult.plan?.rounds?.length ?? 0) - 1
                       )}
+                      {@const hasSetBadge = segments.setRepetitions > 1 && (segments.work || segments.rest)}
                       <li class="set">
                         <div class="set__header">
                           <div>
@@ -960,12 +961,27 @@ rounds: array of objects, in order
                             {/if}
                           </div>
                         </div>
-                        <div class="set-timeline" class:set-timeline--compact={!(segments.work || segments.rest)}>
+                        <div
+                          class="set-timeline"
+                          class:set-timeline--compact={!hasSetBadge}
+                          aria-label={`Timeline for ${set.label}`}
+                        >
+                          {#if hasSetBadge}
+                            <div class="set-repeat-labels">
+                              <div class="set-repeat-label">
+                                {segments.setRepetitions}× reps
+                              </div>
+                            </div>
+                          {/if}
                           <div class="set-timeline__segments">
                             {#if segments.work}
                               <div class="segment-block segment-block--work">
                                 <span class="segment-block__label">
-                                  {segments.setRepetitions > 1 ? 'Work per rep' : 'Work'}
+                                  {#if segments.setRepetitions > 1}
+                                    {set.targetRpm ? `Work per rep (${set.targetRpm} RPM)` : 'Work per rep'}
+                                  {:else}
+                                    {set.targetRpm ? `Work (${set.targetRpm} RPM)` : 'Work'}
+                                  {/if}
                                 </span>
                                 <span class="segment-block__time">{formatDuration(segments.work)}</span>
                               </div>
@@ -978,19 +994,19 @@ rounds: array of objects, in order
                                 <span class="segment-block__time">{formatDuration(segments.rest)}</span>
                               </div>
                             {/if}
-                            {#if segments.transitionSegment}
-                              <div class="segment-block segment-block--transition">
-                                <span class="segment-block__label">
-                                  {segments.transitionSegment.label}
-                                </span>
-                                <span class="segment-block__time">
-                                  {formatDuration(segments.transitionSegment.duration)}
-                                </span>
-                              </div>
-                            {/if}
                           </div>
                         </div>
                       </li>
+                      {#if segments.transitionSegment}
+                        <li class="set-transition">
+                          <div class="segment-block segment-block--transition">
+                            <span class="segment-block__label">
+                              {segments.transitionSegment.label}
+                            </span>
+                            <span class="segment-block__time">{formatDuration(segments.transitionSegment.duration)}</span>
+                          </div>
+                        </li>
+                      {/if}
                     {/each}
                   </ul>
                 </article>
@@ -1367,6 +1383,18 @@ rounds: array of objects, in order
     gap: 0.4rem;
     flex-wrap: wrap;
     margin-top: 0.2rem;
+  }
+  .set-repeat-labels {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+  }
+  .set-repeat-label {
+    padding: 0.25rem 0.5rem;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+    background: color-mix(in srgb, var(--color-surface-1) 70%, transparent);
+    font-size: 0.85rem;
   }
   .set-timeline__segments {
     display: inline-flex;
