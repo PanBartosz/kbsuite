@@ -657,14 +657,16 @@
     color: var(--color-text-inverse);
     border-radius: 14px;
     padding: 0.5rem 1rem 0.7rem;
-    box-shadow: 0 10px 30px color-mix(in srgb, var(--color-accent) 35%, transparent);
     min-width: 180px;
     text-align: center;
   }
   .mode-badge.lockout {
     background: linear-gradient(135deg, #f97316, #fb923c);
     color: #0a0a0a;
-    box-shadow: 0 10px 30px rgba(249, 115, 22, 0.35);
+  }
+  .mode-badge {
+    box-shadow: none;
+    border: none;
   }
   .mode-label {
     font-size: 0.85rem;
