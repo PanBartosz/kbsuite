@@ -1,0 +1,240 @@
+title: Kettlebell Pentathlon
+description: "Two-round kettlebell pentathlon: long 4-minute efforts with generous rest, then a faster 2-minute repeat, all with rest countdown prompts."
+preStartSeconds: 30
+preStartLabel: "Focus up"
+rounds:
+  - id: warmup-block
+    label: Warm-up
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: warmup-flow
+        label: Full-body Warm-up
+        workSeconds: 720 
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Warm-up starting. Keep it light."
+            atSeconds: 0
+          - text: "Halfway warm-up"
+            atSeconds: 450
+
+  - id: kettlebell-round-1
+    label: Round 1 · 4 min work / 3 min rest
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: clean-r1
+        label: Clean
+        workSeconds: 240
+        restSeconds: 180
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 20
+        restAnnouncements:
+          - text: "Clean and Press starts in 30 seconds"
+            atSeconds: -30
+          - text: "Clean and Press in 10"
+            atSeconds: -10
+        announcements:
+          - text: "1 minute"
+            atSeconds: 60
+          - text: "2 minutes"
+            atSeconds: 120
+          - text: "3 minutes"
+            atSeconds: 180
+          - text: "4 minutes. Recover."
+            atSeconds: 240
+      - id: clean-press-r1
+        label: Clean and Press
+        workSeconds: 240
+        restSeconds: 180
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 10
+        restAnnouncements:
+          - text: "Jerks in 30 seconds"
+            atSeconds: -30
+          - text: "Jerks in 10"
+            atSeconds: -10
+        announcements:
+          - text: "1 minute"
+            atSeconds: 60
+          - text: "2 minutes"
+            atSeconds: 120
+          - text: "3 minutes"
+            atSeconds: 180
+          - text: "4 minutes. Recover."
+            atSeconds: 240
+      - id: jerk-r1
+        label: Jerk
+        workSeconds: 240
+        restSeconds: 180
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 20
+        restAnnouncements:
+          - text: "Snatch in 30 seconds"
+            atSeconds: -30
+          - text: "Snatch in 10"
+            atSeconds: -10
+        announcements:
+          - text: "1 minute"
+            atSeconds: 60
+          - text: "2 minutes"
+            atSeconds: 120
+          - text: "3 minutes"
+            atSeconds: 180
+          - text: "4 minutes. Recover."
+            atSeconds: 240
+      - id: snatch-r1
+        label: Snatch
+        workSeconds: 240
+        restSeconds: 180
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 18
+        restAnnouncements:
+          - text: "Push Press in 30 seconds"
+            atSeconds: -30
+          - text: "Push Press in 10"
+            atSeconds: -10
+        announcements:
+          - text: "1 minute"
+            atSeconds: 60
+          - text: "2 minutes"
+            atSeconds: 120
+          - text: "3 minutes"
+            atSeconds: 180
+          - text: "4 minutes. Recover."
+            atSeconds: 240
+      - id: push-press-r1
+        label: Push Press
+        workSeconds: 240
+        restSeconds: 180
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 20
+        restAnnouncements:
+          - text: "Round 2 cleans in 30 seconds"
+            atSeconds: -30
+          - text: "Round 2 cleans in 10"
+            atSeconds: -10
+        announcements:
+          - text: "1 minute"
+            atSeconds: 60
+          - text: "2 minutes"
+            atSeconds: 120
+          - text: "3 minutes"
+            atSeconds: 180
+          - text: "4 minutes. Recover."
+            atSeconds: 240
+
+  - id: kettlebell-round-2
+    label: Round 2 · 2 min work / 1 min rest
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: clean-r2
+        label: Clean
+        workSeconds: 120
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 20
+        restAnnouncements:
+          - text: "Clean and Press in 30 seconds"
+            atSeconds: -30
+          - text: "Clean and Press in 10"
+            atSeconds: -10
+        announcements:
+          - text: "1 minute"
+            atSeconds: 60
+          - text: "2 minutes. Recover."
+            atSeconds: 120
+      - id: clean-press-r2
+        label: Clean and Press
+        workSeconds: 120
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 10
+        restAnnouncements:
+          - text: "Jerks in 30 seconds"
+            atSeconds: -30
+          - text: "Jerks in 10"
+            atSeconds: -10
+        announcements:
+          - text: "1 minute"
+            atSeconds: 60
+          - text: "2 minutes. Recover."
+            atSeconds: 120
+      - id: jerk-r2
+        label: Jerk
+        workSeconds: 120
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 20
+        restAnnouncements:
+          - text: "Snatch in 30 seconds"
+            atSeconds: -30
+          - text: "Snatch in 10"
+            atSeconds: -10
+        announcements:
+          - text: "1 minute"
+            atSeconds: 60
+          - text: "2 minutes. Recover."
+            atSeconds: 120
+      - id: snatch-r2
+        label: Snatch
+        workSeconds: 120
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 18
+        restAnnouncements:
+          - text: "Push Press in 30 seconds"
+            atSeconds: -30
+          - text: "Push Press in 10"
+            atSeconds: -10
+        announcements:
+          - text: "1 minute"
+            atSeconds: 60
+          - text: "2 minutes. Recover."
+            atSeconds: 120
+      - id: push-press-r2
+        label: Push Press
+        workSeconds: 120
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 20
+        restAnnouncements:
+          - text: "Cooldown stretch in 30 seconds"
+            atSeconds: -30
+          - text: "Cooldown stretch in 10"
+            atSeconds: -10
+        announcements:
+          - text: "1 minute"
+            atSeconds: 60
+          - text: "2 minutes. Recover."
+            atSeconds: 120
+
+  - id: cooldown-block
+    label: Cooldown
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: cooldown-stretch
+        label: Stretching
+        workSeconds: 600
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Ease into cooldown"
+            atSeconds: 0
+          - text: "Halfway cooldown"
+            atSeconds: 300

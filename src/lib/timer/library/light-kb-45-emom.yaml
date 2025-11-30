@@ -1,0 +1,61 @@
+title: Light Kettlebell 45 EMOM
+description: "45 minutes: 5-minute warm-up, then 10 rounds of 4-minute EMOM — swings, snatches, long cycle, jerks."
+preStartSeconds: 15
+preStartLabel: "Check your bells and timer"
+rounds:
+  - id: warmup
+    label: Warm-up
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: warmup-5
+        label: 5-minute Warm-up
+        workSeconds: 300
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Warm-up"
+            atSeconds: 0
+
+  - id: main-emom
+    label: 10 Rounds · Swings / Snatches / Long Cycle / Jerks
+    repetitions: 10
+    restAfterSeconds: 0
+    sets:
+      - id: swings
+        label: Swings
+        workSeconds: 60
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Swings"
+            atSeconds: 0
+      - id: snatches
+        label: Snatches
+        workSeconds: 60
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Snatches"
+            atSeconds: 0
+      - id: long-cycle
+        label: Long Cycle
+        workSeconds: 60
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Long Cycle"
+            atSeconds: 0
+      - id: jerks
+        label: Jerks
+        workSeconds: 60
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Jerks"
+            atSeconds: 0

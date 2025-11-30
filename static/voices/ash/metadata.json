@@ -1,0 +1,12 @@
+{
+  "voice": "ash",
+  "model": "gpt-4o-mini-tts",
+  "maxNumber": 200,
+  "format": "mp3",
+  "phrases": [
+    "swing_mode",
+    "lockout_mode",
+    "reset"
+  ],
+  "count": 200
+}

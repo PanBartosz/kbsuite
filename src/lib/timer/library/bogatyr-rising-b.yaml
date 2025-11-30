@@ -1,0 +1,252 @@
+title: Bogatyr Rising (Long Cycle)
+description: "Main lift: long cycle ladder. Accessory: double bumps, one-arm cleans, ab wheel."
+preStartSeconds: 20
+preStartLabel: "Dial in your rack"
+rounds:
+  - id: warmup
+    label: Warm-up Flow
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: warmup-15
+        label: 15-minute Warm-up
+        workSeconds: 900
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 30
+        announcements:
+          - text: "Warm-up starts"
+            atSeconds: 0
+          - text: "5 minutes elapsed"
+            atSeconds: 300
+          - text: "10 minutes elapsed"
+            atSeconds: 600
+          - text: "Last minute of warm-up"
+            atSeconds: 840
+
+  - id: long-cycle-block
+    label: Long Cycle Ladder
+    repetitions: 1
+    restAfterSeconds: 180
+    sets:
+      - id: long-cycle-3min
+        label: Long Cycle · 3:00
+        workSeconds: 180
+        restSeconds: 180
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Long cycle starts"
+            atSeconds: 0
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "4 minutes elapsed"
+            atSeconds: 240
+          - text: "5 minutes elapsed"
+            atSeconds: 300
+          - text: "6 minutes elapsed"
+            atSeconds: 360
+          - text: "7 minutes elapsed"
+            atSeconds: 420
+          - text: "8 minutes elapsed"
+            atSeconds: 480
+          - text: "10 seconds left"
+            atSeconds: -10
+        restAnnouncements:
+          - text: "2-minute long cycle in 30 seconds"
+            atSeconds: -30
+          - text: "Get ready in 10"
+            atSeconds: -10
+      - id: long-cycle-2min
+        label: Long Cycle · 2:00
+        workSeconds: 120
+        restSeconds: 120
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Long cycle starts"
+            atSeconds: 0
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "4 minutes elapsed"
+            atSeconds: 240
+          - text: "5 minutes elapsed"
+            atSeconds: 300
+          - text: "6 minutes elapsed"
+            atSeconds: 360
+          - text: "7 minutes elapsed"
+            atSeconds: 420
+          - text: "8 minutes elapsed"
+            atSeconds: 480
+          - text: "10 seconds left"
+            atSeconds: -10
+        restAnnouncements:
+          - text: "1-minute long cycle in 30 seconds"
+            atSeconds: -30
+          - text: "Get ready in 10"
+            atSeconds: -10
+      - id: long-cycle-1min
+        label: Long Cycle · 1:00
+        workSeconds: 60
+        restSeconds: 120
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Long cycle starts"
+            atSeconds: 0
+          - text: "30 seconds elapsed"
+            atSeconds: 30
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "10 seconds left"
+            atSeconds: -10
+        restAnnouncements:
+          - text: "Bumps in 30 seconds"
+            atSeconds: -30
+          - text: "Get ready in 10"
+            atSeconds: -10
+
+  - id: bumps-block
+    label: Double Bumps
+    repetitions: 1
+    restAfterSeconds: 180
+    sets:
+      - id: bumps-1min
+        label: Double KB Bumps
+        workSeconds: 60
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Bumps start"
+            atSeconds: 0
+          - text: "30 seconds elapsed"
+            atSeconds: 30
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "10 seconds left"
+            atSeconds: -10
+        restAnnouncements:
+          - text: "One-arm cleans in 30 seconds"
+            atSeconds: -30
+          - text: "Get ready in 10"
+            atSeconds: -10
+
+  - id: oa-clean-block
+    label: One-Arm Cleans with Gloves
+    repetitions: 1
+    restAfterSeconds: 180
+    sets:
+      - id: oa-clean-left
+        label: OA Clean · Left
+        workSeconds: 90
+        restSeconds: 30
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Left-side cleans start"
+            atSeconds: 0
+          - text: "30 seconds elapsed"
+            atSeconds: 30
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "10 seconds left"
+            atSeconds: -10
+        restAnnouncements:
+          - text: "Right side in 10 seconds"
+            atSeconds: -10
+      - id: oa-clean-right
+        label: OA Clean · Right
+        workSeconds: 90
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Right-side cleans start"
+            atSeconds: 0
+          - text: "30 seconds elapsed"
+            atSeconds: 30
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "10 seconds left"
+            atSeconds: -10
+        restAnnouncements:
+          - text: "Ab wheel in 30 seconds"
+            atSeconds: -30
+          - text: "Get ready in 10"
+            atSeconds: -10
+
+  - id: ab-wheel
+    label: Ab Roller
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: ab-wheel-set
+        label: Ab Roller Set
+        workSeconds: 120
+        restSeconds: 180
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Ab wheel starts"
+            atSeconds: 0
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "4 minutes elapsed"
+            atSeconds: 240
+          - text: "5 minutes elapsed"
+            atSeconds: 300
+          - text: "6 minutes elapsed"
+            atSeconds: 360
+          - text: "7 minutes elapsed"
+            atSeconds: 420
+          - text: "8 minutes elapsed"
+            atSeconds: 480
+          - text: "20 seconds left"
+            atSeconds: -20
+        restAnnouncements:
+          - text: "Cooldown in 30 seconds"
+            atSeconds: -30
+          - text: "Cooldown in 10"
+            atSeconds: -10
+
+  - id: cooldown
+    label: Cooldown
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: cooldown-5
+        label: 5-minute Cooldown
+        workSeconds: 300
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Cooldown starts"
+            atSeconds: 0
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "4 minutes elapsed"
+            atSeconds: 240
+          - text: "Session complete"
+            atSeconds: 300

@@ -1,0 +1,248 @@
+title: Bogatyr Rising (Half Snatch)
+description: "Main lift: half snatch. Accessory: jerks, swings, ab wheel."
+preStartSeconds: 20
+preStartLabel: "Set up your bells"
+rounds:
+  - id: warmup
+    label: Warm-up Flow
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: warmup-15
+        label: 15-minute Warm-up
+        workSeconds: 900
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 30
+        announcements:
+          - text: "Warm-up starts. Keep it smooth."
+            atSeconds: 0
+          - text: "5 minutes elapsed"
+            atSeconds: 300
+          - text: "10 minutes elapsed"
+            atSeconds: 600
+          - text: "Last minute of warm-up"
+            atSeconds: 840
+
+  - id: half-snatch-block
+    label: Half Snatch Block
+    repetitions: 1
+    restAfterSeconds: 180
+    sets:
+      - id: half-snatch-1
+        label: Half Snatch
+        workSeconds: 150
+        restSeconds: 150
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Half-snatch starts"
+            atSeconds: 0
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "4 minutes elapsed"
+            atSeconds: 240
+          - text: "5 minutes elapsed"
+            atSeconds: 300
+          - text: "6 minutes elapsed"
+            atSeconds: 360
+          - text: "7 minutes elapsed"
+            atSeconds: 420
+          - text: "8 minutes elapsed"
+            atSeconds: 480
+          - text: "15 seconds left"
+            atSeconds: -15
+        restAnnouncements:
+          - text: "Next half-snatch set in 30 seconds"
+            atSeconds: -30
+          - text: "Get ready in 10"
+            atSeconds: -10
+      - id: half-snatch-2
+        label: Half Snatch
+        workSeconds: 150
+        restSeconds: 150
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Half-snatch starts"
+            atSeconds: 0
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "4 minutes elapsed"
+            atSeconds: 240
+          - text: "5 minutes elapsed"
+            atSeconds: 300
+          - text: "6 minutes elapsed"
+            atSeconds: 360
+          - text: "7 minutes elapsed"
+            atSeconds: 420
+          - text: "8 minutes elapsed"
+            atSeconds: 480
+          - text: "15 seconds left"
+            atSeconds: -15
+        restAnnouncements:
+          - text: "Long reset before jerks. 30 seconds"
+            atSeconds: -30
+          - text: "Jerks coming up in 10"
+            atSeconds: -10
+
+  - id: jerk-block
+    label: Jerks
+    repetitions: 1
+    restAfterSeconds: 180
+    sets:
+      - id: jerk-left
+        label: KB Jerk · Left
+        workSeconds: 60
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Jerks left starts"
+            atSeconds: 0
+          - text: "30 seconds elapsed"
+            atSeconds: 30
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "10 seconds left"
+            atSeconds: -10
+        restAnnouncements:
+          - text: "Right side in 30 seconds"
+            atSeconds: -30
+          - text: "Right side in 10"
+            atSeconds: -10
+      - id: jerk-right
+        label: KB Jerk · Right
+        workSeconds: 60
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Jerks right starts"
+            atSeconds: 0
+          - text: "30 seconds elapsed"
+            atSeconds: 30
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "10 seconds left"
+            atSeconds: -10
+        restAnnouncements:
+          - text: "Reset for swings. 30 seconds"
+            atSeconds: -30
+          - text: "Swings in 10"
+            atSeconds: -10
+
+  - id: swing-block
+    label: Swings
+    repetitions: 1
+    restAfterSeconds: 180
+    sets:
+      - id: swing-left
+        label: KB Swing · Left
+        workSeconds: 60
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Swings left starts"
+            atSeconds: 0
+          - text: "30 seconds elapsed"
+            atSeconds: 30
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "10 seconds left"
+            atSeconds: -10
+        restAnnouncements:
+          - text: "Right side in 30 seconds"
+            atSeconds: -30
+          - text: "Right side in 10"
+            atSeconds: -10
+      - id: swing-right
+        label: KB Swing · Right
+        workSeconds: 60
+        restSeconds: 60
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Swings right starts"
+            atSeconds: 0
+          - text: "30 seconds elapsed"
+            atSeconds: 30
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "3 minutes elapsed"
+            atSeconds: 180
+          - text: "10 seconds left"
+            atSeconds: -10
+        restAnnouncements:
+          - text: "Ab wheel in 30 seconds"
+            atSeconds: -30
+          - text: "Ab wheel in 10"
+            atSeconds: -10
+
+  - id: ab-wheel
+    label: Ab Roller
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: ab-wheel-set
+        label: Ab Roller Set
+        workSeconds: 120
+        restSeconds: 180
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Ab wheel starts"
+            atSeconds: 0
+          - text: "1 minute elapsed"
+            atSeconds: 60
+          - text: "Last 20 seconds"
+            atSeconds: 100
+        restAnnouncements:
+          - text: "Cooldown in 30 seconds"
+            atSeconds: -30
+          - text: "Cooldown in 10"
+            atSeconds: -10
+
+  - id: cooldown
+    label: Cooldown
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: cooldown-5
+        label: 5-minute Cooldown
+        workSeconds: 300
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 0
+        announcements:
+          - text: "Cooldown starts. Breathe."
+            atSeconds: 0
+          - text: "2 minutes elapsed"
+            atSeconds: 120
+          - text: "4 minutes elapsed"
+            atSeconds: 240
+          - text: "Session complete"
+            atSeconds: 300

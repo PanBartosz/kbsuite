@@ -1,0 +1,142 @@
+title: KettleFlow System Test
+preStartSeconds: 20
+preStartLabel: Gear up!
+rounds:
+  - id: warmup-block
+    label: Dynamic Warm-up
+    repetitions: 1
+    restAfterSeconds: 15
+    sets:
+      - id: mobility-sequence
+        label: Mobility Flow
+        workSeconds: 45
+        restSeconds: 15
+        repetitions: 2
+        transitionSeconds: 10
+        announcements:
+          - text: "Warm-up starting. Stay light."
+            atSeconds: 0
+          - text: "Switch direction"
+            atSeconds: 45
+
+  - id: single-set-transition
+    label: Single Set · Transition Demo
+    repetitions: 3
+    restAfterSeconds: 20
+    sets:
+      - id: single-trans-set
+        label: Walking Lunges
+        workSeconds: 40
+        restSeconds: 0
+        repetitions: 1
+        transitionSeconds: 12
+        targetRpm: 18
+        announcements:
+          - text: "Round {rep}: step through the lunge"
+            atSeconds: 0
+
+  - id: single-set-rest
+    label: Single Set · Rest Demo
+    repetitions: 2
+    restAfterSeconds: 30
+    sets:
+      - id: single-rest-set
+        label: Turkish Get-up (slow)
+        workSeconds: 50
+        restSeconds: 20
+        repetitions: 1
+        transitionSeconds: 0
+        targetRpm: 10
+        announcements:
+          - text: "Steady get-up"
+            atSeconds: 0
+          - text: "Switch sides"
+            atSeconds: 25
+
+  - id: circuit-block
+    label: Mixed Circuit
+    repetitions: 2
+    restAfterSeconds: 25
+    sets:
+      - id: kettlebell-swing
+        label: Kettlebell Swings
+        workSeconds: 30
+        restSeconds: 15
+        repetitions: 3
+        transitionSeconds: 10
+        targetRpm: 24
+        announcements:
+          - text: "Swings on!"
+            atSeconds: 0
+          - text: "Halfway this round"
+            atSeconds: 45
+          - text: "Last 10 seconds"
+            atSeconds: 50
+      - id: pushups
+        label: Push-ups
+        workSeconds: 25
+        restSeconds: 20
+        repetitions: 2
+        transitionSeconds: 8
+        targetRpm: 14
+        announcements:
+          - text: "Drop into push-ups"
+            atSeconds: 0
+          - text: "Stay braced"
+            atSeconds: 15
+      - id: hollow-hold
+        label: Hollow Hold
+        workSeconds: 35
+        restSeconds: 15
+        repetitions: 1
+        transitionSeconds: 10
+        announcements:
+          - text: "Lock out your hollow hold"
+            atSeconds: 0
+
+  - id: combo-endurance
+    label: Combo Endurance
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: clean-and-press
+        label: Clean + Press Ladder
+        workSeconds: 45
+        restSeconds: 15
+        repetitions: 4
+        transitionSeconds: 12
+        targetRpm: 16
+        announcements:
+          - text: "Clean + Press. Stay smooth."
+            atSeconds: 0
+          - text: "Switch hands"
+            atSeconds: 90
+      - id: goblet-squat
+        label: Goblet Squats
+        workSeconds: 30
+        restSeconds: 20
+        repetitions: 2
+        transitionSeconds: 0
+        targetRpm: 22
+        announcements:
+          - text: "Sink into the squat"
+            atSeconds: 0
+          - text: "Stay upright"
+            atSeconds: 20
+
+  - id: cooldown-block
+    label: Cooldown & Breathing
+    repetitions: 1
+    restAfterSeconds: 0
+    sets:
+      - id: cooldown-set
+        label: Stretch & Box Breathing
+        workSeconds: 60
+        restSeconds: 15
+        repetitions: 2
+        transitionSeconds: 0
+        announcements:
+          - text: "Begin cooldown"
+            atSeconds: 0
+          - text: "Slow inhales"
+            atSeconds: 30
