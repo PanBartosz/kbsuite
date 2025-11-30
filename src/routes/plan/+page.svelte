@@ -473,6 +473,16 @@ rounds: array of objects, in order
   $: timelinePreview = previewResult.plan ? buildTimeline(previewResult.plan) : []
   $: roundTotalsMapPreview = buildRoundTotalsMap(timelinePreview)
 
+  const timelineForYaml = (yaml?: string | null) => {
+    if (!yaml) return []
+    try {
+      const parsed = normalizePlan(YAML.parse(yaml))
+      return buildTimeline(parsed)
+    } catch {
+      return []
+    }
+  }
+
   const generateWorkoutFromAi = async () => {
     const description = aiPrompt.trim()
     if (!description) {
@@ -757,6 +767,11 @@ rounds: array of objects, in order
                   <button class="ghost danger" on:click={() => deletePlan(item.id)}>Delete</button>
                 </div>
               </div>
+              {#if timelineForYaml(item.yaml_source).length}
+                <div class="plan-timeline">
+                  <PhaseQueue phases={timelineForYaml(item.yaml_source)} activeIndex={-1} />
+                </div>
+              {/if}
             </article>
           {/each}
         </div>
@@ -1145,6 +1160,9 @@ rounds: array of objects, in order
     border-radius: 12px;
     padding: 0.75rem;
     background: color-mix(in srgb, var(--color-surface-1) 70%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
   .card-header {
     display: flex;
@@ -1170,6 +1188,9 @@ rounds: array of objects, in order
     background: var(--color-surface-1);
     color: var(--color-text-primary);
     font-size: 0.9rem;
+  }
+  .plan-timeline :global(.phase-queue) {
+    width: 100%;
   }
   .inline-actions {
     display: flex;
