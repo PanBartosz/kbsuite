@@ -64,6 +64,7 @@
 		</div>
 		<nav>
 			<a href="/">Home</a>
+			<a href="/plan">Planner</a>
 			<a href="/timer">Timer</a>
 			<a href="/counter">Rep Counter</a>
 			<a href="/big-picture">Big Picture</a>

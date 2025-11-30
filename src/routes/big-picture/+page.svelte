@@ -7,6 +7,7 @@
 
   let counterRef: any
   const workoutId = $derived($page.url.searchParams.get('workout') ?? '')
+  const plannedId = $derived($page.url.searchParams.get('planned') ?? '')
 
   const handleStart = () => counterRef?.start?.()
   const handlePause = () => counterRef?.pause?.()
@@ -21,6 +22,7 @@
     hideControlBar={false}
     showInlineSlot={true}
     initialWorkoutId={workoutId}
+    initialPlannedId={plannedId}
     on:start={handleStart}
     on:pause={handlePause}
     on:resume={handleResume}

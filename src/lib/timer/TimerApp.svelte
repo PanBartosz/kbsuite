@@ -37,6 +37,7 @@ import '$lib/timer/app.css'
   export let hideControlBar = false
   export let showInlineSlot = false
   export let initialWorkoutId = ''
+  export let initialPlannedId = ''
 
   const coerceSeconds = (value) => {
     const numeric = Number(value)
@@ -468,6 +469,7 @@ let plan =
   let lastFinalizedPhaseIndex = -1
   let sessionStartMs = null
   let pendingInitialWorkoutId = ''
+  let pendingInitialPlannedId = ''
   $: openAiKey = $settings.openAiKey ?? ''
   $: if ($settings.timer.audioEnabled !== audioEnabled) audioEnabled = audioSupported && $settings.timer.audioEnabled
   $: if ($settings.timer.notificationsEnabled !== notificationsEnabled) notificationsEnabled = $settings.timer.notificationsEnabled
@@ -1070,6 +1072,10 @@ let plan =
       loadWorkout(match)
       pendingInitialWorkoutId = ''
     }
+  }
+  $: if (pendingInitialPlannedId) {
+    loadPlannedWorkout(pendingInitialPlannedId)
+    pendingInitialPlannedId = ''
   }
   $: {
     summaryPlanKeyValue = buildSummaryKey()
@@ -2011,6 +2017,34 @@ Rules:
     }
   }
 
+  const loadPlannedWorkout = async (id) => {
+    try {
+      const res = await fetch(`/api/planned-workouts/${id}`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data?.item) return
+      const item = data.item
+      const source = item.yaml_source ?? ''
+      const parsed = tryParsePlan(source)
+      editorSource = source
+      lastAppliedSource = source
+      if (!parsed.error && parsed.plan) {
+        plan = parsed.plan
+      }
+      selectedWorkoutId = null
+      saveName = item.title ?? 'Planned workout'
+      if (!isTimerRunning) {
+        timerStatusMessage = 'Timer idle'
+        timerError = null
+        elapsedMs = 0
+        phaseRemainingMs = 0
+        activePhase = null
+        activePhaseIndex = -1
+      }
+    } catch (error) {
+      console.warn('Failed to load planned workout', error)
+    }
+  }
+
   const normalizeMagicPayload = (value) => {
     if (!value) return ''
     let payload = value.trim()
@@ -2113,6 +2147,7 @@ Rules:
       latestRepCountValue = value
     })
     pendingInitialWorkoutId = initialWorkoutId
+    pendingInitialPlannedId = initialPlannedId
     if (typeof window !== 'undefined') {
       try {
         const storedVoice = window.localStorage.getItem('gs_ai_timer_openai_voice')

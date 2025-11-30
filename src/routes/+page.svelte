@@ -1,6 +1,9 @@
 <section class="panel">
 	<h1>KB Suite</h1>
 	<div class="cards">
+		<a class="card" href="/plan">
+			<h3>Planner</h3>
+		</a>
 		<a class="card" href="/timer">
 			<h3>Timer</h3>
 		</a>
@@ -54,9 +57,6 @@
 	}
 
 	h3 {
-		margin: 0;
-	}
-	p {
 		margin: 0;
 	}
 </style>

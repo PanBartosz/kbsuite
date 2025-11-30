@@ -87,6 +87,7 @@ const initDb = () => {
   migrateUsersTable()
   migrateCompletedSets()
   migrateCompletedWorkouts()
+  migratePlannedWorkouts()
   seedTemplates()
 }
 
@@ -150,6 +151,26 @@ const migrateCompletedWorkouts = () => {
   }
 }
 
+const migratePlannedWorkouts = () => {
+  const database = db!
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS planned_workouts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      planned_for INTEGER NOT NULL,
+      title TEXT,
+      yaml_source TEXT,
+      plan_json TEXT,
+      notes TEXT,
+      tags TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_planned_user_date ON planned_workouts(user_id, planned_for);
+  `)
+}
+
 const defaultSettings = () => ({
   theme: 'dark',
   timer: {
@@ -170,6 +191,20 @@ const defaultSettings = () => ({
 const hashPassword = (password: string, salt: string) => {
   const derived = crypto.scryptSync(password, salt, 64)
   return derived.toString('hex')
+}
+
+const safeParseTags = (value: any): string[] => {
+  if (!value) return []
+  try {
+    const parsed = Array.isArray(value) ? value : JSON.parse(String(value))
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map((t) => (typeof t === 'string' ? t.trim() : ''))
+      .filter(Boolean)
+      .slice(0, 8)
+  } catch {
+    return []
+  }
 }
 
 export const createUserWithPassword = (username: string, password: string) => {
@@ -305,3 +340,15 @@ export const saveSettingsForUser = (userId: string, data: any) => {
      ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`
   ).run(userId, payload, Date.now())
 }
+
+export const serializePlanned = (row: any) => ({
+  id: row.id,
+  planned_for: row.planned_for,
+  title: row.title ?? '',
+  yaml_source: row.yaml_source ?? '',
+  plan_json: row.plan_json ? JSON.parse(row.plan_json) : null,
+  notes: row.notes ?? '',
+  tags: safeParseTags(row.tags),
+  created_at: row.created_at,
+  updated_at: row.updated_at
+})
