@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   kb-suite:
-    build: .
+    image: ghcr.io/panbartosz/kb-suite-app:latest
     ports:
       - "4173:4173"
     environment:
@@ -13,3 +13,4 @@ services:
 
 volumes:
   kb_suite_data:
+    external: true
