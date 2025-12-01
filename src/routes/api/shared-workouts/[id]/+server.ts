@@ -29,7 +29,22 @@ export const PATCH = async ({ params, request, cookies }) => {
        LEFT JOIN users ru ON ru.id = i.recipient_id
        WHERE i.id = ?`
     )
-    .get(id)
+    .get(id) as
+    | {
+        id: string
+        sender_id: string
+        recipient_id: string
+        status: string
+        planned_for?: number | null
+        yaml_source?: string
+        plan_json?: any
+        title?: string
+        notes?: string
+        tags?: any
+        sender_username?: string
+        recipient_username?: string
+      }
+    | undefined
 
   if (!invite) return json({ error: 'Not found' }, { status: 404 })
   if (invite.recipient_id !== session.userId) {

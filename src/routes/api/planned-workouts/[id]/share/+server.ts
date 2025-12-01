@@ -51,7 +51,17 @@ export const POST = async ({ params, request, cookies }) => {
   const db = getDb()
   const planned = db
     .prepare('SELECT * FROM planned_workouts WHERE id = ? AND user_id = ?')
-    .get(id, session.userId)
+    .get(id, session.userId) as
+    | {
+        id: string
+        title?: string
+        yaml_source?: string
+        plan_json?: string | null
+        planned_for?: number | null
+        notes?: string
+        tags?: string | null
+      }
+    | undefined
   if (!planned) return json({ error: 'Planned workout not found' }, { status: 404 })
 
   const recipient = findUserByUsername(recipientUsername)
