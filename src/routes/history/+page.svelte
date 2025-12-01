@@ -55,6 +55,7 @@
   let viewMode: 'list' | 'calendar' = 'list'
   let calendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()
   let selectedDateKey = ''
+  let mobileWeekStart = new Date().getTime()
   let shareItem: CompletedWorkout | null = null
   let shareRoundCol = 120
   let shareShowReps = true
@@ -216,6 +217,30 @@
 
   const selectDate = (key: string) => {
     selectedDateKey = key
+  }
+
+  const startOfWeek = (ts: number) => {
+    const d = new Date(ts)
+    const dow = (d.getDay() + 6) % 7 // Monday first
+    d.setDate(d.getDate() - dow)
+    d.setHours(0, 0, 0, 0)
+    return d.getTime()
+  }
+
+  const weekLabel = (startTs: number) => {
+    const start = new Date(startTs)
+    const end = new Date(startTs)
+    end.setDate(end.getDate() + 6)
+    return `${start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+  }
+
+  const shiftWeek = (delta: number) => {
+    const next = new Date(mobileWeekStart)
+    next.setDate(next.getDate() + delta * 7)
+    mobileWeekStart = startOfWeek(next.getTime())
+    const key = dayKey(mobileWeekStart)
+    selectedDateKey = key
+    calendarMonth = new Date(next.getFullYear(), next.getMonth(), 1).getTime()
   }
 
   const computeHrSparkColors = () => {
@@ -412,7 +437,7 @@
 
   $: dailyBuckets = (() => {
     const buckets: Record<string, CompletedWorkout[]> = {}
-    monthItems.forEach((item) => {
+    visibleItems.forEach((item) => {
       const ts = item.started_at ?? item.created_at
       if (!ts) return
       const key = dayKey(ts)
@@ -423,6 +448,13 @@
 
   $: selectedDayItems =
     selectedDateKey && dailyBuckets[selectedDateKey] ? dailyBuckets[selectedDateKey] : []
+  $: mobileWeekStart = selectedDateKey ? startOfWeek(Date.parse(selectedDateKey)) : mobileWeekStart
+  $: mobileWeekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(mobileWeekStart)
+    d.setDate(d.getDate() + i)
+    const ts = d.getTime()
+    return { key: dayKey(ts), label: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) }
+  })
   $: availableTags = Array.from(
     new Set(
       items
@@ -669,6 +701,12 @@
 
   const startEdit = (item: CompletedWorkout) => {
     editingId = item.id
+    expanded = { ...expanded, [item.id]: true }
+    const ts = item.started_at ?? item.created_at
+    if (ts) {
+      selectedDateKey = dayKey(ts)
+      calendarMonth = new Date(new Date(ts).getFullYear(), new Date(ts).getMonth(), 1).getTime()
+    }
     editSets = item.sets?.map((s) => ({ ...s })) ?? []
     editTitle = item.title ?? ''
     editStartedAt = item.started_at ? toLocalDatetimeInput(item.started_at) : ''
@@ -1500,6 +1538,53 @@
 
     {#if viewMode === 'calendar'}
       <section class="calendar-shell">
+        <div class="week-head mobile-only">
+          <div class="month-nav">
+            <button class="ghost" on:click={() => shiftWeek(-1)}>←</button>
+            <strong>{weekLabel(mobileWeekStart)}</strong>
+            <button class="ghost" on:click={() => shiftWeek(1)}>→</button>
+          </div>
+          <p class="muted small">
+            Showing {selectedDayItems.length} session{selectedDayItems.length === 1 ? '' : 's'} this week (filters applied).
+          </p>
+        </div>
+        <div class="week-list mobile-only">
+          {#each mobileWeekDays as dayInfo}
+            {@const itemsForDay = dailyBuckets[dayInfo.key] ?? []}
+            <button
+              type="button"
+              class="week-row"
+              class:active={selectedDateKey === dayInfo.key}
+              on:click={() => selectDate(dayInfo.key)}
+            >
+              <div class="week-row__label">
+                <span class="week-row__day">{dayInfo.label}</span>
+                {#if itemsForDay.length}
+                  <span class="week-row__count">{itemsForDay.length}</span>
+                {/if}
+              </div>
+              {#if itemsForDay.length}
+                <div class="week-row__items">
+                  {#each itemsForDay as it}
+                    {@const dur = it.duration_s || 0}
+                    {@const hrTag = hrAttached[it.id] || hrSummary[it.id]}
+                    <div class="week-row__item">
+                      <span class="dot" style={`opacity:${Math.min(1, dur / 3600 + 0.3)}`}></span>
+                      <span class="week-row__title">{it.title || 'Workout'}</span>
+                      <div class="week-row__meta">
+                        <span class="day-row-badge">{dur ? formatShort(dur) : '-'}</span>
+                        {#if hrTag}<span class="day-row-hr">HR</span>{/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <p class="muted tiny">No workouts</p>
+              {/if}
+            </button>
+          {/each}
+        </div>
+
         <div class="calendar-head">
           <div class="month-nav">
             <button class="ghost" on:click={() => moveMonth(-1)}>←</button>
@@ -1574,7 +1659,7 @@
             <article class="card">
               <div class="card-header two-col">
                 <div class="header-left">
-                  <h3>{item.title || 'Workout'}</h3>
+                <h3>{item.title || 'Workout'}</h3>
                   <div class="meta-row">
                     <span class="muted small">{formatDate(item.started_at || item.created_at)}</span>
                     {#if item.duration_s}
@@ -1678,12 +1763,34 @@
                 </div>
               </div>
               <div class="summary-actions">
-                <button class="ghost small" on:click={() => toggleExpanded(item.id, !isExpanded)}>
-                  {isExpanded ? 'Collapse' : 'Expand'}
+                <button
+                  class="ghost small"
+                  on:click={() => {
+                    startEdit(item)
+                    toggleExpanded(item.id, true)
+                  }}
+                >
+                  Edit
+                </button>
+                <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
+                <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
+                <button
+                  class="ghost small"
+                  on:click={() => {
+                    shareItem = item
+                    shareShowReps = true
+                    shareShowWork = true
+                    shareShowSets = true
+                  }}
+                >
+                  Share
                 </button>
                 <button class="ghost small" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
                 <button class="ghost small" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
                 <button class="ghost small" on:click={() => duplicateLog(item)}>Log again</button>
+                <button class="ghost small" on:click={() => toggleExpanded(item.id, !isExpanded)}>
+                  {isExpanded ? 'Collapse' : 'Expand'}
+                </button>
               </div>
               {#if isExpanded}
                 <div class="sets">
@@ -1871,10 +1978,21 @@
                   type="number"
                   min="0"
                   step="1"
-                  bind:value={editDurationMinutes}
-                  placeholder="auto"
-                />
-              </label>
+                bind:value={editDurationMinutes}
+                placeholder="auto"
+              />
+            </label>
+            <label>
+              <span class="muted small">Session RPE</span>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                step="1"
+                bind:value={editRpe}
+                placeholder="1-10"
+              />
+            </label>
           <label class="notes-field">
             <span class="muted small">Notes</span>
             <input
@@ -1910,17 +2028,6 @@
               </div>
             </div>
           </label>
-          <label>
-            <span class="muted small">Session RPE</span>
-            <input
-              type="number"
-              min="1"
-                  max="10"
-                  step="1"
-                  bind:value={editRpe}
-                  placeholder="1-10"
-                />
-              </label>
             </div>
           {:else}
             {#if item.notes}
@@ -1929,86 +2036,116 @@
           {/if}
           {#if editingId === item.id}
             <div class="sets">
+              <div class="set-grid-labels desktop-only">
+                <span></span>
+                <span></span>
+                <span>Duration (sec)</span>
+                <span>Reps</span>
+                <span>Weight</span>
+                <span>RPE</span>
+                <span>Actions</span>
+              </div>
               {#each editSets as set, idx}
                 {@const isRest = set.type && set.type !== 'work'}
                 <div class="set-row edit-row" class:rest-row={isRest}>
                   <div class="row-main" class:rest-row={isRest}>
                     {#if isRest}
-                      <span class="muted small">Rest</span>
-                      <span></span>
-                      <input
-                        class="duration-input narrow"
-                        type="number"
-                        min="0"
-                        placeholder="sec"
-                        value={set.duration_s ?? ''}
-                        on:input={(e) => {
-                          const val = e.currentTarget.value.trim()
-                          updateSetField(idx, { duration_s: val === '' ? null : Number(val) })
-                        }}
-                      />
-                      <span></span>
-                      <span></span>
-                      <span></span>
+                      <span class="desktop-only"></span>
+                      <span class="desktop-only"></span>
+                      <div class="field">
+                        <span class="mobile-label">Rest (sec)</span>
+                        <input
+                          class="duration-input narrow"
+                          type="number"
+                          min="0"
+                          placeholder="sec"
+                          value={set.duration_s ?? ''}
+                          on:input={(e) => {
+                            const val = e.currentTarget.value.trim()
+                            updateSetField(idx, { duration_s: val === '' ? null : Number(val) })
+                          }}
+                        />
+                      </div>
+                      <span class="desktop-only"></span>
+                      <span class="desktop-only"></span>
+                      <span class="desktop-only"></span>
                     {:else}
-                      <input
-                        class="round-input"
-                        placeholder="Round"
-                        value={set.round_label ?? ''}
-                        on:input={(e) => updateSetField(idx, { round_label: e.currentTarget.value })}
-                      />
-                      <input
-                        class="label-input"
-                        placeholder="Set label"
-                        value={set.set_label ?? ''}
-                        on:input={(e) => updateSetField(idx, { set_label: e.currentTarget.value })}
-                      />
-                      <input
-                        class="duration-input narrow"
-                        type="number"
-                        min="0"
-                        placeholder="sec"
-                        value={set.duration_s ?? ''}
-                        on:input={(e) => {
-                          const val = e.currentTarget.value.trim()
-                          updateSetField(idx, { duration_s: val === '' ? null : Number(val) })
-                        }}
-                      />
-                      <input
-                        class="narrow"
-                        type="number"
-                        min="0"
-                        value={set.reps ?? ''}
-                        on:input={(e) => {
-                          const val = e.currentTarget.value.trim()
-                          updateSet(idx, 'reps', val === '' ? null : Number(val))
-                        }}
-                      />
-                      <input
-                        class="narrow"
-                        type="number"
-                        min="0"
-                        step="0.5"
-                        value={set.weight ?? ''}
-                        on:input={(e) => {
-                          const val = e.currentTarget.value.trim()
-                          updateSet(idx, 'weight', val === '' ? null : Number(val))
-                        }}
-                        placeholder="Weight"
-                      />
-                      <input
-                        class="narrow"
-                        type="number"
-                        min="1"
-                        max="10"
-                        step="1"
-                        value={set.rpe ?? ''}
-                        placeholder="RPE"
-                        on:input={(e) => {
-                          const val = e.currentTarget.value.trim()
-                          updateSetField(idx, { rpe: val === '' ? null : Number(val) })
-                        }}
-                      />
+                      <div class="field">
+                        <span class="mobile-label">Round</span>
+                        <input
+                          class="round-input"
+                          placeholder="Round"
+                          value={set.round_label ?? ''}
+                          on:input={(e) => updateSetField(idx, { round_label: e.currentTarget.value })}
+                        />
+                      </div>
+                      <div class="field">
+                        <span class="mobile-label">Label</span>
+                        <input
+                          class="label-input"
+                          placeholder="Set label"
+                          value={set.set_label ?? ''}
+                          on:input={(e) => updateSetField(idx, { set_label: e.currentTarget.value })}
+                        />
+                      </div>
+                      <div class="field">
+                        <span class="mobile-label">Duration (sec)</span>
+                        <input
+                          class="duration-input narrow"
+                          type="number"
+                          min="0"
+                          placeholder="sec"
+                          value={set.duration_s ?? ''}
+                          on:input={(e) => {
+                            const val = e.currentTarget.value.trim()
+                            updateSetField(idx, { duration_s: val === '' ? null : Number(val) })
+                          }}
+                        />
+                      </div>
+                      <div class="field">
+                        <span class="mobile-label">Reps</span>
+                        <input
+                          class="narrow"
+                          type="number"
+                          min="0"
+                          value={set.reps ?? ''}
+                          on:input={(e) => {
+                            const val = e.currentTarget.value.trim()
+                            updateSet(idx, 'reps', val === '' ? null : Number(val))
+                          }}
+                        />
+                      </div>
+                      <div class="field">
+                        <span class="mobile-label">Weight</span>
+                        <input
+                          class="narrow"
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={set.weight ?? ''}
+                          on:input={(e) => {
+                            const val = e.currentTarget.value.trim()
+                            updateSet(idx, 'weight', val === '' ? null : Number(val))
+                          }}
+                          placeholder="Weight"
+                        />
+                      </div>
+                      <div class="field">
+                        <span class="mobile-label">RPE</span>
+                        <input
+                          class="narrow"
+                          type="number"
+                          min="1"
+                          max="10"
+                          step="1"
+                          value={set.rpe ?? ''}
+                          placeholder="RPE"
+                          on:input={(e) => {
+                            const val = e.currentTarget.value.trim()
+                            updateSetField(idx, { rpe: val === '' ? null : Number(val) })
+                          }}
+                        />
+                      </div>
                     {/if}
                     <div class="inline-actions">
                       <select
@@ -2048,7 +2185,7 @@
               <button class="ghost" on:click={cancelEdit}>Cancel</button>
             </div>
           {:else}
-            <div class="summary-actions">
+            <div class="actions">
               <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
               <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
               <button
@@ -2111,6 +2248,22 @@
                 }}>
                   {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
                 </button>
+                <button class="ghost" on:click={() => copySummary(item)}>Copy</button>
+                <button class="ghost" on:click={() => copyCsv(item)}>CSV</button>
+                <button
+                  class="ghost"
+                  on:click={() => {
+                    shareItem = item
+                    shareShowReps = true
+                    shareShowWork = true
+                    shareShowSets = true
+                  }}
+                >
+                  Share
+                </button>
+                <button class="ghost" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
+                <button class="ghost" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
+                <button class="ghost" on:click={() => duplicateLog(item)}>Log again</button>
                 {#if hrAttached[item.id] || hrSummary[item.id]}
                   <button class="ghost danger" on:click={() => removeHrFile(item.id)}>Remove HR file</button>
                 {/if}
@@ -2567,6 +2720,19 @@
     background: var(--color-surface-1);
     color: var(--color-text-primary);
   }
+  .set-grid-labels {
+    display: none;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .mobile-label {
+    display: none;
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+  }
   .template-modal {
     position: fixed;
     top: 50%;
@@ -2657,7 +2823,7 @@
     color: var(--color-text-primary);
   }
   .set-row input.narrow {
-    max-width: 80px;
+    max-width: 120px;
   }
   .rest-label {
     grid-column: 1 / -1;
@@ -2680,6 +2846,85 @@
   }
   .summary-actions button {
     white-space: nowrap;
+  }
+
+  @media (max-width: 720px) {
+    .meta-edit {
+      grid-template-columns: 1fr;
+    }
+    .row-main {
+      grid-template-columns: 1fr;
+      gap: 0.4rem;
+    }
+    .inline-actions {
+      grid-column: 1 / -1;
+      justify-content: flex-start;
+    }
+    .set-row input,
+    .set-row input.narrow {
+      max-width: 100%;
+    }
+    .mobile-label {
+      display: block;
+    }
+    .row-main {
+      align-items: stretch;
+    }
+  }
+
+  @media (min-width: 721px) {
+    .set-grid-labels {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr 0.6fr 0.45fr 0.45fr 0.45fr 1fr;
+      gap: 0.35rem;
+      align-items: center;
+      margin-bottom: 0.15rem;
+      color: var(--color-text-muted);
+      font-size: 0.85rem;
+      padding: 0 0.15rem;
+    }
+    .row-main,
+    .row-main.rest-row {
+      grid-template-columns: 1fr 1.2fr 0.6fr 0.45fr 0.45fr 0.45fr 1fr;
+    }
+    .inline-actions {
+      grid-column: 7 / 8;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .card-header.two-col {
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+    .header-right {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      align-items: flex-start;
+    }
+    .hr-card {
+      width: 100%;
+      align-items: flex-start;
+    }
+    .summary-actions {
+      justify-content: flex-start;
+    }
+    .summary-chips {
+      justify-content: flex-start;
+    }
+    .hr-card-top {
+      width: 100%;
+      justify-content: flex-start;
+      gap: 0.4rem;
+    }
+    .hr-card {
+      align-items: flex-start;
+    }
+    .hr-spark {
+      width: 100%;
+    }
   }
   .summary-actions + .sets {
     margin-top: 0.25rem;
@@ -2842,6 +3087,87 @@
   border: 1px solid color-mix(in srgb, var(--color-accent) 60%, var(--color-border));
   color: var(--color-accent);
 }
+
+.week-head,
+.week-list {
+  display: none;
+}
+.week-row {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 0.65rem;
+  background: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+}
+.week-row.active {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-1));
+}
+.week-row__label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  justify-content: space-between;
+}
+.week-row__day {
+  font-weight: 700;
+}
+.week-row__count {
+  background: color-mix(in srgb, var(--color-accent) 25%, var(--color-surface-1));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+  color: var(--color-text-primary);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.85rem;
+}
+.week-row__items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  width: 100%;
+}
+.week-row__item {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 0.35rem;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+}
+.week-row__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.week-row__meta {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 720px) {
+  .calendar-head,
+  .calendar-grid {
+    display: none;
+  }
+  .week-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .week-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+}
 .calendar-detail {
   border: 1px solid var(--color-border);
   border-radius: 12px;
@@ -2902,6 +3228,8 @@
     border-radius: 12px;
     padding: 1rem;
     min-width: 260px;
+    max-height: 80vh;
+    overflow-y: auto;
     z-index: 110;
     display: flex;
     flex-direction: column;
@@ -2916,9 +3244,9 @@
     border: 1px solid var(--color-border);
     border-radius: 14px;
     padding: 1.1rem;
-    min-width: min(820px, 95vw);
+    width: min(900px, 95vw);
     max-height: 90vh;
-    overflow: hidden;
+    overflow: auto;
     z-index: 120;
     display: flex;
     flex-direction: column;
@@ -2974,6 +3302,29 @@
     gap: 0.5rem;
     flex-wrap: wrap;
     margin-top: 0.35rem;
+  }
+  @media (max-width: 720px) {
+    .share-modal {
+      width: 95vw;
+      max-height: 90vh;
+      padding: 0.85rem;
+      overflow-y: auto;
+    }
+    .share-modal.two-col {
+      grid-template-columns: 1fr;
+      grid-auto-rows: auto;
+      gap: 0.75rem;
+    }
+    .share-config-panel {
+      padding: 0.25rem;
+      border-bottom: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+    }
+    .share-preview-panel {
+      max-height: 50vh;
+    }
+    .share-preview-panel img {
+      width: 100%;
+    }
   }
   button {
     padding: 0.45rem 0.8rem;

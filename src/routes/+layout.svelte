@@ -14,10 +14,19 @@
 	} from '$lib/stats/summaryStore';
 	import { onMount } from 'svelte';
 
- 	let { children } = $props();
+	let { children } = $props();
+	let menuOpen = $state(false);
 
- 	const openSettings = () => openSettingsModal();
-	const openSummary = () => openSummaryModal();
+	const openSettings = () => {
+		openSettingsModal();
+		menuOpen = false;
+	};
+	const openSummary = () => {
+		openSummaryModal();
+		menuOpen = false;
+	};
+	const toggleMenu = () => (menuOpen = !menuOpen);
+	const closeMenu = () => (menuOpen = false);
 
 	onMount(() => {
 		// ensure session cookie exists
@@ -56,28 +65,36 @@
 
 <div class="app-shell">
 	<header class="topbar">
-		<div class="brand">
-			<span class="dot"></span>
-			<div>
-				<p class="eyebrow">KB Suite</p>
-			</div>
+	<div class="brand">
+		<span class="dot"></span>
+		<div>
+			<p class="eyebrow">KB Suite</p>
 		</div>
-		<nav>
-			<a href="/">Home</a>
-			<a href="/plan">Planner</a>
-			<a href="/timer">Timer</a>
-			<a href="/counter">Rep Counter</a>
-			<a href="/big-picture">Big Picture</a>
-			<a href="/workouts">Workouts</a>
-			<a href="/history">History</a>
-			<a href="/auth">Account</a>
-			<button class="settings-btn" type="button" onclick={openSummary}>
-				Summary
-			</button>
-			<button class="settings-btn" type="button" onclick={openSettings}>
-				Settings
-			</button>
-		</nav>
+	</div>
+	<button class="menu-toggle" type="button" onclick={toggleMenu}>
+		<span class="sr-only">Toggle navigation</span>
+		<div class="menu-icon" aria-hidden="true">
+			<span></span>
+			<span></span>
+			<span></span>
+		</div>
+	</button>
+	<nav class:open={menuOpen}>
+		<a href="/" onclick={closeMenu}>Home</a>
+		<a href="/plan" onclick={closeMenu}>Planner</a>
+		<a href="/timer" onclick={closeMenu}>Timer</a>
+		<a href="/counter" onclick={closeMenu}>Rep Counter</a>
+		<a href="/big-picture" onclick={closeMenu}>Big Picture</a>
+		<a href="/workouts" onclick={closeMenu}>Workouts</a>
+		<a href="/history" onclick={closeMenu}>History</a>
+		<a href="/auth" onclick={closeMenu}>Account</a>
+		<button class="settings-btn" type="button" onclick={openSummary}>
+			Summary
+		</button>
+		<button class="settings-btn" type="button" onclick={openSettings}>
+			Settings
+		</button>
+	</nav>
 	</header>
 
 	<main class="page">{@render children()}</main>
@@ -133,6 +150,7 @@
 		align-items: center;
 		gap: 0.85rem;
 		font-weight: 600;
+		flex-wrap: wrap;
 	}
 
 	nav a {
@@ -164,12 +182,72 @@
 	@media (max-width: 720px) {
 		.topbar {
 			flex-direction: column;
-			align-items: flex-start;
-			gap: 0.35rem;
+			align-items: stretch;
+			gap: 0.5rem;
+		}
+
+		.menu-toggle {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			padding: 0.5rem;
+			border-radius: 10px;
+			border: 1px solid var(--color-border);
+			background: color-mix(in srgb, var(--color-surface-1) 70%, transparent);
+			color: var(--color-text-primary);
+		}
+
+		.menu-icon {
+			display: flex;
+			flex-direction: column;
+			gap: 5px;
+		}
+
+		.menu-icon span {
+			display: block;
+			width: 20px;
+			height: 2px;
+			background: currentColor;
 		}
 
 		nav {
-			flex-wrap: wrap;
+			width: 100%;
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.35rem;
+			padding: 0.5rem 0;
+			border-top: 1px solid var(--color-border);
+			display: none;
 		}
+
+		nav.open {
+			display: flex;
+		}
+
+		nav a,
+		.settings-btn {
+			padding: 0.45rem 0.65rem;
+			font-size: 0.95rem;
+			white-space: nowrap;
+			width: 100%;
+			text-align: left;
+		}
+	}
+
+	@media (min-width: 721px) {
+		.menu-toggle {
+			display: none;
+		}
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		border: 0;
 	}
 </style>

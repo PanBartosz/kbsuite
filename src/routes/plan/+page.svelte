@@ -3,10 +3,20 @@
   import YAML from 'yaml'
   import defaultPlanSource from '$lib/timer/config/default-plan.yaml?raw'
   import { buildTimeline } from '$lib/timer/lib/timeline.js'
+  import { computePlanTotals as computeTotals } from '$lib/timer/lib/planTotals'
   import { settings, openSettingsModal } from '$lib/stores/settings'
   import LibraryModal from '$lib/timer/components/LibraryModal.svelte'
   import PhaseQueue from '$lib/timer/components/PhaseQueue.svelte'
   import { libraryTemplates } from '$lib/timer/library/index.js'
+  import TimelineView from '$lib/timer/components/shared/TimelineView.svelte'
+  import SessionOverview from '$lib/timer/components/shared/SessionOverview.svelte'
+  import RoundsSetsView from '$lib/timer/components/shared/RoundsSetsView.svelte'
+  import AiAssistantPanel from '$lib/timer/components/shared/AiAssistantPanel.svelte'
+  import YamlConfigEditor from '$lib/timer/components/shared/YamlConfigEditor.svelte'
+  import YamlHelpModal from '$lib/timer/components/YamlHelpModal.svelte'
+  import PlanEditorModal from '$lib/timer/components/PlanEditorModal.svelte'
+  import RoundEditorModal from '$lib/timer/components/RoundEditorModal.svelte'
+  import SetEditorModal from '$lib/timer/components/SetEditorModal.svelte'
 
   type Planned = {
     id: string
@@ -32,12 +42,25 @@
   let editNotes = ''
   let editTags: string[] = []
   let newTag = ''
-  let templates: WorkoutTemplate[] = []
   let libraryWorkouts: WorkoutTemplate[] = []
   let libraryModalOpen = false
   let todayPlan: Planned | null = null
   let previewResult: { plan: any | null; error: Error | null } = { plan: null, error: null }
   let previewTotals: { work: number; rest: number; total: number } | null = null
+  let showYamlHelp = false
+  let duplicateOpen = false
+  let duplicateSource: Planned | null = null
+  let duplicateDate = ''
+  let duplicateCopyMeta = true
+  let mobileWeekStart = Date.now()
+  let planEditorOpen = false
+  let roundEditorOpen = false
+  let roundEditorData: any = null
+  let roundEditorIndex: number | null = null
+  let setEditorOpen = false
+  let setEditorRoundIndex: number | null = null
+  let setEditorSetIndex: number | null = null
+  let setEditorData: any = null
   let aiPrompt = ''
   let aiStatus = ''
   let aiError = ''
@@ -57,6 +80,13 @@
     const day = String(d.getDate()).padStart(2, '0')
     return `${y}-${m}-${day}`
   }
+  const startOfWeek = (ts: number) => {
+    const d = new Date(ts)
+    const dow = (d.getDay() + 6) % 7 // Monday first
+    d.setDate(d.getDate() - dow)
+    d.setHours(0, 0, 0, 0)
+    return d.getTime()
+  }
   const startOfMonthWeekday = (ts: number) => {
     const d = new Date(ts)
     d.setDate(1)
@@ -75,6 +105,12 @@
   }
   const monthLabel = (ts: number) =>
     new Date(ts).toLocaleString(undefined, { month: 'long', year: 'numeric' })
+  const weekLabel = (startTs: number) => {
+    const start = new Date(startTs)
+    const end = new Date(startTs)
+    end.setDate(end.getDate() + 6)
+    return `${start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+  }
 
   const loadPlans = async () => {
     loading = true
@@ -96,16 +132,6 @@
     todayPlan = plans.find((p) => dayKey(p.planned_for) === key) ?? null
   }
 
-  const templatesLoad = async () => {
-    try {
-      const res = await fetch('/api/workouts')
-      const data = await res.json().catch(() => ({}))
-      templates = data?.workouts ?? []
-    } catch {
-      templates = []
-    }
-  }
-
   const buildLibraryWorkouts = () =>
     libraryTemplates
       .map((template) => {
@@ -114,7 +140,7 @@
           if (!source) return null
           const parsed = YAML.parse(source)
           const plan = normalizePlan(parsed)
-          const totals = computePlanTotals(plan)
+          const totals = computeTotals(plan)
           return {
             id: template?.id ?? plan.title ?? crypto.randomUUID(),
             name: plan.title ?? 'Untitled session',
@@ -146,6 +172,18 @@
     newTag = ''
     editDate = dateKey ?? new Date().toISOString().slice(0, 10)
     editOpen = true
+  }
+
+  const openDuplicate = (plan: Planned) => {
+    duplicateSource = plan
+    duplicateDate = selectedDateKey || dayKey(plan.planned_for)
+    duplicateCopyMeta = true
+    duplicateOpen = true
+  }
+
+  const closeDuplicate = () => {
+    duplicateOpen = false
+    duplicateSource = null
   }
 
   const openEdit = (plan: Planned) => {
@@ -184,10 +222,54 @@
         const existing = plans.find((p) => p.id === item.id)
         plans = existing ? plans.map((p) => (p.id === item.id ? item : p)) : [...plans, item]
       }
+      const key = dayKey(plannedFor)
+      selectedDateKey = key
+      const d = new Date(plannedFor)
+      calendarMonth = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
+      // ensure full refresh from backend so calendar updates without reload
+      await loadPlans()
       editOpen = false
       computeToday()
     } catch (err) {
       error = (err as any)?.message ?? 'Failed to save plan'
+    }
+  }
+
+  const handleDuplicateSave = async () => {
+    if (!duplicateSource) return
+    const plannedFor = Date.parse(duplicateDate)
+    if (!plannedFor) {
+      error = 'Invalid date'
+      return
+    }
+    try {
+      const res = await fetch('/api/planned-workouts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: duplicateSource.title,
+          plannedFor,
+          yaml_source: duplicateSource.yaml_source,
+          notes: duplicateCopyMeta ? duplicateSource.notes : '',
+          tags: duplicateCopyMeta ? duplicateSource.tags : []
+        })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? 'Failed to duplicate plan')
+      const item: Planned | null = data?.item ?? null
+      if (item) {
+        plans = [...plans, item]
+      }
+      const key = dayKey(plannedFor)
+      selectedDateKey = key
+      const d = new Date(plannedFor)
+      calendarMonth = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
+      await loadPlans()
+      computeToday()
+    } catch (err) {
+      error = (err as any)?.message ?? 'Failed to duplicate plan'
+    } finally {
+      closeDuplicate()
     }
   }
 
@@ -219,10 +301,134 @@
     return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0
   }
 
+  const updatePlanSource = (mutate: (plan: any) => void) => {
+    const parsed = tryParsePlan(editYaml)
+    if (parsed.error || !parsed.plan) return
+    const nextPlan = JSON.parse(JSON.stringify(parsed.plan))
+    mutate(nextPlan)
+    editYaml = YAML.stringify(nextPlan)
+  }
+
+  const openPlanEditor = () => {
+    planEditorOpen = true
+  }
+
+  const closePlanEditor = () => {
+    planEditorOpen = false
+  }
+
+  const handlePlanSave = (event: CustomEvent) => {
+    const values = (event?.detail as any)?.values ?? {}
+    updatePlanSource((plan) => {
+      const nextTitle = values.title?.trim()
+      plan.title = nextTitle || plan.title || 'Planned session'
+      const nextDescription = values.description?.trim?.() ?? ''
+      if (nextDescription) {
+        plan.description = nextDescription
+      } else {
+        delete plan.description
+      }
+      plan.preStartSeconds = coerceSeconds(values.preStartSeconds ?? plan.preStartSeconds)
+      const nextLabel = values.preStartLabel?.trim?.() ?? ''
+      if (nextLabel) {
+        plan.preStartLabel = nextLabel
+      } else {
+        delete plan.preStartLabel
+      }
+    })
+    closePlanEditor()
+  }
+
+  const openRoundEditor = (round: any, index: number) => {
+    roundEditorData = round
+    roundEditorIndex = index
+    roundEditorOpen = true
+  }
+
+  const closeRoundEditor = () => {
+    roundEditorOpen = false
+    roundEditorData = null
+    roundEditorIndex = null
+  }
+
+  const handleRoundSave = (event: CustomEvent) => {
+    const detail = (event?.detail as any) ?? {}
+    const roundIndex = Number(detail.roundIndex ?? roundEditorIndex)
+    if (!Number.isInteger(roundIndex) || roundIndex < 0) {
+      closeRoundEditor()
+      return
+    }
+    const values = detail.values ?? {}
+    updatePlanSource((plan) => {
+      if (!Array.isArray(plan.rounds) || !plan.rounds[roundIndex]) return
+      const target = plan.rounds[roundIndex]
+      target.label = values.label?.trim?.() || target.label || `Round ${roundIndex + 1}`
+      target.repetitions = coerceRepetitions(values.repetitions ?? target.repetitions)
+      target.restAfterSeconds = coerceSeconds(values.restAfterSeconds ?? target.restAfterSeconds)
+    })
+    closeRoundEditor()
+  }
+
+  const openSetEditor = (roundIndex: number, setIndex: number) => {
+    setEditorRoundIndex = roundIndex
+    setEditorSetIndex = setIndex
+    const parsed = tryParsePlan(editYaml)
+    const setData =
+      parsed.plan?.rounds?.[roundIndex]?.sets && parsed.plan.rounds[roundIndex].sets[setIndex]
+    setEditorData = setData ?? null
+    setEditorOpen = true
+  }
+
+  const closeSetEditor = () => {
+    setEditorOpen = false
+    setEditorRoundIndex = null
+    setEditorSetIndex = null
+    setEditorData = null
+  }
+
+  const handleSetSave = (event: CustomEvent) => {
+    const detail = (event?.detail as any) ?? {}
+    const roundIndex = Number(detail.roundIndex ?? setEditorRoundIndex)
+    const setIndex = Number(detail.setIndex ?? setEditorSetIndex)
+    if (!Number.isInteger(roundIndex) || roundIndex < 0 || !Number.isInteger(setIndex) || setIndex < 0) {
+      closeSetEditor()
+      return
+    }
+    const values = detail.values ?? {}
+    updatePlanSource((plan) => {
+      if (!Array.isArray(plan.rounds) || !plan.rounds[roundIndex]) return
+      const round = plan.rounds[roundIndex]
+      if (!Array.isArray(round.sets) || !round.sets[setIndex]) return
+      const target = round.sets[setIndex]
+      target.label = values.label?.trim?.() || target.label || `Set ${setIndex + 1}`
+      target.workSeconds = coerceSeconds(values.workSeconds ?? target.workSeconds)
+      target.restSeconds = coerceSeconds(values.restSeconds ?? target.restSeconds)
+      target.transitionSeconds = coerceSeconds(values.transitionSeconds ?? target.transitionSeconds)
+      target.repetitions = coerceRepetitions(values.repetitions ?? target.repetitions)
+      const rpm = values.targetRpm
+      if (rpm === null || rpm === undefined || rpm === '') {
+        delete target.targetRpm
+      } else {
+        target.targetRpm = Math.max(Number(rpm) || 0, 0)
+      }
+    })
+    closeSetEditor()
+  }
+
   const coerceRepetitions = (value: any) => {
     const numeric = Number(value)
     if (!Number.isFinite(numeric) || numeric <= 0) return 1
     return Math.max(1, Math.round(numeric))
+  }
+
+  const formatDuration = (seconds?: number | null) => {
+    const safe = Number(seconds)
+    if (!Number.isFinite(safe) || safe <= 0) return '0s'
+    const mins = Math.floor(safe / 60)
+    const secs = Math.round(safe % 60)
+    if (mins <= 0) return `${secs}s`
+    if (secs === 0) return `${mins}m`
+    return `${mins}m ${secs}s`
   }
 
   const normalizePlan = (candidate: any) => {
@@ -294,137 +500,6 @@
     }
   }
 
-  const durationOf = (phase: any) => {
-    const raw = phase?.durationSeconds ?? phase?.duration ?? 0
-    const seconds = Number(raw)
-    return Number.isFinite(seconds) && seconds > 0 ? seconds : 0
-  }
-
-  const formatDuration = (seconds?: number | null) => {
-    const safe = Number(seconds)
-    if (!Number.isFinite(safe) || safe <= 0) return '0s'
-    const mins = Math.floor(safe / 60)
-    const secs = Math.round(safe % 60)
-    if (mins <= 0) return `${secs}s`
-    return `${mins}m ${secs}s`
-  }
-
-  const computePlanTotals = (planToMeasure: any) => {
-    if (!planToMeasure || !Array.isArray(planToMeasure.rounds)) {
-      return { work: 0, rest: 0, total: 0 }
-    }
-    const derivedTimeline = buildTimeline(planToMeasure)
-    return derivedTimeline.reduce(
-      (totals, phase) => {
-        const duration = durationOf(phase)
-        totals.total += duration
-        if (phase.type === 'work') totals.work += duration
-        else totals.rest += duration
-        return totals
-      },
-      { work: 0, rest: 0, total: 0 }
-    )
-  }
-
-  const roundKeyFor = (round: any, index: number) => round?.id ?? `round-${index + 1}`
-
-  const buildRoundTotalsMap = (phases: any[]) => {
-    const map = new Map()
-    if (!Array.isArray(phases)) return map
-
-    phases.forEach((phase) => {
-      const roundIndex = Number(phase?.roundIndex)
-      if (!Number.isInteger(roundIndex) || roundIndex < 0) {
-        return
-      }
-      const key = phase.roundId ?? `round-${roundIndex + 1}`
-      const duration = durationOf(phase)
-      if (duration <= 0) {
-        return
-      }
-      const bucket = map.get(key) ?? { work: 0, rest: 0, total: 0 }
-      bucket.total += duration
-      if (phase.type === 'work') {
-        bucket.work += duration
-      } else {
-        bucket.rest += duration
-      }
-      map.set(key, bucket)
-    })
-
-    return map
-  }
-
-  const getRoundTotals = (round: any, index: number, totalsMap: Map<string, any>) =>
-    totalsMap.get(roundKeyFor(round, index)) ?? { work: 0, rest: 0, total: 0 }
-
-  const buildSetSegments = (
-    set: any,
-    nextSetLabel: string,
-    roundRepetitions = 1,
-    roundRestAfterSeconds = 0,
-    hasSubsequentRound = false
-  ) => {
-    const repetitions = Math.max(Number(set?.repetitions) || 1, 1)
-    const workSeconds = Math.max(Number(set?.workSeconds) || 0, 0)
-    const restSeconds = Math.max(Number(set?.restSeconds) || 0, 0)
-    const transitionSeconds = Math.max(Number(set?.transitionSeconds) || 0, 0)
-    const roundRestAfter = Math.max(Number(roundRestAfterSeconds) || 0, 0)
-    const hasNextRound = Boolean(hasSubsequentRound)
-
-    const sequence = []
-    let totalWork = 0
-    let totalRest = 0
-    for (let rep = 0; rep < repetitions; rep += 1) {
-      if (workSeconds > 0) {
-        sequence.push({
-          type: 'work',
-          duration: workSeconds,
-          label: repetitions > 1 ? `Work ${rep + 1}/${repetitions}` : 'Work'
-        })
-        totalWork += workSeconds
-      }
-
-      const isLastRep = rep === repetitions - 1
-      const hasNextSet = Boolean(nextSetLabel)
-      const hasAnotherRound = roundRepetitions > 1
-      const hasNextRoundTransition = hasNextRound || roundRestAfter > 0
-      const shouldAddRest =
-        restSeconds > 0 &&
-        (!isLastRep ||
-          (isLastRep &&
-            (hasNextSet || (hasAnotherRound && roundRestAfter <= 0) || hasNextRoundTransition)))
-      if (shouldAddRest) {
-        sequence.push({
-          type: 'rest',
-          duration: restSeconds,
-          label: repetitions > 1 ? `Rest ${rep + 1}` : 'Rest'
-        })
-        totalRest += restSeconds
-      }
-    }
-
-    const transitionSegment =
-      transitionSeconds > 0 && nextSetLabel
-        ? {
-            type: 'transition',
-            duration: transitionSeconds,
-            label: `Transition → ${nextSetLabel}`
-          }
-        : null
-
-    return {
-      setRepetitions: repetitions,
-      roundRepetitions: Math.max(Number(roundRepetitions) || 1, 1),
-      work: workSeconds,
-      rest: restSeconds,
-      workTotal: totalWork,
-      restTotal: totalRest,
-      total: totalWork + totalRest + (transitionSegment ? transitionSeconds : 0),
-      sequence,
-      transitionSegment
-    }
-  }
 
   const systemPrompt = `You are an expert kettlebell and interval-training coach. Output ONLY valid YAML that fits this schema (no prose):
 title: string (required)
@@ -465,13 +540,12 @@ rounds: array of objects, in order
     }
     editYaml = yaml
     previewResult = result
-    previewTotals = computePlanTotals(result.plan)
+    previewTotals = computeTotals(result.plan)
   }
 
   $: previewResult = tryParsePlan(editYaml)
-  $: previewTotals = previewResult.plan ? computePlanTotals(previewResult.plan) : null
+  $: previewTotals = previewResult.plan ? computeTotals(previewResult.plan) : null
   $: timelinePreview = previewResult.plan ? buildTimeline(previewResult.plan) : []
-  $: roundTotalsMapPreview = buildRoundTotalsMap(timelinePreview)
 
   const timelineForYaml = (yaml?: string | null) => {
     if (!yaml) return []
@@ -480,6 +554,25 @@ rounds: array of objects, in order
       return buildTimeline(parsed)
     } catch {
       return []
+    }
+  }
+
+  const planFromYaml = (yaml?: string | null) => {
+    if (!yaml) return null
+    try {
+      return normalizePlan(YAML.parse(yaml))
+    } catch {
+      return null
+    }
+  }
+
+  const totalsForYaml = (yaml?: string | null) => {
+    if (!yaml) return null
+    try {
+      const plan = normalizePlan(YAML.parse(yaml))
+      return computeTotals(plan)
+    } catch {
+      return null
     }
   }
 
@@ -614,6 +707,13 @@ rounds: array of objects, in order
     return d.getFullYear() === m.getFullYear() && d.getMonth() === m.getMonth()
   })
   $: selectedDayPlans = selectedDateKey ? dayPlans(selectedDateKey) : []
+  $: mobileWeekStart = selectedDateKey ? startOfWeek(Date.parse(selectedDateKey)) : mobileWeekStart
+  $: mobileWeekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(mobileWeekStart)
+    d.setDate(d.getDate() + i)
+    const ts = d.getTime()
+    return { key: dayKey(ts), label: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) }
+  })
 
   const openTimer = (plan: Planned, mode: 'timer' | 'big') => {
     const id = plan.id
@@ -622,9 +722,18 @@ rounds: array of objects, in order
     window.location.href = `${base}?planned=${encodeURIComponent(id)}`
   }
 
+  const shiftWeek = (delta: number) => {
+    const next = new Date(mobileWeekStart)
+    next.setDate(next.getDate() + delta * 7)
+    mobileWeekStart = startOfWeek(next.getTime())
+    const key = dayKey(mobileWeekStart)
+    selectedDateKey = key
+    calendarMonth = new Date(next.getFullYear(), next.getMonth(), 1).getTime()
+  }
+
   onMount(() => {
     loadPlans()
-    templatesLoad()
+    libraryWorkouts = buildLibraryWorkouts()
   })
 </script>
 
@@ -667,6 +776,7 @@ rounds: array of objects, in order
           </div>
           <div class="today-actions">
             <button class="ghost" on:click={() => openEdit(todayPlan!)}>Edit</button>
+            <button class="text-button" on:click={() => openDuplicate(todayPlan!)}>Duplicate</button>
             <button class="ghost danger" on:click={() => deletePlan(todayPlan!.id)}>Delete</button>
           </div>
         </div>
@@ -676,6 +786,49 @@ rounds: array of objects, in order
     </section>
 
     <section class="calendar-shell">
+      <div class="week-head mobile-only">
+        <div class="month-nav">
+          <button class="ghost" on:click={() => shiftWeek(-1)}>←</button>
+          <strong>{weekLabel(mobileWeekStart)}</strong>
+          <button class="ghost" on:click={() => shiftWeek(1)}>→</button>
+        </div>
+        <div class="inline-actions">
+          <button class="primary" on:click={() => openNew(selectedDateKey || dayKey(mobileWeekStart))}>
+            Add workout
+          </button>
+        </div>
+      </div>
+      <div class="week-list mobile-only">
+        {#each mobileWeekDays as dayInfo}
+          {@const itemsForDay = dayPlans(dayInfo.key)}
+          <button
+            type="button"
+            class="week-row"
+            class:active={selectedDateKey === dayInfo.key}
+            on:click={() => (selectedDateKey = dayInfo.key)}
+          >
+            <div class="week-row__label">
+              <span class="week-row__day">{dayInfo.label}</span>
+              {#if itemsForDay.length}
+                <span class="week-row__count">{itemsForDay.length}</span>
+              {/if}
+            </div>
+            {#if itemsForDay.length}
+              <div class="week-row__items">
+                {#each itemsForDay as it}
+                  <div class="week-row__item">
+                    <span class="dot"></span>
+                    <span class="week-row__title">{it.title || 'Workout'}</span>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <p class="muted tiny">No workouts</p>
+            {/if}
+          </button>
+        {/each}
+      </div>
+
       <div class="calendar-head">
         <div class="month-nav">
           <button class="ghost" on:click={() => moveMonth(-1)}>←</button>
@@ -683,7 +836,12 @@ rounds: array of objects, in order
           <button class="ghost" on:click={() => moveMonth(1)}>→</button>
         </div>
         <div class="inline-actions">
-          <button class="primary" on:click={() => openNew()}>Add workout</button>
+          <button
+            class="primary"
+            on:click={() => openNew(selectedDateKey || dayKey(calendarMonth))}
+          >
+            Add workout
+          </button>
         </div>
       </div>
       <div class="calendar-grid">
@@ -750,7 +908,14 @@ rounds: array of objects, in order
               <div class="card-header">
                 <div>
                   <h4>{item.title || 'Workout'}</h4>
-                  <p class="muted small">{new Date(item.planned_for).toLocaleString()}</p>
+                  {#if totalsForYaml(item.yaml_source)}
+                    {@const totals = totalsForYaml(item.yaml_source)!}
+                    <p class="muted small">
+                      Total {formatDuration(totals.total)} · Work {formatDuration(totals.work)} · Rest {formatDuration(totals.rest)}
+                    </p>
+                  {:else}
+                    <p class="muted small">{new Date(item.planned_for).toLocaleDateString()}</p>
+                  {/if}
                   {#if item.tags?.length}
                     <div class="tag-row">
                       {#each item.tags as tag}
@@ -764,13 +929,24 @@ rounds: array of objects, in order
                   <button class="primary" on:click={() => openTimer(item, 'timer')}>Timer</button>
                   <button class="ghost" on:click={() => openTimer(item, 'big')}>Big Picture</button>
                   <button class="ghost" on:click={() => openEdit(item)}>Edit</button>
+                  <button class="text-button" on:click={() => openDuplicate(item)}>Duplicate</button>
                   <button class="ghost danger" on:click={() => deletePlan(item.id)}>Delete</button>
                 </div>
               </div>
               {#if timelineForYaml(item.yaml_source).length}
-                <div class="plan-timeline">
-                  <PhaseQueue phases={timelineForYaml(item.yaml_source)} activeIndex={-1} />
-                </div>
+                {@const parsedPlan = planFromYaml(item.yaml_source)}
+                {#if parsedPlan}
+                  <div class="plan-timeline mini-rounds">
+                    <div class="mini-rounds__title">Rounds &amp; sets</div>
+                    <div class="mini-rounds__scroller">
+                      <RoundsSetsView
+                        plan={parsedPlan}
+                        timeline={timelineForYaml(item.yaml_source)}
+                        showEditButtons={false}
+                      />
+                    </div>
+                  </div>
+                {/if}
               {/if}
             </article>
           {/each}
@@ -778,6 +954,30 @@ rounds: array of objects, in order
       {/if}
     </section>
   {/if}
+
+{#if duplicateOpen}
+  <div class="modal-backdrop"></div>
+  <div class="edit-modal">
+    <header>
+      <h3>Duplicate workout</h3>
+      <button class="ghost" on:click={closeDuplicate}>✕</button>
+    </header>
+    <div class="form">
+      <label>
+        <span class="muted small">Target date</span>
+        <input type="date" bind:value={duplicateDate} />
+      </label>
+      <label class="inline-checkbox">
+        <input type="checkbox" bind:checked={duplicateCopyMeta} />
+        <span class="muted small">Copy notes and tags</span>
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" on:click={handleDuplicateSave}>Duplicate</button>
+      <button class="ghost" on:click={closeDuplicate}>Cancel</button>
+    </div>
+  </div>
+{/if}
 
 {#if editOpen}
   <div class="modal-backdrop"></div>
@@ -814,218 +1014,96 @@ rounds: array of objects, in order
           <span class="muted small">Notes</span>
           <input type="text" bind:value={editNotes} placeholder="Optional notes" />
         </label>
-        <label class="yaml-field">
-          <span class="muted small">YAML</span>
-          <textarea bind:value={editYaml} rows="18" spellcheck="false"></textarea>
-          {#if previewResult.error}
-            <p class="status error">Parse error: {previewResult.error.message}</p>
-          {:else if previewTotals}
-            <p class="status ok">
-              Work: {Math.round((previewTotals?.work ?? 0) / 60)}m · Rest: {Math.round((previewTotals?.rest ?? 0) / 60)}m · Total: {Math.round((previewTotals?.total ?? 0) / 60)}m
-            </p>
-          {/if}
-        </label>
-        {#if templates.length}
-          <div class="template-list">
-            <p class="muted small">Templates</p>
-            <div class="templates">
-              {#each templates as tmpl}
-                <button class="ghost small" type="button" on:click={() => selectTemplate(tmpl)}>
-                  {tmpl.name}
-                </button>
-              {/each}
-            </div>
-            <button class="ghost small" type="button" on:click={() => (libraryModalOpen = true)}>
-              Load from library
-            </button>
-  </div>
-  <LibraryModal
-    open={libraryModalOpen}
-    workouts={libraryWorkouts}
-    on:close={() => (libraryModalOpen = false)}
-    on:select={(e) => selectTemplate(e.detail?.workout)}
-  />
-{/if}
-        <section class="ai-panel">
-          <h3>AI Assistant</h3>
-          <p class="muted small">
-            Uses your OpenAI key from Settings. Generate or modify the YAML below.
-            <button class="ghost small" type="button" on:click={openSettings}>Open settings</button>
-          </p>
-          <textarea
-            rows="3"
-            placeholder="Describe the workout you want..."
-            bind:value={aiPrompt}
-          ></textarea>
-          <div class="actions ai-actions">
-            <button
-              class="primary"
-              type="button"
-              on:click={generateWorkoutFromAi}
-              disabled={isGenerating}
-            >
-              {#if isGenerating}Generating…{:else}Generate{/if}
-            </button>
-            {#if aiStatus}<span class="muted small">{aiStatus}</span>{/if}
-            {#if aiError}<span class="error small">{aiError}</span>{/if}
-          </div>
-          <textarea
-            rows="3"
-            placeholder="Tell AI how to change current YAML…"
-            bind:value={aiEditInstructions}
-          ></textarea>
-          <div class="actions ai-actions">
-            <button
-              class="secondary"
-              type="button"
-              on:click={modifyWorkoutWithAi}
-              disabled={isAiEditing}
-            >
-              {#if isAiEditing}Applying…{:else}Modify YAML{/if}
-            </button>
-            {#if aiEditStatus}<span class="muted small">{aiEditStatus}</span>{/if}
-            {#if aiEditError}<span class="error small">{aiEditError}</span>{/if}
-          </div>
-        </section>
+        <YamlConfigEditor
+          title="Configuration (YAML)"
+          bind:value={editYaml}
+          parseError={previewResult.error}
+          hasPendingChanges={false}
+          previewTotals={previewTotals}
+          showActions={false}
+          showShare={false}
+          showNameInput={false}
+          on:valueChange={(e) => (editYaml = e.detail)}
+          on:openHelp={() => (showYamlHelp = true)}
+        />
+        <button class="ghost small" type="button" on:click={() => (libraryModalOpen = true)}>
+          Load from library
+        </button>
+        <LibraryModal
+          open={libraryModalOpen}
+          workouts={libraryWorkouts}
+          on:close={() => (libraryModalOpen = false)}
+          on:select={(e) => selectTemplate(e.detail?.workout)}
+        />
+        <AiAssistantPanel
+          bind:prompt={aiPrompt}
+          bind:editInstructions={aiEditInstructions}
+          isGenerating={isGenerating}
+          status={aiStatus}
+          error={aiError}
+          isEditing={isAiEditing}
+          editStatus={aiEditStatus}
+          editError={aiEditError}
+          on:generate={() => generateWorkoutFromAi()}
+          on:modify={() => modifyWorkoutWithAi()}
+          on:openSettings={openSettings}
+        />
 
         {#if timelinePreview.length}
-          <section class="overview">
-            <h3>Session overview</h3>
-            <PhaseQueue phases={timelinePreview} activeIndex={-1} />
-            <div class="overview__grid">
-              <div class="overview__item">
-                <span>Total work</span>
-                <strong>{formatDuration(previewTotals?.work ?? 0)}</strong>
-              </div>
-              <div class="overview__item">
-                <span>Total rest</span>
-                <strong>{formatDuration(previewTotals?.rest ?? 0)}</strong>
-              </div>
-              <div class="overview__item">
-                <span>Rounds</span>
-                <strong>{previewResult.plan?.rounds?.length ?? 0}</strong>
-              </div>
-            </div>
-            <div class="rounds-list">
-              {#each previewResult.plan?.rounds ?? [] as round, roundIndex}
-                {@const roundTotals = getRoundTotals(round, roundIndex, roundTotalsMapPreview)}
-                <article class="round">
-                  <header class="round__header">
-                    <div>
-                      <h4>Round {roundIndex + 1}: {round.label}</h4>
-                      <p>
-                        Repetitions: {round.repetitions} · Rest after round: {formatDuration(round.restAfterSeconds || 0)}
-                      </p>
-                    </div>
-                    <div class="round__badges">
-                      {#if round.repetitions > 1}
-                        <span class="round__badge"> {round.repetitions}× cycle </span>
-                      {/if}
-                      <span class="round__badge">
-                        {formatDuration(roundTotals.total)}
-                      </span>
-                    </div>
-                  </header>
-                  <ul class="set-list">
-                    {#each round.sets as set, setIndex (set.id)}
-                      {@const segments = buildSetSegments(
-                        set,
-                        round.sets[setIndex + 1]?.label,
-                        round.repetitions,
-                        round.restAfterSeconds,
-                        roundIndex < (previewResult.plan?.rounds?.length ?? 0) - 1
-                      )}
-                      {@const hasSetBadge = segments.setRepetitions > 1 && (segments.work || segments.rest)}
-                      <li class="set">
-                        <div class="set__header">
-                          <div>
-                            <h5>{set.label}</h5>
-                            <p>
-                              {set.repetitions} × {formatDuration(set.workSeconds)} work
-                              {#if set.restSeconds}
-                                · rest {formatDuration(set.restSeconds)} between reps
-                              {/if}
-                              {#if set.targetRpm}
-                                · {set.targetRpm} RPM
-                              {/if}
-                            </p>
-                          </div>
-                          <div class="set__meta">
-                            <span class="set__meta-total">
-                              Total: {formatDuration(segments.total)}
-                            </span>
-                            {#if setIndex < round.sets.length - 1 && set.transitionSeconds}
-                              <span class="set__meta-transition">
-                                Next transition: {formatDuration(set.transitionSeconds)}
-                              </span>
-                            {/if}
-                          </div>
-                        </div>
-                        <div
-                          class="set-timeline"
-                          class:set-timeline--compact={!hasSetBadge}
-                          aria-label={`Timeline for ${set.label}`}
-                        >
-                          {#if hasSetBadge}
-                            <div class="set-repeat-labels">
-                              <div class="set-repeat-label">
-                                {segments.setRepetitions}× reps
-                              </div>
-                            </div>
-                          {/if}
-                          <div class="set-timeline__segments">
-                            {#if segments.work}
-                              <div class="segment-block segment-block--work">
-                                <span class="segment-block__label">
-                                  {#if segments.setRepetitions > 1}
-                                    {set.targetRpm ? `Work per rep (${set.targetRpm} RPM)` : 'Work per rep'}
-                                  {:else}
-                                    {set.targetRpm ? `Work (${set.targetRpm} RPM)` : 'Work'}
-                                  {/if}
-                                </span>
-                                <span class="segment-block__time">{formatDuration(segments.work)}</span>
-                              </div>
-                            {/if}
-                            {#if segments.rest}
-                              <div class="segment-block segment-block--rest">
-                                <span class="segment-block__label">
-                                  {segments.setRepetitions > 1 ? 'Rest between reps' : 'Rest'}
-                                </span>
-                                <span class="segment-block__time">{formatDuration(segments.rest)}</span>
-                              </div>
-                            {/if}
-                          </div>
-                        </div>
-                      </li>
-                      {#if segments.transitionSegment}
-                        <li class="set-transition">
-                          <div class="segment-block segment-block--transition">
-                            <span class="segment-block__label">
-                              {segments.transitionSegment.label}
-                            </span>
-                            <span class="segment-block__time">{formatDuration(segments.transitionSegment.duration)}</span>
-                          </div>
-                        </li>
-                      {/if}
-                    {/each}
-                  </ul>
-                </article>
-              {/each}
-            </div>
-          </section>
+          <TimelineView phases={timelinePreview} activeIndex={-1} title="Timeline preview" />
+          <SessionOverview
+            totals={previewTotals ?? { work: 0, rest: 0, total: 0 }}
+            roundCount={previewResult.plan?.rounds?.length ?? 0}
+          />
+          <RoundsSetsView
+            plan={previewResult.plan}
+            timeline={timelinePreview}
+            showEditButtons={true}
+            headerActionLabel="Edit session info"
+            on:editPlan={openPlanEditor}
+            on:editRound={(e) => openRoundEditor(e.detail.round, e.detail.index)}
+            on:editSet={(e) => openSetEditor(e.detail.roundIndex, e.detail.setIndex)}
+          />
         {/if}
       </div>
       <div class="actions">
         <button class="primary" on:click={savePlan}>Save</button>
         <button class="ghost" on:click={() => (editOpen = false)}>Cancel</button>
       </div>
-    </div>
+  </div>
   {/if}
+
+<YamlHelpModal open={showYamlHelp} on:close={() => (showYamlHelp = false)} />
+<PlanEditorModal
+  open={planEditorOpen}
+  title={previewResult.plan?.title}
+  description={previewResult.plan?.description}
+  preStartSeconds={previewResult.plan?.preStartSeconds}
+  preStartLabel={previewResult.plan?.preStartLabel}
+  on:close={closePlanEditor}
+  on:save={handlePlanSave}
+/>
+<RoundEditorModal
+  open={roundEditorOpen}
+  round={roundEditorData}
+  roundIndex={roundEditorIndex ?? 0}
+  on:close={closeRoundEditor}
+  on:save={handleRoundSave}
+/>
+<SetEditorModal
+  open={setEditorOpen}
+  roundIndex={setEditorRoundIndex ?? 0}
+  setIndex={setEditorSetIndex ?? 0}
+  set={setEditorData}
+  on:close={closeSetEditor}
+  on:save={handleSetSave}
+/>
 </main>
 
 <style>
   .page {
-    max-width: 1400px;
+    max-width: 1300px;
+    width: min(1300px, calc(100vw - 2rem));
     margin: 0 auto;
     padding: 1.5rem 1rem 2.5rem;
     display: flex;
@@ -1252,19 +1330,17 @@ rounds: array of objects, in order
     flex-direction: column;
     gap: 0.35rem;
   }
-  input,
-  textarea {
+  .inline-checkbox {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  input {
     border: 1px solid var(--color-border);
     border-radius: 10px;
     padding: 0.5rem 0.65rem;
     background: var(--color-surface-1);
     color: var(--color-text-primary);
-  }
-  textarea {
-    font-family: 'Space Grotesk', monospace;
-  }
-  .yaml-field textarea {
-    min-height: 280px;
   }
   .tag-editor {
     display: flex;
@@ -1276,156 +1352,188 @@ rounds: array of objects, in order
     gap: 0.35rem;
     align-items: center;
   }
-  .template-list .templates {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
+  :global(.text-button) {
+    background: transparent;
+    border: none;
+    color: var(--color-accent);
+    padding: 0.2rem 0.35rem;
+    cursor: pointer;
+    font-weight: 600;
   }
-  .ai-panel {
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    background: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
+  :global(.text-button:hover) {
+    color: var(--color-accent-hover);
+    text-decoration: underline;
   }
-  .ai-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
+  :global(.rounds__header-button) {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+    color: var(--color-text-primary);
   }
-  .status.ok {
-    color: var(--color-text-muted);
+  .mini-rounds {
+    margin-top: 0.35rem;
   }
-  .overview__grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 0.65rem;
-    margin: 0.5rem 0;
-  }
-  .overview__item {
-    border: 1px solid var(--color-border);
-    border-radius: 10px;
-    padding: 0.5rem 0.65rem;
-    background: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
-  }
-  .overview__item span {
-    color: var(--color-text-muted);
-    font-size: 0.9rem;
-  }
-  .overview__item strong {
-    display: block;
-    font-size: 1.2rem;
-  }
-  .rounds-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-    margin-top: 0.5rem;
-  }
-  .round {
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
-    padding: 0.65rem 0.75rem;
-    background: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .round__header {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-  .round__badges {
-    display: inline-flex;
-    gap: 0.35rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  .round__badge {
-    border: 1px solid var(--color-border);
-    border-radius: 999px;
-    padding: 0.2rem 0.55rem;
-    font-size: 0.85rem;
-  }
-  .set-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .set {
-    border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
-    padding-top: 0.4rem;
-  }
-  .set__header {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.4rem;
-    flex-wrap: wrap;
-  }
-  .set__meta {
-    display: inline-flex;
-    gap: 0.35rem;
-    align-items: center;
-    flex-wrap: wrap;
-    font-size: 0.85rem;
-    color: var(--color-text-muted);
-  }
-  .set-timeline {
-    display: flex;
-    gap: 0.4rem;
-    flex-wrap: wrap;
-    margin-top: 0.2rem;
-  }
-  .set-repeat-labels {
-    display: inline-flex;
-    gap: 0.35rem;
-    align-items: center;
-  }
-  .set-repeat-label {
-    padding: 0.25rem 0.5rem;
-    border-radius: 8px;
-    border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
-    background: color-mix(in srgb, var(--color-surface-1) 70%, transparent);
-    font-size: 0.85rem;
-  }
-  .set-timeline__segments {
-    display: inline-flex;
-    gap: 0.35rem;
-    flex-wrap: wrap;
-  }
-  .segment-block {
-    border-radius: 8px;
-    padding: 0.35rem 0.5rem;
-    background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
-    display: inline-flex;
-    gap: 0.35rem;
-    align-items: center;
-  }
-  .segment-block__label {
-    font-size: 0.85rem;
-    color: var(--color-text-muted);
-  }
-  .segment-block__time {
-    font-size: 0.9rem;
+  .mini-rounds__title {
+    font-size: 0.95rem;
     font-weight: 700;
+    color: var(--color-text-primary);
+    margin: 0 0 0.35rem;
   }
-  .segment-block--work {
-    border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+  .mini-rounds__scroller {
+    max-height: 360px;
+    overflow-y: auto;
+    padding-right: 0.35rem;
   }
-  .segment-block--rest {
-    border-color: color-mix(in srgb, var(--color-text-muted) 50%, var(--color-border));
+  :global(.mini-rounds .rounds__header) {
+    display: none;
   }
-  .segment-block--transition {
-    border-color: color-mix(in srgb, var(--color-accent) 20%, var(--color-border));
+  :global(.mini-rounds .rounds__list) {
+    gap: 0.8rem;
+  }
+  :global(.mini-rounds .round) {
+    padding: 1rem 1.1rem;
+    gap: 0.8rem;
+  }
+  :global(.mini-rounds .round__header h3) {
+    font-size: 1.05rem;
+  }
+  :global(.mini-rounds .round__header p) {
+    font-size: 0.85rem;
+  }
+  :global(.mini-rounds .round__badge) {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.78rem;
+  }
+  :global(.mini-rounds .set) {
+    padding: 0.85rem 1rem;
+    gap: 0.6rem;
+  }
+  :global(.mini-rounds .set h4) {
+    font-size: 0.95rem;
+  }
+  :global(.mini-rounds .set p) {
+    font-size: 0.85rem;
+  }
+  :global(.mini-rounds .segment-block) {
+    padding: 0.55rem 0.65rem;
+    font-size: 0.8rem;
+  }
+  :global(.mini-rounds .round-timeline) {
+    padding: 0.6rem 0.75rem;
+    gap: 0.7rem;
+  }
+  :global(.mini-rounds .round-rest-block) {
+    padding: 0.6rem 0.7rem;
+    font-size: 0.82rem;
+  }
+  @media (max-width: 720px) {
+    .today-head {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.35rem;
+    }
+    .today-card {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.75rem;
+    }
+    .today-actions {
+      justify-content: flex-start;
+      gap: 0.4rem;
+    }
+    .calendar-head {
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 0.4rem;
+    }
+    .calendar-head .inline-actions {
+      width: 100%;
+      display: flex;
+      justify-content: flex-start;
+    }
+    .calendar-head .inline-actions button {
+      width: 100%;
+    }
+    .calendar-grid {
+      gap: 0.35rem;
+    }
+    .day {
+      padding: 0.45rem 0.45rem 0.4rem;
+    }
+    .calendar-head,
+    .calendar-grid {
+      display: none;
+    }
+    .week-head {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .week-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .week-row {
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      padding: 0.65rem;
+      background: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      align-items: flex-start;
+      width: 100%;
+      text-align: left;
+    }
+    .week-row.active {
+      border-color: var(--color-accent);
+      background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-1));
+    }
+    .week-row__label {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      width: 100%;
+      justify-content: space-between;
+    }
+    .week-row__day {
+      font-weight: 700;
+    }
+    .week-row__count {
+      background: color-mix(in srgb, var(--color-accent) 25%, var(--color-surface-1));
+      border: 1px solid color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+      color: var(--color-text-primary);
+      border-radius: 999px;
+      padding: 0.1rem 0.5rem;
+      font-size: 0.85rem;
+    }
+    .week-row__items {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      width: 100%;
+    }
+    .week-row__item {
+      display: grid;
+      grid-template-columns: 10px 1fr;
+      gap: 0.35rem;
+      align-items: center;
+      width: 100%;
+      text-align: left;
+    }
+    .week-row__title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .mobile-only {
+      display: block;
+    }
+  }
+  @media (min-width: 721px) {
+    .mobile-only {
+      display: none;
+    }
   }
   button {
     padding: 0.5rem 0.8rem;

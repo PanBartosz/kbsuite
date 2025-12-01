@@ -162,7 +162,7 @@
     inset: 0;
     background: rgba(5, 9, 20, 0.55);
     backdrop-filter: blur(6px);
-    z-index: 90;
+    z-index: 500;
   }
   .modal {
     position: fixed;
@@ -174,7 +174,7 @@
     border: 1px solid var(--color-border);
     border-radius: 14px;
     padding: 1rem;
-    z-index: 91;
+    z-index: 501;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
@@ -260,5 +260,13 @@
     background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
     color: var(--color-text-inverse);
     border: none;
+  }
+  @media (max-width: 720px) {
+    .modal {
+      width: 95vw;
+      max-height: 90vh;
+      padding: 0.85rem;
+      overflow-y: auto;
+    }
   }
 </style>
