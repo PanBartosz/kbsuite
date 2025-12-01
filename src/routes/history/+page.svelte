@@ -1654,195 +1654,431 @@
           </h4>
           <div class="list compact-list">
             {#each selectedDayItems as item}
-            {@const totals = computeTotals(item)}
-            {@const isExpanded = editingId === item.id || expanded[item.id]}
-            <article class="card">
-              <div class="card-header two-col">
-                <div class="header-left">
-                <h3>{item.title || 'Workout'}</h3>
-                  <div class="meta-row">
-                    <span class="muted small">{formatDate(item.started_at || item.created_at)}</span>
-                    {#if item.duration_s}
-                      <span class="badge subtle">{formatDuration(item.duration_s)}</span>
+              {@const totals = computeTotals(item)}
+              {@const isExpanded = editingId === item.id || expanded[item.id]}
+              <article class="card">
+                <div class="card-header two-col">
+                  <div class="header-left">
+                    {#if editingId === item.id}
+                      <input
+                        class="title-input"
+                        bind:value={editTitle}
+                        placeholder="Workout title"
+                      />
+                    {:else}
+                      <h3>{item.title || 'Workout'}</h3>
                     {/if}
-                  </div>
-                  {#if item.tags?.length}
-                    <div class="tag-row inline">
-                      {#each item.tags as tag}
-                        <span class="tag-chip selected">{tag}</span>
-                      {/each}
+                    <div class="meta-row">
+                      <span class="muted small">{formatDate(item.started_at || item.created_at)}</span>
+                      {#if item.duration_s}
+                        <span class="badge subtle">{formatDuration(item.duration_s)}</span>
+                      {/if}
                     </div>
-                  {/if}
-                </div>
-                <div class="header-right">
-                  <div class="summary-chips">
-                    <span class="chip">{totals.totalSets || '-'} sets</span>
-                    <span class="chip">{totals.totalReps || '-'} reps</span>
-                    <span class="chip">{formatShort(totals.totalWorkSeconds) || '-'} work</span>
-                    {#if item.rpe}<span class="chip">RPE {item.rpe}</span>{/if}
-                    {#if hrSummary[item.id]}
-                      <span class="chip hr">
-                        HR {hrSummary[item.id].avgHr ?? '-'} / {hrSummary[item.id].maxHr ?? '-'}
-                      </span>
+                    {#if item.tags?.length}
+                      <div class="tag-row inline">
+                        {#each item.tags as tag}
+                          <span class="tag-chip selected">{tag}</span>
+                        {/each}
+                      </div>
                     {/if}
                   </div>
-                  {#if hrSummary[item.id]}
-                    <div class="hr-card">
-                      <div class="hr-card-top">
-                        <span class="muted small">HR</span>
-                        <div class="hr-stats">
-                          {#if hrSummary[item.id].avgHr}<span>Avg {hrSummary[item.id].avgHr} bpm</span>{/if}
-                          {#if hrSummary[item.id].maxHr}<span>Max {hrSummary[item.id].maxHr} bpm</span>{/if}
+                  <div class="header-right">
+                    <div class="summary-chips">
+                      <span class="chip">{totals.totalSets || '-'} sets</span>
+                      <span class="chip">{totals.totalReps || '-'} reps</span>
+                      <span class="chip">{formatShort(totals.totalWorkSeconds) || '-'} work</span>
+                      {#if item.rpe}<span class="chip">RPE {item.rpe}</span>{/if}
+                      {#if hrSummary[item.id]}
+                        <span class="chip hr">
+                          HR {hrSummary[item.id].avgHr ?? '-'} / {hrSummary[item.id].maxHr ?? '-'}
+                        </span>
+                      {/if}
+                    </div>
+                    {#if hrSummary[item.id]}
+                      <div class="hr-card">
+                        <div class="hr-card-top">
+                          <span class="muted small">HR</span>
+                          <div class="hr-stats">
+                            {#if hrSummary[item.id].avgHr}<span>Avg {hrSummary[item.id].avgHr} bpm</span>{/if}
+                            {#if hrSummary[item.id].maxHr}<span>Max {hrSummary[item.id].maxHr} bpm</span>{/if}
+                          </div>
+                        </div>
+                        {#if hrDetails[item.id]?.samples && hrDetails[item.id]?.samples?.length}
+                          {#key hrDetails[item.id]?.samples}
+                            {@const s = hrDetails[item.id]?.samples ?? []}
+                            {@const maxT = Math.max(...s.map((p) => p.t), 1)}
+                            {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
+                            {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
+                            {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
+                            {@const minHr = minHrRaw - padding}
+                            {@const maxHr = maxHrRaw + padding}
+                            {@const avgLine = hrSummary[item.id].avgHr ?? null}
+                            {@const maxPoint = s.reduce((acc, p) => (p.hr > acc.hr ? p : acc), s[0] ?? { t: 0, hr: 0 })}
+                            <svg
+                              class="hr-spark"
+                              viewBox="0 0 320 120"
+                              preserveAspectRatio="none"
+                              style:--hr-spark-bg={hrSparkColors.bg}
+                              style:--hr-spark-border={hrSparkColors.border}
+                              style:--hr-spark-line={hrSparkColors.line}
+                              style:--hr-spark-avg={hrSparkColors.avg}
+                              style:--hr-spark-max={hrSparkColors.max}
+                            >
+                              {#if avgLine}
+                                <line
+                                  class="avg-line"
+                                  x1="0"
+                                  x2="320"
+                                  y1={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                                  y2={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                                  stroke-dasharray="4 4"
+                                  stroke-width="1.25"
+                                />
+                              {/if}
+                              <polyline
+                                class="hr-line"
+                                fill="none"
+                                stroke-width="2"
+                                points={s
+                                  .map((p) => {
+                                    const x = (p.t / maxT) * 320
+                                    const y = 120 - ((p.hr - minHr) / Math.max(1, maxHr - minHr)) * 120
+                                    return `${x},${y}`
+                                  })
+                                  .join(' ')}
+                              />
+                              {#if s.length}
+                                <circle
+                                  class="hr-max"
+                                  cx={(maxPoint.t / maxT) * 320}
+                                  cy={120 - ((maxPoint.hr - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                                  r="5"
+                                />
+                              {/if}
+                            </svg>
+                        {/key}
+                        {/if}
+                      </div>
+                    {:else if item.duration_s}
+                      <span class="badge">{formatDuration(item.duration_s)}</span>
+                    {/if}
+                  </div>
+                </div>
+                {#if editingId === item.id}
+                  <div class="meta-edit">
+                    <label>
+                      <span class="muted small">Started at</span>
+                      <input type="datetime-local" bind:value={editStartedAt} />
+                    </label>
+                    <label>
+                      <span class="muted small">Finished at</span>
+                      <input type="datetime-local" bind:value={editFinishedAt} />
+                    </label>
+                    <label>
+                      <span class="muted small">Duration (minutes)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        bind:value={editDurationMinutes}
+                        placeholder="auto"
+                      />
+                    </label>
+                    <label>
+                      <span class="muted small">Session RPE</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10"
+                        step="1"
+                        bind:value={editRpe}
+                        placeholder="1-10"
+                      />
+                    </label>
+                    <label class="notes-field">
+                      <span class="muted small">Notes</span>
+                      <input
+                        type="text"
+                        bind:value={editNotes}
+                        placeholder='e.g., "jerks felt heavy"'
+                      />
+                    </label>
+                    <label class="tags-field">
+                      <span class="muted small">Tags</span>
+                      <div class="tag-editor">
+                        {#each editTags as tag}
+                          <span class="tag-chip selected">
+                            {tag}
+                            <button class="ghost icon-btn" aria-label="Remove tag" on:click={() => removeTag(tag)}>
+                              ×
+                            </button>
+                          </span>
+                        {/each}
+                        <div class="tag-input-wrap">
+                          <input
+                            type="text"
+                            placeholder="Add tag"
+                            bind:value={newTagInput}
+                            on:keydown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                addTag()
+                              }
+                            }}
+                          />
+                          <button class="ghost small" type="button" on:click={addTag}>Add</button>
                         </div>
                       </div>
-                      {#if hrDetails[item.id]?.samples && hrDetails[item.id]?.samples?.length}
-                        {#key hrDetails[item.id]?.samples}
-                          {@const s = hrDetails[item.id]?.samples ?? []}
-                          {@const maxT = Math.max(...s.map((p) => p.t), 1)}
-                          {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
-                          {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
-                          {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
-                          {@const minHr = minHrRaw - padding}
-                          {@const maxHr = maxHrRaw + padding}
-                          {@const avgLine = hrSummary[item.id].avgHr ?? null}
-                          {@const maxPoint = s.reduce((acc, p) => (p.hr > acc.hr ? p : acc), s[0] ?? { t: 0, hr: 0 })}
-                          <svg
-                            class="hr-spark"
-                            viewBox="0 0 320 120"
-                            preserveAspectRatio="none"
-                            style:--hr-spark-bg={hrSparkColors.bg}
-                            style:--hr-spark-border={hrSparkColors.border}
-                            style:--hr-spark-line={hrSparkColors.line}
-                            style:--hr-spark-avg={hrSparkColors.avg}
-                            style:--hr-spark-max={hrSparkColors.max}
-                          >
-                            {#if avgLine}
-                              <line
-                                class="avg-line"
-                                x1="0"
-                                x2="320"
-                                y1={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
-                                y2={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
-                                stroke-dasharray="4 4"
-                                stroke-width="1.25"
-                              />
-                            {/if}
-                            <polyline
-                              class="hr-line"
-                              fill="none"
-                              stroke-width="2"
-                              points={s
-                                .map((p) => {
-                                  const x = (p.t / maxT) * 320
-                                  const y = 120 - ((p.hr - minHr) / Math.max(1, maxHr - minHr)) * 120
-                                  return `${x},${y}`
-                                })
-                                .join(' ')}
-                            />
-                            {#if s.length}
-                              <circle
-                                class="hr-max"
-                                cx={(maxPoint.t / maxT) * 320}
-                                cy={120 - ((maxPoint.hr - minHr) / Math.max(1, maxHr - minHr)) * 120}
-                                r="5"
-                              />
-                            {/if}
-                          </svg>
-                      {/key}
-                      {/if}
-                    </div>
-                  {:else}
-                    <div class="hr-card placeholder" aria-hidden="true">
-                      <div class="hr-card-top">
-                        <span class="muted small">HR</span>
-                        <div class="hr-stats"></div>
-                      </div>
-                      <div class="hr-spark"></div>
-                    </div>
+                    </label>
+                  </div>
+                {:else}
+                  {#if item.notes}
+                    <p class="muted small">Notes: {item.notes}</p>
                   {/if}
-                </div>
-              </div>
-              <div class="summary-actions">
-                <button
-                  class="ghost small"
-                  on:click={() => {
-                    startEdit(item)
-                    toggleExpanded(item.id, true)
-                  }}
-                >
-                  Edit
-                </button>
-                <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
-                <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
-                <button
-                  class="ghost small"
-                  on:click={() => {
-                    shareItem = item
-                    shareShowReps = true
-                    shareShowWork = true
-                    shareShowSets = true
-                  }}
-                >
-                  Share
-                </button>
-                <button class="ghost small" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
-                <button class="ghost small" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
-                <button class="ghost small" on:click={() => duplicateLog(item)}>Log again</button>
-                <button class="ghost small" on:click={() => toggleExpanded(item.id, !isExpanded)}>
-                  {isExpanded ? 'Collapse' : 'Expand'}
-                </button>
-              </div>
-              {#if isExpanded}
-                <div class="sets">
-                  {#each item.sets as set, idx}
-                    {@const isRest = set.type && set.type !== 'work'}
-                    <div class="set-row view-row" class:rest-row={isRest}>
-                      {#if isRest}
-                        <span class="muted small rest-label">
-                          Rest {set.duration_s ? `(${formatDuration(set.duration_s)})` : ''}
-                        </span>
-                      {:else}
-                        <span class="muted small">{set.round_label ?? 'Round'}</span>
-                        <strong>{set.set_label ?? `Set ${idx + 1}`}</strong>
-                        <span class="muted small">
-                          {set.duration_s ? formatDuration(set.duration_s) : ''}
-                        </span>
-                        <span>{set.reps ?? '-'}</span>
-                        {#if set.weight}
-                          <span class="muted small">@ {set.weight}</span>
-                        {:else}
-                          <span></span>
-                        {/if}
-                        {#if set.rpe}
-                          <span class="muted small">RPE {set.rpe}</span>
-                        {:else}
-                          <span></span>
-                        {/if}
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-                <div class="actions">
-                  <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
-                  <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
-                  <button class="ghost" on:click={() => {
-                    uploadTargetId = item.id
-                    if (fileInputEl) fileInputEl.click()
-                  }}>
-                    {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
-                  </button>
-                  {#if hrAttached[item.id] || hrSummary[item.id]}
-                    <button class="ghost danger" on:click={() => removeHrFile(item.id)}>Remove HR file</button>
-                  {/if}
-                  <button class="danger" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
-                </div>
-                {#if uploadStatus[item.id]}
-                  <p class="muted small">{uploadStatus[item.id]}</p>
-                {:else if hrAttached[item.id]}
-                  <p class="muted small">HR file attached</p>
                 {/if}
-              {/if}
-            </article>
+                {#if editingId === item.id}
+                  <div class="sets">
+                    <div class="set-grid-labels desktop-only">
+                      <span></span>
+                      <span></span>
+                      <span>Duration (sec)</span>
+                      <span>Reps</span>
+                      <span>Weight</span>
+                      <span>RPE</span>
+                      <span>Actions</span>
+                    </div>
+                    {#each editSets as set, idx}
+                      {@const isRest = set.type && set.type !== 'work'}
+                      <div class="set-row edit-row" class:rest-row={isRest}>
+                        <div class="row-main" class:rest-row={isRest}>
+                          {#if isRest}
+                            <span class="desktop-only"></span>
+                            <span class="desktop-only"></span>
+                            <div class="field">
+                              <span class="mobile-label">Rest (sec)</span>
+                              <input
+                                class="duration-input narrow"
+                                type="number"
+                                min="0"
+                                placeholder="sec"
+                                value={set.duration_s ?? ''}
+                                on:input={(e) => {
+                                  const val = e.currentTarget.value.trim()
+                                  updateSetField(idx, { duration_s: val === '' ? null : Number(val) })
+                                }}
+                              />
+                            </div>
+                            <span class="desktop-only"></span>
+                            <span class="desktop-only"></span>
+                            <span class="desktop-only"></span>
+                          {:else}
+                            <div class="field">
+                              <span class="mobile-label">Round</span>
+                              <input
+                                class="round-input"
+                                placeholder="Round"
+                                value={set.round_label ?? ''}
+                                on:input={(e) => updateSetField(idx, { round_label: e.currentTarget.value })}
+                              />
+                            </div>
+                            <div class="field">
+                              <span class="mobile-label">Label</span>
+                              <input
+                                class="label-input"
+                                placeholder="Set label"
+                                value={set.set_label ?? ''}
+                                on:input={(e) => updateSetField(idx, { set_label: e.currentTarget.value })}
+                              />
+                            </div>
+                            <div class="field">
+                              <span class="mobile-label">Duration (sec)</span>
+                              <input
+                                class="duration-input narrow"
+                                type="number"
+                                min="0"
+                                placeholder="sec"
+                                value={set.duration_s ?? ''}
+                                on:input={(e) => {
+                                  const val = e.currentTarget.value.trim()
+                                  updateSetField(idx, { duration_s: val === '' ? null : Number(val) })
+                                }}
+                              />
+                            </div>
+                            <div class="field">
+                              <span class="mobile-label">Reps</span>
+                              <input
+                                class="narrow"
+                                type="number"
+                                min="0"
+                                value={set.reps ?? ''}
+                                on:input={(e) => {
+                                  const val = e.currentTarget.value.trim()
+                                  updateSet(idx, 'reps', val === '' ? null : Number(val))
+                                }}
+                              />
+                            </div>
+                            <div class="field">
+                              <span class="mobile-label">Weight</span>
+                              <input
+                                class="narrow"
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                value={set.weight ?? ''}
+                                on:input={(e) => {
+                                  const val = e.currentTarget.value.trim()
+                                  updateSet(idx, 'weight', val === '' ? null : Number(val))
+                                }}
+                                placeholder="Weight"
+                              />
+                            </div>
+                            <div class="field">
+                              <span class="mobile-label">RPE</span>
+                              <input
+                                class="narrow"
+                                type="number"
+                                min="1"
+                                max="10"
+                                step="1"
+                                value={set.rpe ?? ''}
+                                placeholder="RPE"
+                                on:input={(e) => {
+                                  const val = e.currentTarget.value.trim()
+                                  updateSetField(idx, { rpe: val === '' ? null : Number(val) })
+                                }}
+                              />
+                            </div>
+                          {/if}
+                          <div class="inline-actions">
+                            <select
+                              value={set.type ?? 'work'}
+                              on:change={(e) => updateSetField(idx, { type: e.currentTarget.value })}
+                            >
+                              <option value="work">Work</option>
+                              <option value="rest">Rest</option>
+                              <option value="transition">Transition</option>
+                            </select>
+                            <div class="mini-buttons">
+                              <button class="ghost small icon-btn" aria-label="Copy row" on:click={() => copySet(idx)}>
+                                <i class="ri-file-copy-line"></i>
+                              </button>
+                              <button class="ghost small icon-btn" aria-label="Move up" on:click={() => moveSet(idx, -1)} disabled={idx === 0}>
+                                <i class="ri-arrow-up-line"></i>
+                              </button>
+                              <button class="ghost small icon-btn" aria-label="Move down" on:click={() => moveSet(idx, 1)} disabled={idx === editSets.length - 1}>
+                                <i class="ri-arrow-down-line"></i>
+                              </button>
+                              <button class="ghost small danger icon-btn" aria-label="Delete row" on:click={() => deleteSet(idx)}>
+                                <i class="ri-delete-bin-6-line"></i>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    {/each}
+                    <div class="add-row">
+                      <button class="ghost" on:click={() => addSet('work')}>Add work set</button>
+                      <button class="ghost" on:click={() => addSet('rest')}>Add rest</button>
+                      <button class="ghost" on:click={() => addSet('transition')}>Add transition</button>
+                    </div>
+                  </div>
+                  <div class="actions">
+                    <button class="primary" on:click={() => saveEdit(item.id)}>Save</button>
+                    <button class="ghost" on:click={cancelEdit}>Cancel</button>
+                  </div>
+                {:else}
+                  <div class="actions">
+                    <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
+                    <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
+                    <button
+                      class="ghost small"
+                      on:click={() => {
+                        shareItem = item
+                        shareShowReps = true
+                        shareShowWork = true
+                        shareShowSets = true
+                      }}
+                    >
+                      Share
+                    </button>
+                    <button class="ghost small" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
+                    <button class="ghost small" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
+                    <button class="ghost small" on:click={() => duplicateLog(item)}>Log again</button>
+                    <button class="ghost small" on:click={() => toggleExpanded(item.id, !isExpanded)}>
+                      {isExpanded ? 'Collapse' : 'Expand'}
+                    </button>
+                  </div>
+                  {#if isExpanded}
+                    {#if item.notes}
+                      <p class="muted small">Notes: {item.notes}</p>
+                    {/if}
+                    <div class="sets">
+                      {#each item.sets as set, idx}
+                        {@const isRest = set.type && set.type !== 'work'}
+                        <div class="set-row view-row" class:rest-row={isRest}>
+                          {#if isRest}
+                            <span class="muted small rest-label">
+                              Rest {set.duration_s ? `(${formatDuration(set.duration_s)})` : ''}
+                            </span>
+                          {:else}
+                            <span class="muted small">{set.round_label ?? 'Round'}</span>
+                            <strong>{set.set_label ?? `Set ${idx + 1}`}</strong>
+                            <span class="muted small">
+                              {set.duration_s ? formatDuration(set.duration_s) : ''}
+                            </span>
+                            <span>{set.reps ?? '-'}</span>
+                            {#if set.weight}
+                              <span class="muted small">@ {set.weight}</span>
+                            {:else}
+                              <span></span>
+                            {/if}
+                            {#if set.rpe}
+                              <span class="muted small">RPE {set.rpe}</span>
+                            {:else}
+                              <span></span>
+                            {/if}
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                    <div class="actions">
+                      <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
+                      <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
+                      <button class="ghost" on:click={() => {
+                        uploadTargetId = item.id
+                        if (fileInputEl) fileInputEl.click()
+                      }}>
+                        {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
+                      </button>
+                      <button class="ghost" on:click={() => copySummary(item)}>Copy</button>
+                      <button class="ghost" on:click={() => copyCsv(item)}>CSV</button>
+                      <button
+                        class="ghost"
+                        on:click={() => {
+                          shareItem = item
+                          shareShowReps = true
+                          shareShowWork = true
+                          shareShowSets = true
+                        }}
+                      >
+                        Share
+                      </button>
+                      <button class="ghost" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
+                      <button class="ghost" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
+                      <button class="ghost" on:click={() => duplicateLog(item)}>Log again</button>
+                      {#if hrAttached[item.id] || hrSummary[item.id]}
+                        <button class="ghost danger" on:click={() => removeHrFile(item.id)}>Remove HR file</button>
+                      {/if}
+                      <button class="danger" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
+                    </div>
+                    {#if uploadStatus[item.id]}
+                      <p class="muted small">{uploadStatus[item.id]}</p>
+                    {:else if hrAttached[item.id]}
+                      <p class="muted small">HR file attached</p>
+                    {/if}
+                  {/if}
+                {/if}
+              </article>
             {/each}
           </div>
         {/if}
@@ -2489,7 +2725,8 @@
 
 <style>
   .page {
-    max-width: 1500px;
+    max-width: 1300px;
+    width: min(1300px, calc(100vw - 2rem));
     margin: 0 auto;
     padding: 2rem 1.5rem 3rem;
     display: flex;
@@ -2743,11 +2980,12 @@
     border-radius: 12px;
     padding: 1rem;
     min-width: 320px;
+    width: min(520px, 90vw);
     max-height: 80vh;
     overflow: auto;
     z-index: 110;
-    display: grid;
-    grid-template-columns: 320px 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 1rem;
     align-items: stretch;
   }
@@ -2988,6 +3226,7 @@
   border: 1px solid var(--color-border);
   border-radius: 12px;
   padding: 1rem;
+  width: 100%;
 }
 .dow {
   text-align: center;
@@ -2996,6 +3235,9 @@
 }
 .day {
   min-height: 110px;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
   border-radius: 10px;
   padding: 0.55rem 0.55rem 0.45rem;
@@ -3045,6 +3287,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  width: 100%;
 }
 .day-row {
   display: grid;
@@ -3055,6 +3298,7 @@
   border-radius: 8px;
   background: color-mix(in srgb, var(--color-surface-1) 30%, transparent);
   min-width: 0;
+  width: 100%;
 }
 .day-row-body {
   display: flex;

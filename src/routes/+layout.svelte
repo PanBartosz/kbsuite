@@ -1,9 +1,10 @@
 <script lang="ts">
  import '../app.css';
  	import favicon from '$lib/assets/favicon.svg';
- 	import SettingsModal from '$lib/components/SettingsModal.svelte';
- 	import { openSettingsModal } from '$lib/stores/settings';
+	import SettingsModal from '$lib/components/SettingsModal.svelte';
+	import { openSettingsModal } from '$lib/stores/settings';
 	import WorkoutSummaryModal from '$lib/stats/WorkoutSummaryModal.svelte';
+	import { loadPendingCount, shares } from '$lib/stores/shares';
 	import {
 		closeSummaryModal,
 		openSummaryModal,
@@ -16,6 +17,11 @@
 
 	let { children } = $props();
 	let menuOpen = $state(false);
+	let pendingShareCount = $state(0);
+
+	shares.subscribe((value) => {
+		pendingShareCount = value.count ?? 0;
+	});
 
 	const openSettings = () => {
 		openSettingsModal();
@@ -31,6 +37,7 @@
 	onMount(() => {
 		// ensure session cookie exists
 		fetch('/api/session').catch(() => {});
+		loadPendingCount();
 	});
 
 	const saveCompleted = async (entries: any[]) => {
@@ -81,7 +88,12 @@
 	</button>
 	<nav class:open={menuOpen}>
 		<a href="/" onclick={closeMenu}>Home</a>
-		<a href="/plan" onclick={closeMenu}>Planner</a>
+		<a href="/plan" onclick={closeMenu}>
+			Planner
+			{#if pendingShareCount > 0}
+				<span class="pill">{pendingShareCount}</span>
+			{/if}
+		</a>
 		<a href="/timer" onclick={closeMenu}>Timer</a>
 		<a href="/counter" onclick={closeMenu}>Rep Counter</a>
 		<a href="/big-picture" onclick={closeMenu}>Big Picture</a>
@@ -159,6 +171,9 @@
 		border-radius: 10px;
 		border: 1px solid transparent;
 		transition: border-color 120ms ease, background 120ms ease;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
 	}
 
 	nav a:hover {
@@ -177,6 +192,18 @@
 	}
 	.settings-btn:hover {
 		transform: translateY(-1px);
+	}
+	.pill {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 18px;
+		height: 18px;
+		border-radius: 999px;
+		background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+		color: var(--color-text-inverse);
+		font-size: 0.8rem;
+		padding: 0 0.4rem;
 	}
 
 	@media (max-width: 720px) {

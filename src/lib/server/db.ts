@@ -88,6 +88,7 @@ const initDb = () => {
   migrateCompletedSets()
   migrateCompletedWorkouts()
   migratePlannedWorkouts()
+  migrateSharedWorkoutInvites()
   seedTemplates()
 }
 
@@ -171,6 +172,33 @@ const migratePlannedWorkouts = () => {
   `)
 }
 
+const migrateSharedWorkoutInvites = () => {
+  const database = db!
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS shared_workout_invites (
+      id TEXT PRIMARY KEY,
+      sender_id TEXT NOT NULL,
+      recipient_id TEXT NOT NULL,
+      source_planned_id TEXT NOT NULL,
+      title TEXT,
+      yaml_source TEXT,
+      plan_json TEXT,
+      planned_for INTEGER,
+      notes TEXT,
+      tags TEXT,
+      message TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL,
+      responded_at INTEGER,
+      seen_at INTEGER,
+      FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_shared_invites_recipient_status ON shared_workout_invites(recipient_id, status);
+    CREATE INDEX IF NOT EXISTS idx_shared_invites_sender ON shared_workout_invites(sender_id);
+  `)
+}
+
 const defaultSettings = () => ({
   theme: 'dark',
   timer: {
@@ -206,6 +234,32 @@ const safeParseTags = (value: any): string[] => {
     return []
   }
 }
+
+export const findUserByUsername = (username: string) => {
+  return getDb()
+    .prepare('SELECT id, username FROM users WHERE username = ?')
+    .get(username) as { id: string; username: string } | undefined
+}
+
+export const serializeInvite = (row: any) => ({
+  id: row.id,
+  sender_id: row.sender_id,
+  recipient_id: row.recipient_id,
+  source_planned_id: row.source_planned_id,
+  title: row.title ?? '',
+  yaml_source: row.yaml_source ?? '',
+  plan_json: row.plan_json ? JSON.parse(row.plan_json) : null,
+  planned_for: row.planned_for ?? null,
+  notes: row.notes ?? '',
+  tags: safeParseTags(row.tags),
+  message: row.message ?? '',
+  status: row.status ?? 'pending',
+  created_at: row.created_at ?? null,
+  responded_at: row.responded_at ?? null,
+  seen_at: row.seen_at ?? null,
+  sender_username: row.sender_username ?? null,
+  recipient_username: row.recipient_username ?? null
+})
 
 export const createUserWithPassword = (username: string, password: string) => {
   const db = getDb()
@@ -352,3 +406,44 @@ export const serializePlanned = (row: any) => ({
   created_at: row.created_at,
   updated_at: row.updated_at
 })
+
+export const clonePlannedToUser = (
+  invite: any,
+  targetUserId: string,
+  plannedForOverride?: number | null
+) => {
+  const db = getDb()
+  const now = Date.now()
+  const plannedFor = Number(plannedForOverride ?? invite?.planned_for ?? Date.now())
+  const yamlSource = typeof invite?.yaml_source === 'string' ? invite.yaml_source : ''
+  let planJson: any = null
+  try {
+    planJson =
+      typeof invite?.plan_json === 'string'
+        ? JSON.parse(invite.plan_json)
+        : invite?.plan_json ?? null
+  } catch {
+    planJson = null
+  }
+  const tags = safeParseTags(invite?.tags)
+
+  const id = crypto.randomUUID()
+  db.prepare(
+    `INSERT INTO planned_workouts (id, user_id, planned_for, title, yaml_source, plan_json, notes, tags, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    targetUserId,
+    plannedFor,
+    invite?.title ?? '',
+    yamlSource,
+    planJson ? JSON.stringify(planJson) : null,
+    invite?.notes ?? '',
+    JSON.stringify(tags),
+    now,
+    now
+  )
+
+  const row = db.prepare('SELECT * FROM planned_workouts WHERE id = ?').get(id)
+  return row ? serializePlanned(row) : null
+}

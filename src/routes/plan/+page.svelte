@@ -17,6 +17,8 @@
   import PlanEditorModal from '$lib/timer/components/PlanEditorModal.svelte'
   import RoundEditorModal from '$lib/timer/components/RoundEditorModal.svelte'
   import SetEditorModal from '$lib/timer/components/SetEditorModal.svelte'
+  import SharePlanModal from '$lib/components/SharePlanModal.svelte'
+  import { loadInvites, loadPendingCount, shares } from '$lib/stores/shares'
 
   type Planned = {
     id: string
@@ -72,6 +74,12 @@
   const OPENAI_CHAT_MODEL = 'gpt-4o-mini'
   let openAiKey = ''
   $: openAiKey = $settings.openAiKey ?? ''
+  let shareModalOpen = false
+  let shareTarget: Planned | null = null
+  let shareDefaultDate = ''
+  let inviteDates: Record<string, string> = {}
+  let inviteStatus: Record<string, string> = {}
+  let inviteError: Record<string, string> = {}
 
   const dayKey = (ts: number) => {
     const d = new Date(ts)
@@ -181,6 +189,17 @@
     duplicateOpen = true
   }
 
+  const openShare = (plan: Planned) => {
+    shareTarget = plan
+    shareDefaultDate = new Date(plan.planned_for).toISOString().slice(0, 10)
+    shareModalOpen = true
+  }
+
+  const closeShare = () => {
+    shareModalOpen = false
+    shareTarget = null
+  }
+
   const closeDuplicate = () => {
     duplicateOpen = false
     duplicateSource = null
@@ -283,6 +302,64 @@
     }
   }
 
+  const inviteForId = (id: string) => $shares?.pending?.find((inv) => inv.id === id)
+
+  const acceptInvite = async (id: string) => {
+    const invite = inviteForId(id)
+    if (!invite) return
+    const dateStr =
+      inviteDates[id] || (invite.planned_for ? new Date(invite.planned_for).toISOString().slice(0, 10) : '')
+    const plannedFor = dateStr ? Date.parse(dateStr) : null
+    if (!plannedFor) {
+      inviteError = { ...inviteError, [id]: 'Select a valid date.' }
+      return
+    }
+    inviteStatus = { ...inviteStatus, [id]: 'Saving…' }
+    inviteError = { ...inviteError, [id]: '' }
+    try {
+      const res = await fetch(`/api/shared-workouts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'accept', plannedFor })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? 'Failed to accept')
+      await loadPendingCount()
+      await loadInvites('incoming', 'pending')
+      await loadPlans()
+      inviteStatus = { ...inviteStatus, [id]: 'Added to planner.' }
+      setTimeout(() => {
+        inviteStatus = { ...inviteStatus, [id]: '' }
+      }, 2000)
+    } catch (err) {
+      inviteError = { ...inviteError, [id]: (err as any)?.message ?? 'Failed to accept' }
+      inviteStatus = { ...inviteStatus, [id]: '' }
+    }
+  }
+
+  const rejectInvite = async (id: string) => {
+    inviteStatus = { ...inviteStatus, [id]: 'Updating…' }
+    inviteError = { ...inviteError, [id]: '' }
+    try {
+      const res = await fetch(`/api/shared-workouts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reject' })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? 'Failed to reject')
+      await loadPendingCount()
+      await loadInvites('incoming', 'pending')
+      inviteStatus = { ...inviteStatus, [id]: 'Rejected.' }
+      setTimeout(() => {
+        inviteStatus = { ...inviteStatus, [id]: '' }
+      }, 1500)
+    } catch (err) {
+      inviteError = { ...inviteError, [id]: (err as any)?.message ?? 'Failed to reject' }
+      inviteStatus = { ...inviteStatus, [id]: '' }
+    }
+  }
+
   const addTag = () => {
     const t = newTag.trim()
     if (!t) return
@@ -312,6 +389,13 @@
   const openPlanEditor = () => {
     planEditorOpen = true
   }
+
+  const setInviteDate = (id: string, value: string) => {
+    inviteDates = { ...inviteDates, [id]: value }
+  }
+
+  const defaultInviteDate = (invite: any) =>
+    invite?.planned_for ? new Date(invite.planned_for).toISOString().slice(0, 10) : ''
 
   const closePlanEditor = () => {
     planEditorOpen = false
@@ -722,6 +806,18 @@ rounds: array of objects, in order
     window.location.href = `${base}?planned=${encodeURIComponent(id)}`
   }
 
+  $: if ($shares?.pending?.length) {
+    const next = { ...inviteDates }
+    let changed = false
+    for (const inv of $shares.pending) {
+      if (!next[inv.id]) {
+        next[inv.id] = defaultInviteDate(inv)
+        changed = true
+      }
+    }
+    if (changed) inviteDates = next
+  }
+
   const shiftWeek = (delta: number) => {
     const next = new Date(mobileWeekStart)
     next.setDate(next.getDate() + delta * 7)
@@ -734,6 +830,8 @@ rounds: array of objects, in order
   onMount(() => {
     loadPlans()
     libraryWorkouts = buildLibraryWorkouts()
+    loadPendingCount()
+    loadInvites('incoming', 'pending')
   })
 </script>
 
@@ -753,13 +851,6 @@ rounds: array of objects, in order
           <p class="eyebrow">Today</p>
           <h3>{new Date().toDateString()}</h3>
         </div>
-        <div class="today-actions">
-          <button class="ghost" on:click={() => openNew(dayKey(Date.now()))}>Plan today</button>
-          {#if todayPlan}
-            <button class="primary" on:click={() => openTimer(todayPlan!, 'timer')}>Start in Timer</button>
-            <button class="ghost" on:click={() => openTimer(todayPlan!, 'big')}>Start in Big Picture</button>
-          {/if}
-        </div>
       </div>
       {#if todayPlan}
         <div class="today-card">
@@ -775,6 +866,9 @@ rounds: array of objects, in order
             {#if todayPlan.notes}<p class="muted small">{todayPlan.notes}</p>{/if}
           </div>
           <div class="today-actions">
+            <button class="primary" on:click={() => openTimer(todayPlan!, 'timer')}>Start in Timer</button>
+            <button class="ghost" on:click={() => openTimer(todayPlan!, 'big')}>Start in Big Picture</button>
+            <button class="ghost" on:click={() => openShare(todayPlan!)}>Share</button>
             <button class="ghost" on:click={() => openEdit(todayPlan!)}>Edit</button>
             <button class="text-button" on:click={() => openDuplicate(todayPlan!)}>Duplicate</button>
             <button class="ghost danger" on:click={() => deletePlan(todayPlan!.id)}>Delete</button>
@@ -823,7 +917,7 @@ rounds: array of objects, in order
                 {/each}
               </div>
             {:else}
-              <p class="muted tiny">No workouts</p>
+              <span class="muted tiny">No workouts</span>
             {/if}
           </button>
         {/each}
@@ -892,6 +986,82 @@ rounds: array of objects, in order
       </div>
     </section>
 
+    <section class="shares-block">
+      <div class="shares-head">
+        <div>
+          <p class="eyebrow">Incoming shares</p>
+          <h3>Shared with you</h3>
+        </div>
+        <p class="muted small">Accept to add to your planner.</p>
+      </div>
+      {#if !$shares.loaded && !$shares.pending.length}
+        <p class="muted small">Loading shared workouts…</p>
+      {:else if $shares.pending.length === 0}
+        <p class="muted small">No pending shared workouts.</p>
+      {:else}
+        <div class="list">
+          {#each $shares.pending as invite}
+            <article class="card">
+              <div class="card-header">
+                <div>
+                  <p class="muted small">From {invite.sender_username ?? 'someone'}</p>
+                  <h4>{invite.title || 'Workout'}</h4>
+                  {#if invite.message}
+                    <p class="muted small">“{invite.message}”</p>
+                  {/if}
+                  {#if invite.tags?.length}
+                    <div class="tag-row">
+                      {#each invite.tags as tag}
+                        <span class="tag-chip">{tag}</span>
+                      {/each}
+                    </div>
+                  {/if}
+                  {#if totalsForYaml(invite.yaml_source)}
+                    {@const totals = totalsForYaml(invite.yaml_source)!}
+                    <p class="muted small">
+                      Total {formatDuration(totals.total)} · Work {formatDuration(totals.work)} · Rest {formatDuration(totals.rest)}
+                    </p>
+                  {/if}
+                </div>
+                <div class="actions">
+                  <input
+                    type="date"
+                    value={inviteDates[invite.id] || defaultInviteDate(invite)}
+                    on:input={(e) => setInviteDate(invite.id, (e.target as HTMLInputElement).value)}
+                  />
+                  <button class="primary" on:click={() => acceptInvite(invite.id)}>
+                    Accept
+                  </button>
+                  <button class="ghost danger" on:click={() => rejectInvite(invite.id)}>Reject</button>
+                </div>
+              </div>
+              {#if timelineForYaml(invite.yaml_source).length}
+                {@const parsedPlan = planFromYaml(invite.yaml_source)}
+                {#if parsedPlan}
+                  <div class="plan-timeline mini-rounds">
+                    <div class="mini-rounds__title">Rounds &amp; sets</div>
+                    <div class="mini-rounds__scroller">
+                      <RoundsSetsView
+                        plan={parsedPlan}
+                        timeline={timelineForYaml(invite.yaml_source)}
+                        showEditButtons={false}
+                      />
+                    </div>
+                  </div>
+                {/if}
+              {/if}
+              {#if inviteStatus[invite.id]}
+                <p class="status">{inviteStatus[invite.id]}</p>
+              {/if}
+              {#if inviteError[invite.id]}
+                <p class="error">{inviteError[invite.id]}</p>
+              {/if}
+            </article>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
     <section class="day-detail">
       <div class="day-head">
         <h3>{selectedDateKey || 'Select a day'}</h3>
@@ -930,6 +1100,7 @@ rounds: array of objects, in order
                   <button class="ghost" on:click={() => openTimer(item, 'big')}>Big Picture</button>
                   <button class="ghost" on:click={() => openEdit(item)}>Edit</button>
                   <button class="text-button" on:click={() => openDuplicate(item)}>Duplicate</button>
+                  <button class="ghost" on:click={() => openShare(item)}>Share</button>
                   <button class="ghost danger" on:click={() => deletePlan(item.id)}>Delete</button>
                 </div>
               </div>
@@ -977,6 +1148,21 @@ rounds: array of objects, in order
       <button class="ghost" on:click={closeDuplicate}>Cancel</button>
     </div>
   </div>
+{/if}
+
+{#if shareModalOpen && shareTarget}
+  <SharePlanModal
+    open={shareModalOpen}
+    title={shareTarget.title || 'Planned workout'}
+    defaultDate={shareDefaultDate}
+    plannedId={shareTarget.id}
+    on:shared={() => {
+      loadPendingCount()
+      loadInvites('incoming', 'pending')
+      closeShare()
+    }}
+    on:close={closeShare}
+  />
 {/if}
 
 {#if editOpen}
@@ -1424,6 +1610,28 @@ rounds: array of objects, in order
   :global(.mini-rounds .round-rest-block) {
     padding: 0.6rem 0.7rem;
     font-size: 0.82rem;
+  }
+  .shares-block {
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    padding: 1rem;
+    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .shares-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .shares-block input[type='date'] {
+    padding: 0.35rem 0.5rem;
+    border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1);
+    color: var(--color-text-primary);
   }
   @media (max-width: 720px) {
     .today-head {
