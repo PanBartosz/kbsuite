@@ -457,6 +457,7 @@ let plan =
   let roundEditorOpen = false
   let roundEditorIndex = null
   let roundEditorData = null
+  let lastPhase = null
   let setEditorOpen = false
   let setEditorRoundIndex = null
   let setEditorSetIndex = null
@@ -1177,6 +1178,7 @@ let plan =
         lastTickTimestamp = message.timestamp ?? Date.now()
         activePhaseIndex = -1
         activePhase = null
+        lastPhase = null
         phaseRemainingMs = 0
         elapsedMs = 0
         totalDurationMs = message.totalDurationMs ?? timelineDuration * 1000
@@ -1189,6 +1191,7 @@ let plan =
         if (previousPhase && previousPhase.type === 'work') {
           finalizeWorkPhase(previousPhaseIndex)
         }
+        lastPhase = previousPhase
         if (tickId !== lastTickId) return
         timerStatusMessage = isTimerPaused ? 'Timer paused' : 'Timer running'
         activePhaseIndex = message.phaseIndex
@@ -1202,6 +1205,14 @@ let plan =
           phaseIndex: activePhaseIndex,
           spokenIds: new Set()
         }
+        const phaseChangeReason = pendingSkipReset ? 'skip' : 'progress'
+        pendingSkipReset = false
+        dispatch('phaseChange', {
+          phaseIndex: activePhaseIndex,
+          phase: activePhase,
+          previousPhase: lastPhase,
+          reason: phaseChangeReason
+        })
         console.debug('[tts] phaseStarted reset announcement state', {
           phaseIndex: activePhaseIndex,
           phaseId: activePhase?.id
@@ -1355,14 +1366,6 @@ let plan =
             })
           }
         }
-        const phaseChangeReason = pendingSkipReset ? 'skip' : 'progress'
-        pendingSkipReset = false
-        dispatch('phaseChange', {
-          phaseIndex: activePhaseIndex,
-          phase: activePhase,
-          previousPhase,
-          reason: phaseChangeReason
-        })
         return
       }
 
@@ -3789,6 +3792,73 @@ Rules:
     margin-left: auto;
     margin-right: auto;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+
+  @media (min-width: 1500px) {
+    .timer-panel--fullscreen {
+      max-width: calc(100% - 260px);
+      margin: 0 auto;
+      padding: clamp(2.5rem, 5vw, 4rem);
+    }
+
+    .timer-panel--fullscreen .timer-panel__status,
+    .timer-panel--fullscreen :global(.timer-display),
+    .timer-panel--fullscreen :global(.control-bar) {
+      max-width: none;
+      width: 100%;
+    }
+
+    .timer-panel--fullscreen :global(.timer-display__time) {
+      font-size: clamp(6rem, 8vw, 14vh);
+    }
+
+    .timer-panel--fullscreen :global(.timer-display__label) {
+      font-size: clamp(2rem, 5vh, 3.4rem);
+    }
+
+    .timer-panel--fullscreen :global(.timer-display__current) {
+      padding: clamp(3rem, 8vh, 6rem);
+    }
+
+  .timer-panel--fullscreen :global(.timer-display__bars) {
+    max-width: none;
+    width: 100%;
+  }
+
+  .timer-panel--fullscreen :global(.bar) {
+      height: 18px;
+      border-width: 2px;
+    }
+
+    .timer-panel--fullscreen :global(.control-bar) {
+      width: 100%;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem;
+    }
+
+    .timer-panel--fullscreen :global(.control-bar button) {
+      font-size: clamp(1rem, 2.7vh, 1.45rem);
+      padding: clamp(0.9rem, 2.2vh, 1.3rem) clamp(1rem, 2.7vh, 1.45rem);
+    }
+
+    .timer-panel--fullscreen :global(.timer-display__next) {
+      padding: clamp(1.4rem, 2.7vh, 2.3rem);
+      gap: clamp(0.5rem, 1.2vh, 1.1rem);
+    }
+
+    .timer-panel--fullscreen :global(.timer-display__next-label) {
+      font-size: clamp(1rem, 1.8vh, 1.4rem);
+      letter-spacing: 0.1em;
+    }
+
+    .timer-panel--fullscreen :global(.timer-display__next-meta) {
+      font-size: clamp(1.1rem, 2.6vh, 1.6rem);
+      gap: clamp(0.35rem, 0.9vh, 0.75rem);
+    }
+
+    .timer-panel--fullscreen :global(.timer-display__next-meta strong) {
+      font-size: clamp(1.25rem, 3.1vh, 1.9rem);
+    }
   }
 
   @media (max-width: 680px) {

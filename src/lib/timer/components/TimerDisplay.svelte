@@ -209,17 +209,31 @@
     align-items: stretch;
   }
   .timer-display__body.with-inline {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 3fr 2fr; /* ~60/40 split */
+    align-items: stretch;
   }
   .inline-slot {
     display: flex;
-    align-items: stretch;
+    align-items: center;
+    justify-content: center;
     width: 100%;
+    min-width: 0;
   }
   :global(.inline-content) {
     flex: 1 1 auto;
     width: 100%;
     min-width: 0;
+  }
+  .inline-slot :global(video),
+  .inline-slot :global(canvas),
+  .inline-slot :global(img),
+  .inline-slot :global(.inline-content) {
+    max-width: 100%;
+    max-height: 80vh;
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+    aspect-ratio: auto;
   }
 
   .bar {
@@ -241,6 +255,19 @@
   .bar--overall span {
     background: var(--color-success);
   }
+
+:global(.timer-panel--fullscreen) .timer-display__bars {
+  gap: 0.9rem;
+}
+
+:global(.timer-panel--fullscreen) .timer-display__bars .bar {
+  height: 20px !important;
+  border-width: 2px;
+}
+
+:global(.timer-panel--fullscreen) .timer-display__bars .bar span {
+  height: 100% !important;
+}
 
 .timer-display__next {
   display: flex;

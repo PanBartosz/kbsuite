@@ -218,7 +218,10 @@
         }
       }
       lastCount = update.count
-      if (update.feedback) feedback.set(update.feedback)
+      // Suppress transient "rep counted" feedback to avoid layout shifts
+      if (update.feedback && update.feedback.toLowerCase() !== 'rep counted') {
+        feedback.set(update.feedback)
+      }
       poseStats.update((s) => ({
         ...s,
         fps,
@@ -258,8 +261,9 @@
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user',
-          width: { ideal: 640, max: 640 },
-          height: { ideal: 480, max: 480 }
+          width: { ideal: 1920, max: 3840 },
+          height: { ideal: 1080, max: 2160 },
+          aspectRatio: 16 / 9
         },
         audio: false
       })
