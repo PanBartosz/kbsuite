@@ -7,6 +7,18 @@ export type CompletedSetLike = {
   type?: string | null
 }
 
+export type SummaryItem = {
+  raw: string
+  label: string
+  work: string
+  on?: string
+  off?: string
+  count?: number
+}
+
+export type SummaryBlock = { title: string; items: SummaryItem[] }
+export type WorkoutSummary = { text: string; blocks: SummaryBlock[] }
+
 const fmtDur = (seconds?: number | null) => {
   if (!seconds || seconds <= 0) return ''
   const mins = Math.floor(seconds / 60)
@@ -33,12 +45,12 @@ const baseLabel = (set: CompletedSetLike, roundName: string) => {
   return label
 }
 
-const formatWorkRestPair = (
+const buildEntry = (
   work: CompletedSetLike,
   rest: CompletedSetLike | null,
   roundName: string,
   includeLabel = true
-) => {
+): SummaryItem => {
   const label = includeLabel ? baseLabel(work, roundName) : ''
   const parts: string[] = []
   if (work.reps !== null && work.reps !== undefined) parts.push(String(work.reps))
@@ -60,16 +72,25 @@ const formatWorkRestPair = (
     : parts.length
       ? parts.join(' ')
       : label
-  return `${main}${durPart}`.trim()
+  const raw = `${main}${durPart}`.trim()
+  const workText =
+    parts.length > 0
+      ? parts.join(' ')
+      : !includeLabel && label
+        ? label
+        : ''
+  return {
+    raw,
+    label: includeLabel ? label : '',
+    work: workText,
+    on: durOn || '',
+    off: durOff || '',
+    count: 1
+  }
 }
 
-const formatRestOnly = (rest: CompletedSetLike) => {
-  const dur = fmtDur(rest.duration_s)
-  return dur ? `Rest (${dur})` : 'Rest'
-}
-
-export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
-  if (!Array.isArray(sets) || sets.length === 0) return ''
+export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSummary => {
+  if (!Array.isArray(sets) || sets.length === 0) return { text: '', blocks: [] }
 
   // Group contiguous sets by normalized round label (rests without round stick to current)
   const segments: { round: string; sets: CompletedSetLike[] }[] = []
@@ -105,7 +126,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
     }
   }
 
-  const lines: string[] = []
+  const blocks: SummaryBlock[] = []
 
   for (const seg of merged) {
     const roundName = seg.round || 'Session'
@@ -113,8 +134,9 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
     if (list.every((s) => (s.type ?? 'rest').toLowerCase() !== 'work')) {
       continue
     }
-    const items: string[] = []
+    const items: SummaryItem[] = []
     let lastLabel = ''
+    let lastNorm = ''
     let i = 0
     while (i < list.length) {
       const curr = list[i]
@@ -133,20 +155,26 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
           following.weight === curr.weight
 
         const label = baseLabel(curr, roundName)
-        const includeLabel = label !== lastLabel
+        const norm = normalizeLabel(label)
+        const includeLabel = norm !== lastNorm
         lastLabel = label
+        lastNorm = norm
 
         if (hasRest && hasTrailingWork && (!list[i + 3] || (list[i + 3].type ?? 'rest').toLowerCase() !== 'work')) {
-          items.push(`2 × ${formatWorkRestPair(curr, next, roundName, includeLabel)}`)
+          const entry = buildEntry(curr, next, roundName, includeLabel)
+          entry.raw = `2 × ${entry.raw}`
+          entry.work = entry.work ? `2 × ${entry.work}` : entry.raw
+          entry.count = 2
+          items.push(entry)
           i += 3
           continue
         }
 
         if (hasRest) {
-          items.push(formatWorkRestPair(curr, next, roundName, includeLabel))
+          items.push(buildEntry(curr, next, roundName, includeLabel))
           i += 2
         } else {
-          items.push(formatWorkRestPair(curr, null, roundName, includeLabel))
+          items.push(buildEntry(curr, null, roundName, includeLabel))
           i += 1
         }
       } else {
@@ -156,20 +184,38 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
     }
 
     // Collapse identical consecutive items
-    const collapsed: string[] = []
+    const collapsed: SummaryItem[] = []
     let j = 0
     while (j < items.length) {
       let count = 1
-      while (j + count < items.length && items[j + count] === items[j]) {
+      while (j + count < items.length && items[j + count].raw === items[j].raw) {
         count++
       }
-      collapsed.push(count > 1 ? `${count} × ${items[j]}` : items[j])
+      if (count > 1) {
+        const base = { ...items[j] }
+        base.raw = `${count} × ${base.raw}`
+        base.work = base.work ? `${count} × ${base.work}` : base.raw
+        base.count = count
+        collapsed.push(base)
+      } else {
+        collapsed.push(items[j])
+      }
       j += count
     }
 
-    const joined = collapsed.join('; ')
-    lines.push(`- ${roundName}: ${joined}`)
+    if (collapsed.length) {
+      blocks.push({ title: roundName, items: collapsed })
+    }
   }
 
-  return lines.join('\n')
+  const text = blocks
+    .map((block) => {
+      const joined = block.items.map((it) => it.raw).join('; ')
+      return `- ${block.title}: ${joined}`
+    })
+    .join('\n')
+
+  return { text, blocks }
 }
+
+export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => buildWorkoutSummary(sets).text

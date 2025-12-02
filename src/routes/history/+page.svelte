@@ -3,9 +3,7 @@
   import YAML from 'yaml'
   import { buildTimeline } from '$lib/timer/lib/timeline'
   import { browser } from '$app/environment'
-  import { summarizeCompletedWorkout } from '$lib/stats/workoutSummary'
-  import { downsample, hrSparkline } from '$lib/stats/sparkline'
-  import { saveShareCard } from '$lib/stats/shareCard'
+  import { buildWorkoutSummary } from '$lib/stats/workoutSummary'
 
   type CompletedSet = {
     phase_index?: number
@@ -516,7 +514,7 @@
 
   const copyCompactSummary = async (item: CompletedWorkout) => {
     try {
-      const text = summarizeCompletedWorkout(item.sets)
+      const { text } = buildWorkoutSummary(item.sets)
       await navigator.clipboard.writeText(text || '')
       status = 'Copied compact summary'
       setTimeout(() => (status = ''), 2000)
@@ -524,21 +522,6 @@
       status = 'Copy failed'
       setTimeout(() => (status = ''), 2000)
     }
-  }
-
-  const parseSummaryBlocks = (text: string) => {
-    if (!text) return []
-    return text
-      .split('\n')
-      .map((line) => line.trim().replace(/^- /, ''))
-      .filter(Boolean)
-      .map((line) => {
-        const [head, ...rest] = line.split(':')
-        const title = head.trim()
-        const body = rest.join(':').trim()
-        const items = body ? body.split(';').map((p) => p.trim()).filter(Boolean) : []
-        return { title, items }
-      })
   }
 
   const deleteItem = async (id: string) => {
@@ -1686,6 +1669,7 @@
             {#each selectedDayItems as item}
               {@const totals = computeTotals(item)}
               {@const isExpanded = editingId === item.id || expanded[item.id]}
+              {@const summary = buildWorkoutSummary(item.sets)}
               <article class="card">
                 <div class="card-header two-col">
                   <div class="header-left">
@@ -1795,20 +1779,38 @@
                   </div>
                 </div>
                 {#if !isExpanded}
-                  {@const blocks = parseSummaryBlocks(summarizeCompletedWorkout(item.sets))}
-                  {#if blocks.length}
+                  {#if summary.blocks.length}
                     <div class="compact-summary rich">
-                      {#each blocks as block}
+                      {#each summary.blocks as block}
                         <div class="summary-block">
                           <div class="summary-title">{block.title}</div>
                           {#if block.items?.length}
-                            <div class="summary-items">
-                              {#each block.items as it}
-                                <span class="summary-chip">{it}</span>
-                              {/each}
-                            </div>
+                        <div class="summary-items">
+                          {#each block.items as it}
+                            <span class="summary-chip fancy">
+                              {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                              {#if it.work}<span class="chip-pill">{it.work}</span>{/if}
+                              {#if it.on || it.off}
+                                <span class="chip-pill pill-rest">
+                                  {#if it.on}<span class="on">{it.on}</span>{/if}
+                                  {#if it.off}
+                                    <span class="divider">/</span>
+                                    <span class="off">{it.off}</span>
+                                  {/if}
+                                </span>
+                              {/if}
+                              {#if !it.label && !it.work && !it.on && !it.off}{it.raw}{/if}
+                            </span>
+                          {/each}
+                        </div>
                           {/if}
                         </div>
+                      {/each}
+                    </div>
+                  {:else if summary.text}
+                    <div class="compact-summary">
+                      {#each summary.text.split('\n') as line}
+                        <div class="summary-line">{line}</div>
                       {/each}
                     </div>
                   {/if}
@@ -2140,6 +2142,7 @@
         {#each visibleItems as item}
         {@const totals = computeTotals(item)}
         {@const isExpanded = editingId === item.id || expanded[item.id]}
+        {@const summary = buildWorkoutSummary(item.sets)}
         <article class="card">
           <div class="card-header two-col">
             <div class="header-left">
@@ -2248,11 +2251,38 @@
               {/if}
             </div>
           </div>
-          {#if !isExpanded}
-            {@const summaryText = summarizeCompletedWorkout(item.sets)}
-            {#if summaryText}
+            {#if !isExpanded}
+              {#if summary.blocks.length}
+                <div class="compact-summary rich">
+                  {#each summary.blocks as block}
+                    <div class="summary-block">
+                      <div class="summary-title">{block.title}</div>
+                      {#if block.items?.length}
+                        <div class="summary-items">
+                          {#each block.items as it}
+                            <span class="summary-chip fancy">
+                              {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                              {#if it.work}<span class="chip-pill">{it.work}</span>{/if}
+                              {#if it.on || it.off}
+                                <span class="chip-pill pill-rest">
+                                  {#if it.on}<span class="on">{it.on}</span>{/if}
+                                  {#if it.off}
+                                    <span class="divider">/</span>
+                                    <span class="off">{it.off}</span>
+                                  {/if}
+                                </span>
+                              {/if}
+                              {#if !it.label && !it.work && !it.on && !it.off}{it.raw}{/if}
+                            </span>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+              </div>
+            {:else if summary.text}
               <div class="compact-summary">
-                {#each summaryText.split('\n') as line}
+                {#each summary.text.split('\n') as line}
                   <div class="summary-line">{line}</div>
                 {/each}
               </div>
@@ -2917,6 +2947,35 @@
     border: 1px solid var(--color-border);
     background: color-mix(in srgb, var(--color-surface-1) 65%, transparent);
     font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .summary-chip.fancy .chip-label {
+    font-weight: 600;
+    color: var(--color-text-primary);
+  }
+  .summary-chip.fancy .chip-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-surface-2) 85%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  }
+  .summary-chip.fancy .chip-pill.pill-rest {
+    background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+  }
+  .summary-chip.fancy .chip-pill .on {
+    font-weight: 600;
+  }
+  .summary-chip.fancy .chip-pill .off {
+    opacity: 0.7;
+  }
+  .summary-chip.fancy .chip-pill .divider {
+    opacity: 0.5;
   }
   .hr-card {
     display: flex;
