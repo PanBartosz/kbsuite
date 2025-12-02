@@ -10,6 +10,7 @@ export type CompletedSetLike = {
 export type SummaryItem = {
   raw: string
   baseRaw: string
+  key: string
   label: string
   work: string
   on?: string
@@ -56,9 +57,11 @@ const buildEntry = (
   work: CompletedSetLike,
   rest: CompletedSetLike | null,
   roundName: string,
+  baseLabelValue: string,
+  baseLabelNorm: string,
   includeLabel = true
 ): SummaryItem => {
-  const label = includeLabel ? baseLabel(work, roundName) : ''
+  const label = includeLabel ? baseLabelValue : ''
   const parts: string[] = []
   if (work.reps !== null && work.reps !== undefined) parts.push(String(work.reps))
   if (work.weight !== null && work.weight !== undefined) parts.push(`@ ${work.weight}`)
@@ -89,6 +92,16 @@ const buildEntry = (
   return {
     raw,
     baseRaw: raw,
+    key: [
+      baseLabelNorm,
+      work.reps ?? '',
+      work.weight ?? '',
+      durOn || '',
+      durOff || '',
+      rest ? 'r' : 'n'
+    ]
+      .map((p) => String(p).trim())
+      .join('|'),
     label: includeLabel ? label : '',
     work: workText,
     on: durOn || '',
@@ -158,7 +171,7 @@ export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSumma
         lastNorm = norm
 
         if (hasRest && hasTrailingWork && (!list[i + 3] || (list[i + 3].type ?? 'rest').toLowerCase() !== 'work')) {
-          const entry = buildEntry(curr, next, roundName, includeLabel)
+          const entry = buildEntry(curr, next, roundName, label, norm, includeLabel)
           entry.count = 2
           items.push(entry)
           i += 3
@@ -166,10 +179,10 @@ export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSumma
         }
 
         if (hasRest) {
-          items.push(buildEntry(curr, next, roundName, includeLabel))
+          items.push(buildEntry(curr, next, roundName, label, norm, includeLabel))
           i += 2
         } else {
-          items.push(buildEntry(curr, null, roundName, includeLabel))
+          items.push(buildEntry(curr, null, roundName, label, norm, includeLabel))
           i += 1
         }
       } else {
@@ -184,14 +197,7 @@ export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSumma
     while (j < items.length) {
       let count = 1
       let total = items[j].count ?? 1
-      while (
-        j + count < items.length &&
-        items[j + count].baseRaw === items[j].baseRaw &&
-        items[j + count].label === items[j].label &&
-        items[j + count].work === items[j].work &&
-        items[j + count].on === items[j].on &&
-        items[j + count].off === items[j].off
-      ) {
+      while (j + count < items.length && items[j + count].key === items[j].key) {
         total += items[j + count].count ?? 1
         count++
       }
