@@ -605,18 +605,25 @@
 
   const normalizeLabel = (value: string) => value.replace(/[^a-z0-9]/gi, '').toLowerCase()
 
-  const buildPlannedSummary = (plan: any): SummaryBlock[] => {
+  type PlannedSummaryBlock = SummaryBlock & { count?: number }
+
+  const buildPlannedSummary = (plan: any): PlannedSummaryBlock[] => {
     if (!plan?.rounds || !Array.isArray(plan.rounds)) return []
-    const blocks: SummaryBlock[] = []
-    const blockMap: Record<string, { title: string; items: SummaryItem[] }> = {}
+    const blocks: PlannedSummaryBlock[] = []
+    const blockMap: Record<string, { title: string; count: number; items: SummaryItem[] }> = {}
     const order: string[] = []
 
     plan.rounds.forEach((round: any, roundIdx: number) => {
       const roundTitle = normalizeRound(round?.label) || `Round ${roundIdx + 1}`
       const roundKey = normalizeRoundKey(round?.label || roundTitle || `round-${roundIdx}`)
+      const roundReps =
+        round?.repetitions && Number.isFinite(round.repetitions) ? Math.max(1, Number(round.repetitions)) : 1
+      const roundDisplay = roundTitle
       if (!blockMap[roundKey]) {
-        blockMap[roundKey] = { title: roundTitle, items: [] }
+        blockMap[roundKey] = { title: roundDisplay, count: roundReps, items: [] }
         order.push(roundKey)
+      } else {
+        blockMap[roundKey].count += roundReps
       }
       const sets = Array.isArray(round?.sets) ? round.sets : []
       let lastNormLabel = ''
@@ -654,7 +661,7 @@
 
     order.forEach((k) => {
       if (blockMap[k]?.items?.length) {
-        blocks.push({ title: blockMap[k].title, items: blockMap[k].items })
+        blocks.push({ title: blockMap[k].title, items: blockMap[k].items, count: blockMap[k].count })
       }
     })
 
@@ -1120,7 +1127,12 @@ rounds: array of objects, in order
                     <div class="compact-summary rich planner-summary">
                       {#each summaryBlocks as block}
                         <div class="summary-block">
-                          <div class="summary-title">{block.title}</div>
+                          <div class="summary-title">
+                            {#if block.count && block.count > 1}
+                              <span class="chip-pill pill-count">{block.count} ×</span>
+                            {/if}
+                            {block.title}
+                          </div>
                           {#if block.items?.length}
                             <div class="summary-items">
                               {#each block.items as it}
@@ -1216,8 +1228,13 @@ rounds: array of objects, in order
                     <div class="compact-summary rich planner-summary">
                       {#each summaryBlocks as block}
                         <div class="summary-block">
-                          <div class="summary-title">{block.title}</div>
-                              {#if block.items?.length}
+                          <div class="summary-title">
+                            {#if block.count && block.count > 1}
+                              <span class="chip-pill pill-count">{block.count} ×</span>
+                            {/if}
+                            {block.title}
+                          </div>
+                          {#if block.items?.length}
                             <div class="summary-items">
                               {#each block.items as it}
                                 <span class="summary-chip fancy">
@@ -1792,6 +1809,9 @@ rounds: array of objects, in order
   }
   .summary-title {
     font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
   }
   .summary-items {
     display: flex;
@@ -1808,6 +1828,16 @@ rounds: array of objects, in order
     align-items: center;
     gap: 0.4rem;
     flex-wrap: wrap;
+  }
+  /* base pill style so it can be used outside summary-chip context (e.g., round count) */
+  .chip-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
   }
   .summary-chip.fancy .chip-label {
     font-weight: 600;
@@ -1837,7 +1867,8 @@ rounds: array of objects, in order
   .summary-chip.fancy .chip-pill .divider {
     opacity: 0.5;
   }
-  .summary-chip.fancy .chip-pill.pill-count {
+  .summary-chip.fancy .chip-pill.pill-count,
+  .chip-pill.pill-count {
     font-weight: 700;
     background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
   }
