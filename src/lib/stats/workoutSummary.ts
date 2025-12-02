@@ -19,12 +19,16 @@ const normalizeRound = (round?: string | null) => {
   return round.trim().replace(/[-_]?block$/i, '').trim()
 }
 
+const normalizeLabel = (value: string) => value.replace(/[^a-z0-9]/gi, '').toLowerCase()
+
 const baseLabel = (set: CompletedSetLike, roundName: string) => {
   const label = (set.set_label || set.round_label || 'Work').trim()
-  const round = roundName.trim().toLowerCase()
-  const norm = label.toLowerCase()
-  if (round && (norm.startsWith(round + ':') || norm.startsWith(round))) {
-    return label.slice(roundName.length).replace(/^:/, '').trim() || label
+  const round = normalizeLabel(roundName)
+  const norm = normalizeLabel(label)
+  if (round && norm.startsWith(round)) {
+    const sliceIdx = Math.min(label.length, roundName.length)
+    const trimmed = label.slice(sliceIdx).replace(/^:/, '').trim()
+    return trimmed || label
   }
   return label
 }
@@ -85,6 +89,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
 
   for (const seg of merged) {
     const restOnly = seg.sets.every((s) => (s.type ?? 'rest').toLowerCase() !== 'work')
+    if (restOnly) continue
     const roundName = seg.round
     const items: string[] = []
     const list = seg.sets
@@ -96,7 +101,14 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
       if (type === 'work') {
         const next = list[i + 1]
         const hasRest = next && (next.type ?? 'rest').toLowerCase() !== 'work'
-        if (hasRest) {
+        // pattern: work + rest + same work (end of block)
+        const nextWork = hasRest && list[i + 2] && (list[i + 2].type ?? 'work').toLowerCase() === 'work'
+        const sameWork =
+          nextWork && workKey(list[i + 2], roundName) === workKey(curr, roundName)
+        if (hasRest && sameWork && (i + 3 >= list.length || (list[i + 3].type ?? 'work').toLowerCase() !== 'rest')) {
+          items.push(`2 × (${formatWorkRestPair(curr, next, roundName)})`)
+          i += 3
+        } else if (hasRest) {
           items.push(formatWorkRestPair(curr, next, roundName))
           i += 2
         } else {
@@ -123,11 +135,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
     }
 
     const joined = collapsed.join('; ')
-    if (restOnly && lines.length) {
-      lines[lines.length - 1] = `${lines[lines.length - 1]}; ${joined}`
-    } else {
-      lines.push(`- ${roundName || 'Session'}: ${joined}`)
-    }
+    lines.push(`- ${roundName || 'Session'}: ${joined}`)
   }
 
   return lines.join('\n')
