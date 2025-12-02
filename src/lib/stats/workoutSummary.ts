@@ -84,6 +84,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
   const lines: string[] = []
 
   for (const seg of merged) {
+    const restOnly = seg.sets.every((s) => (s.type ?? 'rest').toLowerCase() !== 'work')
     const roundName = seg.round
     const items: string[] = []
     const list = seg.sets
@@ -122,7 +123,11 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
     }
 
     const joined = collapsed.join('; ')
-    lines.push(`- ${roundName || 'Session'}: ${joined}`)
+    if (restOnly && lines.length) {
+      lines[lines.length - 1] = `${lines[lines.length - 1]}; ${joined}`
+    } else {
+      lines.push(`- ${roundName || 'Session'}: ${joined}`)
+    }
   }
 
   return lines.join('\n')
