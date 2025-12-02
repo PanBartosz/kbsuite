@@ -173,7 +173,7 @@
           </label>
           <label>
             <span>Swing reset height (torso multiples)</span>
-            <input type="number" step="0.01" min="0" bind:value={localCounter.swingResetHeight} />
+            <input type="number" step="0.01" bind:value={localCounter.swingResetHeight} />
           </label>
           <label>
             <span>Swing stand angle (degrees)</span>

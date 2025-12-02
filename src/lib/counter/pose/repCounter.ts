@@ -81,7 +81,9 @@ export class SwingRepCounter implements RepCounter {
     const apexBand = this.thresholds.apexHeight - 0.1
     const stoodUp = hipAngle > this.thresholds.hingeExit - 10
     const bottomBand = 0.1
-    const resetBand = Math.max(bottomBand, this.thresholds.resetHeight ?? bottomBand)
+    const resetBand = Number.isFinite(this.thresholds.resetHeight)
+      ? this.thresholds.resetHeight
+      : bottomBand
 
     const newHeights: Record<'left' | 'right', number | null> = { left: this.state.handHeights.left, right: this.state.handHeights.right }
 
@@ -130,7 +132,7 @@ export class SwingRepCounter implements RepCounter {
         }
       } else if (side === activeHand) {
         // active hand already set; wait for it to drop or time out
-        const handReset = smoothed < bottomBand || smoothed < resetBand
+        const handReset = smoothed < resetBand
         const hingeReset = hipAngle < SWING_HINGE_RESET
         const idle = Math.abs(velocity) < SWING_IDLE_VEL && activeStale
         if (handReset || hingeReset || idle) {
