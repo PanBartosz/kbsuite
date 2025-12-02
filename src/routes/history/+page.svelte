@@ -73,6 +73,7 @@
   let shareHighlightsKey = ''
   let sharePreviewRows: CompletedSet[] = []
   let shareSelectableRows: { label: string; index: number }[] = []
+  let shareRenderMode: 'detailed' | 'summary' = 'detailed'
   let hrAttached: Record<string, boolean> = {}
   let uploadTargetId: string | null = null
   let uploadStatus: Record<string, string> = {}
@@ -907,6 +908,7 @@
   const saveShareCard = async (
     item: CompletedWorkout,
     opts?: {
+      renderMode?: 'detailed' | 'summary'
       showReps?: boolean
       showWork?: boolean
       showSets?: boolean
@@ -922,6 +924,7 @@
     }
   ) => {
     if (!browser) return
+    const summary = buildWorkoutSummary(item.sets)
     const { totalReps, totalWorkSeconds, totalSets } = computeTotals(item)
     const filtered = (item.sets ?? []).filter((s) => (s.type ?? '').toLowerCase() !== 'prep')
     const sets = mergeRests(filtered)
@@ -1174,101 +1177,146 @@
 
     // Sets (capped for space)
     const listY = pillY + 120
-    ctx.font = '30px "Inter", system-ui, -apple-system, sans-serif'
-    ctx.fillStyle = textPrimary
-    ctx.fillText('Session', startX, listY)
-    const rows = sets.slice(0, maxRows)
-    ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
-    ctx.textBaseline = 'middle'
-    let lastRound = ''
-    let yCursor = listY + 38
-    rows.forEach((s, i) => {
-      const isRest = s.type && s.type !== 'work'
-      const roundLabel = !isRest ? s.round_label ?? '' : ''
-      if ((opts?.showDividers ?? true) && roundLabel && lastRound && roundLabel !== lastRound) {
-        yCursor += dividerGap
-        const lineWidth = 5
-        const lineRadius = 8
-        const dividerWidth = (endX - startX) * 0.7
-        const x = startX + (endX - startX - dividerWidth) / 2
-        const y = yCursor - dividerGap / 2 - lineWidth / 2
-        ctx.fillStyle = 'rgba(255,255,255,0.16)'
-        const w = dividerWidth
-        const h = lineWidth
-        ctx.beginPath()
-        ctx.moveTo(x + lineRadius, y)
-        ctx.lineTo(x + w - lineRadius, y)
-        ctx.quadraticCurveTo(x + w, y, x + w, y + lineRadius)
-        ctx.lineTo(x + w, y + h - lineRadius)
-        ctx.quadraticCurveTo(x + w, y + h, x + w - lineRadius, y + h)
-        ctx.lineTo(x + lineRadius, y + h)
-        ctx.quadraticCurveTo(x, y + h, x, y + h - lineRadius)
-        ctx.lineTo(x, y + lineRadius)
-        ctx.quadraticCurveTo(x, y, x + lineRadius, y)
-        ctx.closePath()
-        ctx.fill()
-      }
-      const rowTop = yCursor
-      const rowCenter = rowTop + rowHeight / 2
-      const label = isRest ? 'Rest' : s.set_label ?? s.round_label ?? `Set ${i + 1}`
-      const duration = s.duration_s ? formatShort(s.duration_s) : ''
-      const reps =
-        !isRest && s.reps !== null && s.reps !== undefined ? `${s.reps} reps` : ''
-      const weight =
-        !isRest && s.weight !== null && s.weight !== undefined ? `@ ${s.weight}` : ''
-      const rpe = !isRest && s.rpe !== null && s.rpe !== undefined ? `RPE ${s.rpe}` : ''
-      const isHighlighted = opts?.highlights ? opts.highlights.has(i) : false
-      lastRound = roundLabel || lastRound
+    const renderSummary = opts?.renderMode === 'summary'
 
-      // row background
-      const inset = 20
-      const restBg = opts?.colorCodeRests ?? true ? 'rgba(255, 170, 120, 0.12)' : 'rgba(255,255,255,0.07)'
-      const workBg = i % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.07)'
-      ctx.fillStyle = isHighlighted ? 'rgba(255,255,255,0.12)' : isRest ? restBg : workBg
-      ctx.fillRect(startX - inset, rowTop + 4, endX - startX + inset * 2, rowHeight - 10)
+    if (renderSummary) {
+      const blockPadX = 36
+      const blockPadY = 26
+      let yCursor = listY
+      ctx.font = '30px "Inter", system-ui, -apple-system, sans-serif'
+      ctx.fillStyle = textPrimary
+      ctx.fillText('Summary', startX, yCursor)
+      yCursor += 34
+      ctx.textBaseline = 'middle'
+      const maxWidth = endX - startX
+      summary.blocks.forEach((block) => {
+        yCursor += 18
+        ctx.font = '24px "Inter", system-ui, -apple-system, sans-serif'
+        ctx.fillStyle = textPrimary
+        ctx.fillText(block.title, startX, yCursor)
+        yCursor += 18
+        let x = startX
+        ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
+        block.items.forEach((it) => {
+          const text = `${it.count && it.count > 1 ? `${it.count} × ` : ''}${it.baseRaw}`
+          const w = ctx.measureText(text).width + 26
+          const h = 36
+          if (x + w > startX + maxWidth) {
+            x = startX
+            yCursor += h + 10
+          }
+          ctx.fillStyle = 'rgba(255,255,255,0.08)'
+          ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.roundRect(x, yCursor, w, h, 12)
+          ctx.fill()
+          ctx.stroke()
+          ctx.fillStyle = textPrimary
+          ctx.textBaseline = 'middle'
+          ctx.fillText(text, x + 13, yCursor + h / 2 + 1)
+          x += w + 10
+        })
+        yCursor += 48
+      })
+      ctx.textBaseline = 'alphabetic'
+    } else {
+      ctx.font = '30px "Inter", system-ui, -apple-system, sans-serif'
+      ctx.fillStyle = textPrimary
+      ctx.fillText('Session', startX, listY)
+      const rows = sets.slice(0, maxRows)
+      ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
+      ctx.textBaseline = 'middle'
+      let lastRound = ''
+      let yCursor = listY + 38
+      rows.forEach((s, i) => {
+        const isRest = s.type && s.type !== 'work'
+        const roundLabel = !isRest ? s.round_label ?? '' : ''
+        if ((opts?.showDividers ?? true) && roundLabel && lastRound && roundLabel !== lastRound) {
+          yCursor += dividerGap
+          const lineWidth = 5
+          const lineRadius = 8
+          const dividerWidth = (endX - startX) * 0.7
+          const x = startX + (endX - startX - dividerWidth) / 2
+          const y = yCursor - dividerGap / 2 - lineWidth / 2
+          ctx.fillStyle = 'rgba(255,255,255,0.16)'
+          const w = dividerWidth
+          const h = lineWidth
+          ctx.beginPath()
+          ctx.moveTo(x + lineRadius, y)
+          ctx.lineTo(x + w - lineRadius, y)
+          ctx.quadraticCurveTo(x + w, y, x + w, y + lineRadius)
+          ctx.lineTo(x + w, y + h - lineRadius)
+          ctx.quadraticCurveTo(x + w, y + h, x + w - lineRadius, y + h)
+          ctx.lineTo(x + lineRadius, y + h)
+          ctx.quadraticCurveTo(x, y + h, x, y + h - lineRadius)
+          ctx.lineTo(x, y + lineRadius)
+          ctx.quadraticCurveTo(x, y, x + lineRadius, y)
+          ctx.closePath()
+          ctx.fill()
+        }
+        const rowTop = yCursor
+        const rowCenter = rowTop + rowHeight / 2
+        const label = isRest ? 'Rest' : s.set_label ?? s.round_label ?? `Set ${i + 1}`
+        const duration = s.duration_s ? formatShort(s.duration_s) : ''
+        const reps =
+          !isRest && s.reps !== null && s.reps !== undefined ? `${s.reps} reps` : ''
+        const weight =
+          !isRest && s.weight !== null && s.weight !== undefined ? `@ ${s.weight}` : ''
+        const rpe = !isRest && s.rpe !== null && s.rpe !== undefined ? `RPE ${s.rpe}` : ''
+        const isHighlighted = opts?.highlights ? opts.highlights.has(i) : false
+        lastRound = roundLabel || lastRound
 
-      // Round
-      ctx.font = '23px "Inter", system-ui, -apple-system, sans-serif'
-      ctx.fillStyle = textMuted
-      if (roundLabel) {
+        // row background
+        const inset = 20
+        const restBg = opts?.colorCodeRests ?? true ? 'rgba(255, 170, 120, 0.12)' : 'rgba(255,255,255,0.07)'
+        const workBg = i % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.07)'
+        ctx.fillStyle = isHighlighted ? 'rgba(255,255,255,0.12)' : isRest ? restBg : workBg
+        ctx.fillRect(startX - inset, rowTop + 4, endX - startX + inset * 2, rowHeight - 10)
+
+        // Round
+        ctx.font = '23px "Inter", system-ui, -apple-system, sans-serif'
+        ctx.fillStyle = textMuted
+        if (roundLabel) {
+          ctx.save()
+          ctx.beginPath()
+          ctx.rect(startX, rowTop - 8, roundCol, rowHeight + 10)
+          ctx.clip()
+          ctx.fillText(roundLabel, startX, rowCenter)
+          ctx.restore()
+        }
+
+        // Label
+        ctx.font = '25px "Inter", system-ui, -apple-system, sans-serif'
+        ctx.fillStyle = isRest ? textMuted : textPrimary
+        const labelX = startX + roundCol + gutter
         ctx.save()
         ctx.beginPath()
-        ctx.rect(startX, rowTop - 8, roundCol, rowHeight + 10)
+        ctx.rect(labelX, rowTop - 8, labelCol, rowHeight + 10)
         ctx.clip()
-        ctx.fillText(roundLabel, startX, rowCenter)
+        ctx.fillText(label, labelX, rowCenter)
         ctx.restore()
-      }
 
-      // Label
-      ctx.font = '25px "Inter", system-ui, -apple-system, sans-serif'
-      ctx.fillStyle = isRest ? textMuted : textPrimary
-      const labelX = startX + roundCol + gutter
-      ctx.save()
-      ctx.beginPath()
-      ctx.rect(labelX, rowTop - 8, labelCol, rowHeight + 10)
-      ctx.clip()
-      ctx.fillText(label, labelX, rowCenter)
-      ctx.restore()
-
-      // Metrics columns (right aligned within fixed widths)
-      ctx.font = '25px "Inter", system-ui, -apple-system, sans-serif'
-      ctx.fillStyle = isRest ? textMuted : textPrimary
-      let metricX = endX
-      const drawMetric = (text: string, width: number) => {
-        ctx.save()
-        ctx.textAlign = 'right'
-        ctx.fillText(text, metricX, rowCenter)
-        ctx.restore()
-        metricX -= width + gutter
-      }
-      drawMetric(rpe ?? '', rpeCol)
-      drawMetric(weight ?? '', weightCol)
-      drawMetric(reps ?? '', repsCol)
-      drawMetric(duration ?? '', durationCol)
-      ctx.textAlign = 'left'
-      yCursor += rowHeight
-    })
-    ctx.textBaseline = 'alphabetic'
+        // Metrics columns (right aligned within fixed widths)
+        ctx.font = '25px "Inter", system-ui, -apple-system, sans-serif'
+        ctx.fillStyle = isRest ? textMuted : textPrimary
+        let metricX = endX
+        const drawMetric = (text: string, width: number) => {
+          ctx.save()
+          ctx.textAlign = 'right'
+          ctx.fillText(text, metricX, rowCenter)
+          ctx.restore()
+          metricX -= width + gutter
+        }
+        drawMetric(rpe ?? '', rpeCol)
+        drawMetric(weight ?? '', weightCol)
+        drawMetric(reps ?? '', repsCol)
+        drawMetric(duration ?? '', durationCol)
+        ctx.textAlign = 'left'
+        yCursor += rowHeight
+      })
+      ctx.textBaseline = 'alphabetic'
+    }
 
     // Noise overlay
     if (opts?.showNoise ?? true) {
@@ -1450,6 +1498,7 @@
     const img = new Image()
     const hrData = hrDetails[shareItem.id] ?? hrSummary[shareItem.id]
     await saveShareCard(shareItem, {
+      renderMode: shareRenderMode,
       showReps: shareShowReps,
       showWork: shareShowWork,
       showSets: shareShowSets,
@@ -1479,7 +1528,8 @@
       shareShowNoise &&
       shareColorCodeRests &&
       shareShowBadge &&
-      shareShowHrBlock
+      shareShowHrBlock &&
+      shareRenderMode
     shareHighlightEnabled && shareHighlightsKey
     refreshSharePreview()
   }
@@ -2665,18 +2715,56 @@
           <p class="muted small">Configure what to show.</p>
         </header>
         <div class="share-config">
-          <label><input type="checkbox" bind:checked={shareShowReps} /> Include total reps</label>
-          <label><input type="checkbox" bind:checked={shareShowWork} /> Include total work time</label>
-          <label><input type="checkbox" bind:checked={shareShowSets} /> Include total sets</label>
-          <label><input type="checkbox" bind:checked={shareShowDividers} /> Show round dividers</label>
+          <label>
+            <input
+              type="radio"
+              name="share-mode"
+              value="detailed"
+              bind:group={shareRenderMode}
+            />
+            Detailed
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="share-mode"
+              value="summary"
+              bind:group={shareRenderMode}
+            />
+            Summary
+          </label>
+        </div>
+        <div class="share-config">
+          <label class:disabled={shareRenderMode === 'summary'}>
+            <input type="checkbox" bind:checked={shareShowReps} disabled={shareRenderMode === 'summary'} />
+            Include total reps
+          </label>
+          <label class:disabled={shareRenderMode === 'summary'}>
+            <input type="checkbox" bind:checked={shareShowWork} disabled={shareRenderMode === 'summary'} />
+            Include total work time
+          </label>
+          <label class:disabled={shareRenderMode === 'summary'}>
+            <input type="checkbox" bind:checked={shareShowSets} disabled={shareRenderMode === 'summary'} />
+            Include total sets
+          </label>
+          <label class:disabled={shareRenderMode === 'summary'}>
+            <input type="checkbox" bind:checked={shareShowDividers} disabled={shareRenderMode === 'summary'} />
+            Show round dividers
+          </label>
           <label><input type="checkbox" bind:checked={shareShowTagPills} /> Tag pills</label>
           <label><input type="checkbox" bind:checked={shareShowNoise} /> Noise texture</label>
-          <label><input type="checkbox" bind:checked={shareColorCodeRests} /> Color-code rests</label>
+          <label class:disabled={shareRenderMode === 'summary'}>
+            <input type="checkbox" bind:checked={shareColorCodeRests} disabled={shareRenderMode === 'summary'} />
+            Color-code rests
+          </label>
           <label><input type="checkbox" bind:checked={shareShowBadge} /> Footer badge</label>
           <label><input type="checkbox" bind:checked={shareShowHrBlock} /> HR block</label>
-          <label><input type="checkbox" bind:checked={shareHighlightEnabled} /> Highlight rows</label>
+          <label class:disabled={shareRenderMode === 'summary'}>
+            <input type="checkbox" bind:checked={shareHighlightEnabled} disabled={shareRenderMode === 'summary'} />
+            Highlight rows
+          </label>
         </div>
-        {#if shareHighlightEnabled && shareItem}
+        {#if shareHighlightEnabled && shareItem && shareRenderMode === 'detailed'}
           <div class="share-config share-highlights">
             <p class="muted small">Select rows to highlight:</p>
             <div class="highlight-grid">
@@ -2705,6 +2793,7 @@
             on:click={() =>
               shareItem &&
               saveShareCard(shareItem, {
+                renderMode: shareRenderMode,
                 showReps: shareShowReps,
                 showWork: shareShowWork,
                 showSets: shareShowSets,
@@ -3706,6 +3795,9 @@
     gap: 0.35rem;
     font-size: 0.95rem;
     color: var(--color-text-muted);
+  }
+  .share-config label.disabled {
+    opacity: 0.55;
   }
   .share-config label input {
     width: 16px;
