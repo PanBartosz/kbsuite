@@ -1,23 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import type { Pose } from '@tensorflow-models/pose-detection'
-  import {
-    calibration,
-    exercise,
-    feedback,
-    poseStats,
-    repCount,
-    runState,
-    thresholds,
-    setCalibration,
-    type ExerciseId
-  } from '../stores/session'
+  import { exercise, feedback, poseStats, repCount, runState, thresholds, type ExerciseId } from '../stores/session'
   import { PoseClient } from '../pose/poseClient'
   import { drawPose } from '../pose/drawing'
-  import { calibrationFromSamples } from '../pose/calibration'
   import { createCounterForExercise, getExerciseOption } from '../exercises/config'
   import type { RepCounter } from '../pose/repCounter'
-  import { extractFrameSignals, type FrameSignals, type MotionSignals } from '../pose/signals'
+import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   import { initAudio, playRepSound } from '../audio/counterSound'
   import {
     getVoiceOptions,
@@ -46,10 +35,6 @@
   let lastPoseTs = 0
   let lastSignals: FrameSignals | null = null
   let lastActiveHand: 'left' | 'right' | 'both' | null = null
-  let captureActive = false
-  let captureCountdown = 0
-  let captureDeadline = 0
-  let captureSamples: MotionSignals[] = []
   let countdownTimer: number | null = null
   let backend = ''
   let counter: RepCounter | null = null
@@ -70,11 +55,10 @@
   const LOCKOUT_HOLD_MS = 100
 
   $: currentThresholds = $thresholds
-  $: currentCalibration = $calibration
   $: currentExercise = getExerciseOption($exercise)
   $: counter = createCounterForExercise(currentExercise.id, currentThresholds)
-  $: lockoutMinGap = 400
-  $: currentLowBand = currentExercise.type === 'lockout' ? 0.28 : null
+  $: lockoutMinGap = currentThresholds.lockout.minRepMs
+  $: currentLowBand = currentExercise.type === 'lockout' ? currentThresholds.lockout.lowBand : null
   $: if (currentExercise.id !== lastExerciseId && counter) {
     repCount.set(0)
     lastCount = 0
@@ -199,7 +183,7 @@
 
     const frameSignals = extractFrameSignals(pose)
     lastSignals = frameSignals
-    const gestureEvents = gestureEngine.update(frameSignals, currentThresholds, ts)
+    const gestureEvents = gestureEngine.update(frameSignals, currentThresholds.swing, ts)
     if (gestureEvents.length) {
       handleGestureEvents(gestureEvents)
     }
@@ -228,31 +212,10 @@
         confidence: frameSignals.confidence,
         backend
       }))
-      if (captureActive && frameSignals.confidence > 0.35) {
-        // keep backward-compatible calibration samples using the best hand
-        const bestHand = frameSignals.hands.reduce((b, h) => (h.confidence > b.confidence ? h : b), frameSignals.hands[0])
-        captureSamples.push({
-          hipAngle: frameSignals.hipAngle,
-          handHeightHip: bestHand.handHeightHip,
-          handAboveShoulder: bestHand.handAboveShoulder,
-          handAboveHead: bestHand.handAboveHead,
-          elbowAngle: bestHand.elbowAngle,
-          confidence: bestHand.confidence,
-          handUsed: bestHand.side
-        })
-      }
     }
 
     if (debugOverlay && lastSignals) {
       drawDebugOverlay(ctx, lastSignals, lastActiveHand, lastPhase, lastCount)
-    }
-
-    if (captureActive && Date.now() > captureDeadline) {
-      const nextCalibration = calibrationFromSamples(captureSamples, currentCalibration)
-      setCalibration(nextCalibration)
-      captureActive = false
-      captureSamples = []
-      feedback.set('Calibration updated')
     }
   }
 
@@ -348,34 +311,6 @@
   export const stopSession = () => {
     runState.set('idle')
     stopCamera()
-  }
-
-  const startCalibrationCapture = async () => {
-    if ($runState !== 'running') {
-      await startSession()
-    }
-    if (countdownTimer) {
-      clearInterval(countdownTimer)
-      countdownTimer = null
-    }
-    captureSamples = []
-    captureActive = false
-    captureCountdown = 5
-    feedback.set('Calibration starts in 5...')
-    countdownTimer = window.setInterval(() => {
-      captureCountdown -= 1
-      if (captureCountdown <= 0) {
-        if (countdownTimer) {
-          clearInterval(countdownTimer)
-          countdownTimer = null
-        }
-        captureActive = true
-        captureDeadline = Date.now() + 10000
-        feedback.set('Capturing 2–3 slow reps for calibration (10s window)...')
-      } else {
-        feedback.set(`Calibration starts in ${captureCountdown}...`)
-      }
-    }, 1000)
   }
 
   onMount(() => {
@@ -496,15 +431,17 @@
       {#if currentExercise.type === 'swing'}
         <div>
           <div class="label">Apex height</div>
-          <div class="value smallnum">{currentThresholds.apexHeight.toFixed(2)}x torso</div>
+          <div class="value smallnum">{currentThresholds.swing.apexHeight.toFixed(2)}x torso</div>
         </div>
         <div>
           <div class="label">Stand angle</div>
-          <div class="value smallnum">{currentThresholds.hingeExit.toFixed(0)}°</div>
+          <div class="value smallnum">{currentThresholds.swing.hingeExit.toFixed(0)}°</div>
         </div>
         <div>
           <div class="label">Reset cues</div>
-          <div class="value smallnum">Hand &lt; hip or hip &lt; 150°</div>
+          <div class="value smallnum">
+            Hand &lt; {currentThresholds.swing.resetHeight.toFixed(2)}x or hip &lt; {currentThresholds.swing.hingeExit.toFixed(0)}°
+          </div>
         </div>
       {:else}
         <div>
@@ -543,9 +480,6 @@
       {$runState === 'running' ? 'Pause' : 'Start'}
     </button>
     <button on:click={stopSession}>Stop</button>
-    <button class="ghost" on:click={startCalibrationCapture} disabled={captureActive}>
-      Calibrate
-    </button>
   </div>
 {/if}
 

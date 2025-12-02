@@ -18,6 +18,14 @@ interface SettingsState {
     voiceEnabled: boolean
     debugOverlay: boolean
     voiceSelected: string
+    swingApexHeight: number
+    swingResetHeight: number
+    swingHingeExit: number
+    swingMinRepMs: number
+    lockoutLowBand: number
+    lockoutHeadThresh: number
+    lockoutHoldMs: number
+    lockoutMinRepMs: number
   }
 }
 
@@ -42,7 +50,20 @@ const defaultState = (): SettingsState => ({
   theme: 'dark',
   openAiKey: '',
   timer: { ttsEnabled: false, enableMetronome: false, notificationsEnabled: false, audioEnabled: true, openAiVoice: 'alloy' },
-  counter: { lowFpsMode: false, voiceEnabled: false, debugOverlay: false, voiceSelected: 'alloy' }
+  counter: {
+    lowFpsMode: false,
+    voiceEnabled: false,
+    debugOverlay: false,
+    voiceSelected: 'alloy',
+    swingApexHeight: 1.29,
+    swingResetHeight: 0.6,
+    swingHingeExit: 150,
+    swingMinRepMs: 400,
+    lockoutLowBand: 0.28,
+    lockoutHeadThresh: 0.5,
+    lockoutHoldMs: 100,
+    lockoutMinRepMs: 400
+  }
 })
 
 const loadSettings = (): SettingsState => {
@@ -136,3 +157,5 @@ export const setCounterSettings = (patch: Partial<SettingsState['counter']>) =>
 export const settingsModalOpen = writable(false)
 export const openSettingsModal = () => settingsModalOpen.set(true)
 export const closeSettingsModal = () => settingsModalOpen.set(false)
+
+export const restoreDefaultSettings = () => settings.set(defaultState())

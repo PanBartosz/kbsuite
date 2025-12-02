@@ -1,5 +1,11 @@
-import type { DerivedThresholds } from './calibration'
 import type { FrameSignals, HandSignal } from './signals'
+
+export interface DerivedThresholds {
+  apexHeight: number
+  resetHeight: number
+  hingeExit: number
+  minRepMs: number
+}
 
 const EMA_ALPHA = 0.35
 const MIN_CONF = 0.25
@@ -126,7 +132,7 @@ export class SwingRepCounter implements RepCounter {
 
 // --- Lockout-based patterns (snatch, half snatch, long cycle) ---------------
 
-interface LockoutConfig {
+export interface LockoutConfig {
   lowBand: number
   headThresh: number
   holdMs: number
@@ -238,13 +244,14 @@ abstract class LockoutRepCounter implements RepCounter {
 }
 
 export class SnatchRepCounter extends LockoutRepCounter {
-  constructor() {
+  constructor(config?: Partial<LockoutConfig>) {
     super({
       lowBand: 0.28,
       headThresh: 0.5,
       holdMs: 100,
       minRepMs: 400,
-      name: 'snatch'
+      name: 'snatch',
+      ...config
     })
   }
 }

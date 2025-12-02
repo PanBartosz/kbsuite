@@ -212,7 +212,15 @@ const defaultSettings = () => ({
     lowFpsMode: false,
     voiceEnabled: false,
     debugOverlay: false,
-    voiceSelected: 'alloy'
+    voiceSelected: 'alloy',
+    swingApexHeight: 1.29,
+    swingResetHeight: 0.6,
+    swingHingeExit: 150,
+    swingMinRepMs: 400,
+    lockoutLowBand: 0.28,
+    lockoutHeadThresh: 0.5,
+    lockoutHoldMs: 100,
+    lockoutMinRepMs: 400
   }
 })
 

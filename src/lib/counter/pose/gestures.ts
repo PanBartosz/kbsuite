@@ -1,4 +1,4 @@
-import type { DerivedThresholds } from './calibration'
+import type { DerivedThresholds } from './repCounter'
 import type { FrameSignals, HandSignal } from './signals'
 
 export type GestureId = 'reset' | 'swing_mode' | 'lockout_mode'

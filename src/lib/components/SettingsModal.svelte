@@ -30,15 +30,34 @@
   ]
   const counterVoiceOptions = getVoiceOptions()
 
+  const defaultCounter = {
+    lowFpsMode: false,
+    voiceEnabled: false,
+    debugOverlay: false,
+    voiceSelected: 'alloy',
+    swingApexHeight: 1.29,
+    swingResetHeight: 0.6,
+    swingHingeExit: 150,
+    swingMinRepMs: 400,
+    lockoutLowBand: 0.28,
+    lockoutHeadThresh: 0.5,
+    lockoutHoldMs: 100,
+    lockoutMinRepMs: 400
+  }
+
   let localKey = ''
   let localTheme: ThemeOption = 'dark'
   let localTimer = $settings.timer
-  let localCounter = $settings.counter
+  let localCounter = { ...defaultCounter, ...$settings.counter }
 
   $: localKey = $settings.openAiKey ?? ''
   $: localTheme = ($settings.theme as ThemeOption) ?? 'dark'
   $: localTimer = $settings.timer
-  $: localCounter = $settings.counter
+  $: localCounter = { ...defaultCounter, ...$settings.counter }
+
+  const handleRestoreCounter = () => {
+    localCounter = { ...defaultCounter }
+  }
 
   const handleSave = () => {
     setSettings({ openAiKey: localKey.trim(), theme: localTheme })
@@ -126,6 +145,7 @@
 
       <div class="group">
         <p class="group__title">Rep counter settings</p>
+        <button class="ghost small" type="button" on:click={handleRestoreCounter}>Restore defaults</button>
         <label class="toggle">
           <input type="checkbox" bind:checked={localCounter.lowFpsMode} />
           <span>Low-FPS mode (~10 FPS)</span>
@@ -146,6 +166,40 @@
           <input type="checkbox" bind:checked={localCounter.debugOverlay} />
           <span>Debug overlay</span>
         </label>
+        <div class="grid">
+          <label>
+            <span>Swing apex height (torso multiples)</span>
+            <input type="number" step="0.01" min="0" bind:value={localCounter.swingApexHeight} />
+          </label>
+          <label>
+            <span>Swing reset height (torso multiples)</span>
+            <input type="number" step="0.01" min="0" bind:value={localCounter.swingResetHeight} />
+          </label>
+          <label>
+            <span>Swing stand angle (degrees)</span>
+            <input type="number" step="1" min="0" max="200" bind:value={localCounter.swingHingeExit} />
+          </label>
+          <label>
+            <span>Swing min rep gap (ms)</span>
+            <input type="number" step="10" min="0" bind:value={localCounter.swingMinRepMs} />
+          </label>
+          <label>
+            <span>Lockout low band</span>
+            <input type="number" step="0.01" min="0" bind:value={localCounter.lockoutLowBand} />
+          </label>
+          <label>
+            <span>Lockout head threshold</span>
+            <input type="number" step="0.01" min="0" bind:value={localCounter.lockoutHeadThresh} />
+          </label>
+          <label>
+            <span>Lockout hold (ms)</span>
+            <input type="number" step="10" min="0" bind:value={localCounter.lockoutHoldMs} />
+          </label>
+          <label>
+            <span>Lockout min rep gap (ms)</span>
+            <input type="number" step="10" min="0" bind:value={localCounter.lockoutMinRepMs} />
+          </label>
+        </div>
       </div>
     </section>
 
@@ -170,6 +224,7 @@
     left: 50%;
     transform: translate(-50%, -50%);
     min-width: min(520px, 94vw);
+    max-height: 90vh;
     background: var(--color-surface-2);
     border: 1px solid var(--color-border);
     border-radius: 14px;
@@ -179,6 +234,7 @@
     flex-direction: column;
     gap: 0.75rem;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
   }
   header {
     display: flex;
@@ -201,6 +257,8 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    overflow-y: auto;
+    padding-right: 0.25rem;
   }
   .group {
     margin-top: 0.5rem;
@@ -216,6 +274,11 @@
     margin: 0;
     font-weight: 700;
     color: var(--color-text-primary);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.5rem;
   }
   label {
     display: flex;

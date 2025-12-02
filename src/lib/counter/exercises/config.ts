@@ -1,4 +1,4 @@
-import type { DerivedThresholds } from '../pose/calibration'
+import type { DerivedThresholds, LockoutConfig } from '../pose/repCounter'
 import type { HandMode } from '../pose/signals'
 import {
   SwingRepCounter,
@@ -29,14 +29,17 @@ export const exerciseOptions: ExerciseOption[] = [
 export const getExerciseOption = (id: ExerciseId) =>
   exerciseOptions.find((opt) => opt.id === id) ?? exerciseOptions[0]
 
-export const createCounterForExercise = (id: ExerciseId, swingThresholds: DerivedThresholds): RepCounter => {
+export const createCounterForExercise = (
+  id: ExerciseId,
+  thresholds: { swing: DerivedThresholds; lockout: LockoutConfig }
+): RepCounter => {
   const opt = getExerciseOption(id)
   switch (opt.type) {
     case 'swing':
-      return new SwingRepCounter(swingThresholds)
+      return new SwingRepCounter(thresholds.swing)
     case 'lockout':
-      return new SnatchRepCounter()
+      return new SnatchRepCounter(thresholds.lockout)
     default:
-      return new SwingRepCounter(swingThresholds)
+      return new SwingRepCounter(thresholds.swing)
   }
 }
