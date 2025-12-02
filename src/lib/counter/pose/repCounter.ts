@@ -13,6 +13,8 @@ const VEL_ENTER = 0.004
 const RESET_FRAMES = 4
 const SWING_HINGE_RESET = 150
 const SWING_RESET_FRAMES = 3
+const SWING_ACTIVE_TIMEOUT_MS = 1500
+const SWING_IDLE_VEL = 0.0005
 
 const smooth = (prev: number | null, next: number) =>
   prev === null || Number.isNaN(prev) ? next : prev * (1 - EMA_ALPHA) + next * EMA_ALPHA
@@ -48,7 +50,9 @@ export class SwingRepCounter implements RepCounter {
     hipAngle: null as number | null,
     handHeights: { left: null as number | null, right: null as number | null },
     activeHand: null as 'left' | 'right' | null,
-    resetFrames: 0
+    resetFrames: { left: 0, right: 0 },
+    ready: { left: true, right: true },
+    readyFrames: { left: 0, right: 0 }
   }
 
   constructor(private thresholds: DerivedThresholds) {}
@@ -61,7 +65,9 @@ export class SwingRepCounter implements RepCounter {
       hipAngle: null,
       handHeights: { left: null, right: null },
       activeHand: null,
-      resetFrames: 0
+      resetFrames: { left: 0, right: 0 },
+      ready: { left: true, right: true },
+      readyFrames: { left: 0, right: 0 }
     }
   }
 
@@ -69,12 +75,13 @@ export class SwingRepCounter implements RepCounter {
     if (!Number.isFinite(frame.hipAngle)) return null
     if (frame.confidence < MIN_CONF) return null
     const hipAngle = smooth(this.state.hipAngle, frame.hipAngle) ?? frame.hipAngle
-    let { count, phase, lastRepTs, activeHand, resetFrames } = this.state
+    let { count, phase, lastRepTs, activeHand, resetFrames, ready, readyFrames } = this.state
     let feedback: string | undefined
 
     const apexBand = this.thresholds.apexHeight - 0.1
     const stoodUp = hipAngle > this.thresholds.hingeExit - 10
     const bottomBand = 0.1
+    const resetBand = Math.max(bottomBand, this.thresholds.resetHeight ?? bottomBand)
 
     const newHeights: Record<'left' | 'right', number | null> = { left: this.state.handHeights.left, right: this.state.handHeights.right }
 
@@ -88,40 +95,60 @@ export class SwingRepCounter implements RepCounter {
       const crossedApex = prev < apexBand && smoothed >= apexBand
       const velocity = smoothed - prev
 
-      if (activeHand === null) {
-        const movingUp = velocity > VEL_ENTER
-        if (crossedApex && movingUp && stoodUp && hand.confidence > MIN_CONF && now - lastRepTs > this.thresholds.minRepMs) {
+      // track readiness per hand
+      if (smoothed < resetBand) {
+        readyFrames[side] = readyFrames[side] + 1
+        if (readyFrames[side] >= SWING_RESET_FRAMES) ready[side] = true
+      } else {
+        readyFrames[side] = 0
+      }
+
+      const movingUp = velocity > VEL_ENTER
+      const canCount =
+        ready[side] &&
+        crossedApex &&
+        movingUp &&
+        stoodUp &&
+        hand.confidence > MIN_CONF &&
+        now - lastRepTs > this.thresholds.minRepMs
+
+      const activeStale = activeHand !== null && now - lastRepTs > SWING_ACTIVE_TIMEOUT_MS
+
+      if (activeHand === null || (activeStale && side !== activeHand)) {
+        if (canCount) {
           count += 1
           lastRepTs = now
           feedback = 'Rep counted'
           phase = 'top'
           activeHand = side
+          ready[side] = false
+          readyFrames[side] = 0
         } else if (smoothed < bottomBand) {
           phase = 'backswing'
         } else if (smoothed >= bottomBand) {
           phase = 'upswing'
         }
-      } else {
-        // active hand already set; wait for it to drop
-        if (side === activeHand) {
-          const handReset = smoothed < bottomBand
-          const hingeReset = hipAngle < SWING_HINGE_RESET
-          if (handReset || hingeReset) {
-            resetFrames += 1
-            if (resetFrames >= SWING_RESET_FRAMES) {
-              activeHand = null
-              phase = 'backswing'
-              resetFrames = 0
-            }
-          } else {
-            resetFrames = 0
-            phase = 'top'
+      } else if (side === activeHand) {
+        // active hand already set; wait for it to drop or time out
+        const handReset = smoothed < bottomBand || smoothed < resetBand
+        const hingeReset = hipAngle < SWING_HINGE_RESET
+        const idle = Math.abs(velocity) < SWING_IDLE_VEL && activeStale
+        if (handReset || hingeReset || idle) {
+          resetFrames[side] += 1
+          if (resetFrames[side] >= SWING_RESET_FRAMES) {
+            activeHand = null
+            phase = 'backswing'
+            resetFrames[side] = 0
+            ready[side] = smoothed < resetBand
           }
+        } else {
+          resetFrames[side] = 0
+          phase = 'top'
         }
       }
     }
 
-    this.state = { count, phase, lastRepTs, hipAngle, handHeights: newHeights, activeHand, resetFrames }
+    this.state = { count, phase, lastRepTs, hipAngle, handHeights: newHeights, activeHand, resetFrames, ready, readyFrames }
     return { count, state: phase, feedback }
   }
 
