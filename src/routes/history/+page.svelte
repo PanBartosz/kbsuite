@@ -3,6 +3,7 @@
   import YAML from 'yaml'
   import { buildTimeline } from '$lib/timer/lib/timeline'
   import { browser } from '$app/environment'
+  import { summarizeCompletedWorkout } from '$lib/stats/workoutSummary'
 
   type CompletedSet = {
     phase_index?: number
@@ -504,6 +505,18 @@
     try {
       await navigator.clipboard.writeText(formatSummary(item))
       status = 'Copied summary'
+      setTimeout(() => (status = ''), 2000)
+    } catch (err) {
+      status = 'Copy failed'
+      setTimeout(() => (status = ''), 2000)
+    }
+  }
+
+  const copyCompactSummary = async (item: CompletedWorkout) => {
+    try {
+      const text = summarizeCompletedWorkout(item.sets)
+      await navigator.clipboard.writeText(text || '')
+      status = 'Copied compact summary'
       setTimeout(() => (status = ''), 2000)
     } catch (err) {
       status = 'Copy failed'
@@ -1989,6 +2002,7 @@
                 {:else}
                   <div class="actions">
                     <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
+                    <button class="ghost small" on:click={() => copyCompactSummary(item)}>Copy summary</button>
                     <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
                     <button
                       class="ghost small"
