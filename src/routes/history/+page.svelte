@@ -1777,6 +1777,16 @@
                     {/if}
                   </div>
                 </div>
+                {#if !isExpanded}
+                  {@const summaryText = summarizeCompletedWorkout(item.sets)}
+                  {#if summaryText}
+                    <div class="compact-summary">
+                      {#each summaryText.split('\n') as line}
+                        <div class="summary-line">{line}</div>
+                      {/each}
+                    </div>
+                  {/if}
+                {/if}
                 {#if editingId === item.id}
                   <div class="meta-edit">
                     <label>
@@ -2833,6 +2843,21 @@
   }
   .chip.hr {
     border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  }
+  .compact-summary {
+    margin-top: 0.4rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+    border: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    color: var(--color-text-primary);
+    font-size: 0.95rem;
+  }
+  .compact-summary .summary-line {
+    line-height: 1.2;
   }
   .hr-card {
     display: flex;
