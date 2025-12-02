@@ -67,8 +67,11 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
         ) {
           count += 1
         }
-        const summary = `${count} × (${formatWork(current)}, ${formatRest(next)})`
-        lines.push(summary)
+        const pairText =
+          count > 1
+            ? `${count} × (${formatWork(current)}, ${formatRest(next)})`
+            : `${formatWork(current)} + ${formatRest(next)}`
+        lines.push(pairText)
         i += count * 2
         continue
       }
