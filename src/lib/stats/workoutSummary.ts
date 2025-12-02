@@ -33,8 +33,13 @@ const baseLabel = (set: CompletedSetLike, roundName: string) => {
   return label
 }
 
-const formatWorkRestPair = (work: CompletedSetLike, rest: CompletedSetLike | null, roundName: string) => {
-  const label = baseLabel(work, roundName)
+const formatWorkRestPair = (
+  work: CompletedSetLike,
+  rest: CompletedSetLike | null,
+  roundName: string,
+  includeLabel = true
+) => {
+  const label = includeLabel ? baseLabel(work, roundName) : ''
   const parts: string[] = []
   if (work.reps !== null && work.reps !== undefined) parts.push(String(work.reps))
   if (work.weight !== null && work.weight !== undefined) parts.push(`@ ${work.weight}`)
@@ -48,8 +53,14 @@ const formatWorkRestPair = (work: CompletedSetLike, rest: CompletedSetLike | nul
         : durOff
           ? ` (${durOff} off)`
           : ''
-  const main = parts.length ? `${label}: ${parts.join(' ')}` : label
-  return `${main}${durPart}`
+  const main = includeLabel
+    ? parts.length
+      ? `${label}: ${parts.join(' ')}`
+      : label
+    : parts.length
+      ? parts.join(' ')
+      : label
+  return `${main}${durPart}`.trim()
 }
 
 const formatRestOnly = (rest: CompletedSetLike) => {
@@ -103,6 +114,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
       continue
     }
     const items: string[] = []
+    let lastLabel = ''
     let i = 0
     while (i < list.length) {
       const curr = list[i]
@@ -120,17 +132,21 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
           following.reps === curr.reps &&
           following.weight === curr.weight
 
+        const label = baseLabel(curr, roundName)
+        const includeLabel = label !== lastLabel
+        lastLabel = label
+
         if (hasRest && hasTrailingWork && (!list[i + 3] || (list[i + 3].type ?? 'rest').toLowerCase() !== 'work')) {
-          items.push(`2 × ${formatWorkRestPair(curr, next, roundName)}`)
+          items.push(`2 × ${formatWorkRestPair(curr, next, roundName, includeLabel)}`)
           i += 3
           continue
         }
 
         if (hasRest) {
-          items.push(formatWorkRestPair(curr, next, roundName))
+          items.push(formatWorkRestPair(curr, next, roundName, includeLabel))
           i += 2
         } else {
-          items.push(formatWorkRestPair(curr, null, roundName))
+          items.push(formatWorkRestPair(curr, null, roundName, includeLabel))
           i += 1
         }
       } else {
