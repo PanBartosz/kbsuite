@@ -2222,6 +2222,16 @@
               {/if}
             </div>
           </div>
+          {#if !isExpanded}
+            {@const summaryText = summarizeCompletedWorkout(item.sets)}
+            {#if summaryText}
+              <div class="compact-summary">
+                {#each summaryText.split('\n') as line}
+                  <div class="summary-line">{line}</div>
+                {/each}
+              </div>
+            {/if}
+          {/if}
           {#if editingId === item.id}
             <div class="meta-edit">
               <label>
