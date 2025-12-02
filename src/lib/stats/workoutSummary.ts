@@ -47,7 +47,14 @@ const formatWork = (set: CompletedSetLike, roundName: string) => {
   const parts: string[] = []
   if (set.reps !== null && set.reps !== undefined) parts.push(String(set.reps))
   if (set.weight !== null && set.weight !== undefined) parts.push(`@ ${set.weight}`)
-  const main = parts.length ? `${label}: ${parts.join(' ')}` : label
+  const labelNeeded = label && label.toLowerCase() !== roundName.trim().toLowerCase()
+  const main = labelNeeded
+    ? parts.length
+      ? `${label}: ${parts.join(' ')}`
+      : label
+    : parts.length
+      ? parts.join(' ')
+      : label || 'Work'
   const dur = set.duration_s ? ` (${formatDuration(set.duration_s)})` : ''
   return `${main}${dur}`
 }
