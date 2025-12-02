@@ -14,8 +14,36 @@ const formatDuration = (seconds?: number | null) => {
   return `${mins}m ${secs}s`
 }
 
-const formatWork = (set: CompletedSetLike) => {
-  const label = set.set_label || set.round_label || 'Work'
+const normalizeRound = (round?: string | null) => {
+  if (!round) return ''
+  let value = round.trim()
+  value = value.replace(/[-_]?block$/i, '').trim()
+  return value
+}
+
+const baseLabel = (set: CompletedSetLike, roundName: string) => {
+  const label = (set.set_label || set.round_label || 'Work').trim()
+  const round = roundName.trim().toLowerCase()
+  const norm = label.toLowerCase()
+  if (round && (norm.startsWith(round + ':') || norm.startsWith(round))) {
+    return label.slice(roundName.length).replace(/^:/, '').trim() || label
+  }
+  return label
+}
+
+const workKey = (set: CompletedSetLike, roundName: string) =>
+  [
+    baseLabel(set, roundName),
+    set.reps ?? '',
+    set.weight ?? '',
+    set.duration_s ?? '',
+    'work'
+  ].join('|')
+
+const restKey = (set: CompletedSetLike) => `rest|${set.duration_s ?? ''}`
+
+const formatWork = (set: CompletedSetLike, roundName: string) => {
+  const label = baseLabel(set, roundName)
   const parts: string[] = []
   if (set.reps !== null && set.reps !== undefined) parts.push(String(set.reps))
   if (set.weight !== null && set.weight !== undefined) parts.push(`@ ${set.weight}`)
@@ -29,42 +57,10 @@ const formatRest = (set: CompletedSetLike) => {
   return `Rest${dur}`
 }
 
-const collapseConsecutive = (items: string[]) => {
-  const out: string[] = []
-  let i = 0
-  while (i < items.length) {
-    let count = 1
-    while (i + count < items.length && items[i + count] === items[i]) {
-      count++
-    }
-    out.push(count > 1 ? `${count} × ${items[i]}` : items[i])
-    i += count
-  }
-  return out
-}
-
-const normalizeRound = (round?: string | null) => {
-  if (!round) return ''
-  let value = round.trim()
-  if (/block$/i.test(value)) {
-    value = value.replace(/block$/i, '').trim()
-  }
-  return value
-}
-
-const baseSetLabel = (set: CompletedSetLike, roundName: string) => {
-  const roundLower = roundName.toLowerCase()
-  let label = set.set_label || set.round_label || 'Work'
-  const norm = label.trim().toLowerCase()
-  if (roundLower && (norm.startsWith(roundLower + ':') || norm.startsWith(roundLower))) {
-    label = label.slice(roundName.length).replace(/^:/, '').trim() || label
-  }
-  return label
-}
-
 export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
   if (!Array.isArray(sets) || sets.length === 0) return ''
 
+  // Group contiguous sets by normalized round label (rest with empty round sticks to current)
   const segments: { round: string; sets: CompletedSetLike[] }[] = []
   let currentRound = normalizeRound(sets[0].round_label)
   let bucket: CompletedSetLike[] = []
@@ -73,7 +69,6 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
     segments.push({ round: currentRound, sets: bucket })
     bucket = []
   }
-
   for (const s of sets) {
     const roundRaw = normalizeRound(s.round_label)
     const isRest = (s.type ?? 'work').toLowerCase() !== 'work'
@@ -86,7 +81,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
   }
   pushBucket()
 
-  // merge adjacent segments with same round
+  // Merge adjacent segments with the same round
   const merged: { round: string; sets: CompletedSetLike[] }[] = []
   for (const seg of segments) {
     const last = merged[merged.length - 1]
@@ -98,21 +93,62 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
   }
 
   const lines: string[] = []
+
   for (const seg of merged) {
-    const parts: string[] = []
-    for (const s of seg.sets) {
-      const type = (s.type ?? 'work').toLowerCase()
+    const items: string[] = []
+    const roundName = seg.round
+    let i = 0
+    const list = seg.sets
+    while (i < list.length) {
+      const curr = list[i]
+      const type = (curr.type ?? 'work').toLowerCase()
+
+      // Detect repeating work+rest pairs
+      if (type === 'work' && i + 1 < list.length && (list[i + 1].type ?? 'rest').toLowerCase() !== 'work') {
+        const work = curr
+        const rest = list[i + 1]
+        const workK = workKey(work, roundName)
+        const restK = restKey(rest)
+        let count = 1
+        while (
+          i + count * 2 + 1 < list.length &&
+          workKey(list[i + count * 2], roundName) === workK &&
+          restKey(list[i + count * 2 + 1]) === restK
+        ) {
+          count++
+        }
+        items.push(
+          count > 1
+            ? `${count} × (${formatWork(work, roundName)} + ${formatRest(rest)})`
+            : `${formatWork(work, roundName)} + ${formatRest(rest)}`
+        )
+        i += count * 2
+        continue
+      }
+
+      // Collapse consecutive identical singles
+      let count = 1
       if (type === 'work') {
-        const label = baseSetLabel(s, seg.round)
-        const workStr = formatWork({ ...s, set_label: label, round_label: '' })
-        parts.push(workStr)
+        const key = workKey(curr, roundName)
+        while (i + count < list.length && (list[i + count].type ?? 'work').toLowerCase() === 'work' && workKey(list[i + count], roundName) === key) {
+          count++
+        }
+        items.push(count > 1 ? `${count} × ${formatWork(curr, roundName)}` : formatWork(curr, roundName))
+        i += count
+        continue
       } else {
-        parts.push(formatRest(s))
+        const key = restKey(curr)
+        while (i + count < list.length && (list[i + count].type ?? 'rest').toLowerCase() !== 'work' && restKey(list[i + count]) === key) {
+          count++
+        }
+        items.push(count > 1 ? `${count} × ${formatRest(curr)}` : formatRest(curr))
+        i += count
+        continue
       }
     }
-    const collapsed = collapseConsecutive(parts)
-    const joined = collapsed.join('; ')
-    lines.push(seg.round ? `${seg.round}: ${joined}` : joined)
+
+    const joined = items.join('; ')
+    lines.push(roundName ? `${roundName}: ${joined}` : joined)
   }
 
   return lines.join('\n')
