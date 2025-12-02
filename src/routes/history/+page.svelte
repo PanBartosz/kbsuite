@@ -950,28 +950,61 @@
     let rowsHeight = 0
     if (renderSummary) {
       const measureCtx = document.createElement('canvas').getContext('2d')
+      const chipH = 42
+      const outerPadX = 12
+      const pillPadX = 10
+      const innerGap = 10
       if (measureCtx) {
         const startX = pad + 52
         const endX = width - pad - 52
         const maxWidth = endX - startX
         let y = 34 // after "Summary" title
+
+        const workText = (it: any) => {
+          const base = it.work || it.baseRaw || ''
+          return it.count && it.count > 1 ? `${it.count} × ${base}` : base
+        }
+
+        const measureChip = (it: any) => {
+          let w = outerPadX * 2
+          let hasPrior = false
+          if (it.label) {
+            measureCtx.font = '600 21px "Inter", system-ui, -apple-system, sans-serif'
+            w += measureCtx.measureText(it.label).width
+            hasPrior = true
+          }
+          const wText = workText(it)
+          if (wText) {
+            if (hasPrior) w += innerGap
+            measureCtx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
+            w += measureCtx.measureText(wText).width + pillPadX * 2
+            hasPrior = true
+          }
+          if (it.on || it.off) {
+            if (hasPrior) w += innerGap
+            const on = (it.on || '').trim()
+            const off = (it.off || '').trim()
+            const restText = on && off ? `${on} / ${off}` : on || off
+            measureCtx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
+            w += measureCtx.measureText(restText).width + pillPadX * 2
+          }
+          return w
+        }
+
         summary.blocks.forEach((block) => {
           y += 18 // block top gap
-          measureCtx.font = '24px \"Inter\", system-ui, -apple-system, sans-serif'
+          measureCtx.font = '24px "Inter", system-ui, -apple-system, sans-serif'
           y += 18 // title height
           let x = startX
-          const h = 36
-          measureCtx.font = '21px \"Inter\", system-ui, -apple-system, sans-serif'
           block.items.forEach((it) => {
-            const text = `${it.count && it.count > 1 ? `${it.count} × ` : ''}${it.baseRaw}`
-            const w = measureCtx.measureText(text).width + 26
+            const w = measureChip(it)
             if (x + w > startX + maxWidth) {
               x = startX
-              y += h + 10
+              y += chipH + 10
             }
             x += w + 10
           })
-          y += h + 12
+          y += chipH + 12
         })
         rowsHeight = y + 60
       } else {
@@ -1215,8 +1248,6 @@
     const listY = pillY + 120
 
     if (renderSummary) {
-      const blockPadX = 36
-      const blockPadY = 26
       let yCursor = listY
       ctx.font = '30px "Inter", system-ui, -apple-system, sans-serif'
       ctx.fillStyle = textPrimary
@@ -1224,6 +1255,20 @@
       yCursor += 34
       ctx.textBaseline = 'middle'
       const maxWidth = endX - startX
+      const chipH = 42
+      const outerPadX = 12
+      const pillPadX = 10
+      const innerGap = 10
+      const workText = (it: any) => {
+        const base = it.work || it.baseRaw || ''
+        return it.count && it.count > 1 ? `${it.count} × ${base}` : base
+      }
+      const restTextFor = (it: any) => {
+        const on = (it.on || '').trim()
+        const off = (it.off || '').trim()
+        return on && off ? `${on} / ${off}` : on || off
+      }
+
       summary.blocks.forEach((block) => {
         yCursor += 18
         ctx.font = '24px "Inter", system-ui, -apple-system, sans-serif'
@@ -1233,26 +1278,92 @@
         let x = startX
         ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
         block.items.forEach((it) => {
-          const text = `${it.count && it.count > 1 ? `${it.count} × ` : ''}${it.baseRaw}`
-          const w = ctx.measureText(text).width + 26
-          const h = 36
+          ctx.textBaseline = 'middle'
+          // measure width
+          let w = outerPadX * 2
+          let hasPrior = false
+          if (it.label) {
+            ctx.font = '600 21px "Inter", system-ui, -apple-system, sans-serif'
+            w += ctx.measureText(it.label).width
+            hasPrior = true
+          }
+          const wText = workText(it)
+          if (wText) {
+            if (hasPrior) w += innerGap
+            ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
+            w += ctx.measureText(wText).width + pillPadX * 2
+            hasPrior = true
+          }
+          const restText = restTextFor(it)
+          if (restText) {
+            if (hasPrior) w += innerGap
+            ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
+            w += ctx.measureText(restText).width + pillPadX * 2
+          }
           if (x + w > startX + maxWidth) {
             x = startX
-            yCursor += h + 10
+            yCursor += chipH + 10
           }
+          // outer chip
           ctx.fillStyle = 'rgba(255,255,255,0.08)'
           ctx.strokeStyle = 'rgba(255,255,255,0.15)'
           ctx.lineWidth = 1
           ctx.beginPath()
-          ctx.roundRect(x, yCursor, w, h, 12)
+          ctx.roundRect(x, yCursor, w, chipH, 12)
           ctx.fill()
           ctx.stroke()
-          ctx.fillStyle = textPrimary
-          ctx.textBaseline = 'middle'
-          ctx.fillText(text, x + 13, yCursor + h / 2 + 1)
+          let cursor = x + outerPadX
+          const centerY = yCursor + chipH / 2
+          if (it.label) {
+            ctx.font = '600 21px "Inter", system-ui, -apple-system, sans-serif'
+            ctx.fillStyle = textPrimary
+            ctx.fillText(it.label, cursor, centerY + 1)
+            cursor += ctx.measureText(it.label).width
+            cursor += innerGap
+          }
+          if (wText) {
+            const pillW = ctx.measureText(wText).width + pillPadX * 2
+            const pillH = chipH - 10
+            ctx.fillStyle = 'rgba(255,255,255,0.12)'
+            ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+            ctx.beginPath()
+            ctx.roundRect(cursor, yCursor + (chipH - pillH) / 2, pillW, pillH, 10)
+            ctx.fill()
+            ctx.stroke()
+            ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
+            ctx.fillStyle = textPrimary
+            ctx.fillText(wText, cursor + pillPadX, centerY + 1)
+            cursor += pillW + innerGap
+          }
+          if (restText) {
+            const pillW = ctx.measureText(restText).width + pillPadX * 2
+            const pillH = chipH - 10
+            ctx.fillStyle = 'rgba(255,255,255,0.08)'
+            ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+            ctx.beginPath()
+            ctx.roundRect(cursor, yCursor + (chipH - pillH) / 2, pillW, pillH, 10)
+            ctx.fill()
+            ctx.stroke()
+            ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
+            const on = (it.on || '').trim()
+            const off = (it.off || '').trim()
+            ctx.fillStyle = textPrimary
+            if (on && off) {
+              const onW = ctx.measureText(on).width
+              ctx.fillText(on, cursor + pillPadX, centerY + 1)
+              const slash = ' / '
+              const slashW = ctx.measureText(slash).width
+              ctx.fillText(slash, cursor + pillPadX + onW, centerY + 1)
+              ctx.fillStyle = toRgba(textPrimary, 0.7)
+              ctx.fillText(off, cursor + pillPadX + onW + slashW, centerY + 1)
+            } else {
+              ctx.fillText(restText, cursor + pillPadX, centerY + 1)
+            }
+            cursor += pillW + innerGap
+          }
           x += w + 10
         })
-        yCursor += 48
+        yCursor += chipH + 12
       })
       ctx.textBaseline = 'alphabetic'
     } else {
