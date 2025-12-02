@@ -4,6 +4,8 @@
   import { buildTimeline } from '$lib/timer/lib/timeline'
   import { browser } from '$app/environment'
   import { summarizeCompletedWorkout } from '$lib/stats/workoutSummary'
+  import { downsample, hrSparkline } from '$lib/stats/sparkline'
+  import { saveShareCard } from '$lib/stats/shareCard'
 
   type CompletedSet = {
     phase_index?: number
@@ -522,6 +524,21 @@
       status = 'Copy failed'
       setTimeout(() => (status = ''), 2000)
     }
+  }
+
+  const parseSummaryBlocks = (text: string) => {
+    if (!text) return []
+    return text
+      .split('\n')
+      .map((line) => line.trim().replace(/^- /, ''))
+      .filter(Boolean)
+      .map((line) => {
+        const [head, ...rest] = line.split(':')
+        const title = head.trim()
+        const body = rest.join(':').trim()
+        const items = body ? body.split(';').map((p) => p.trim()).filter(Boolean) : []
+        return { title, items }
+      })
   }
 
   const deleteItem = async (id: string) => {
@@ -1778,11 +1795,20 @@
                   </div>
                 </div>
                 {#if !isExpanded}
-                  {@const summaryText = summarizeCompletedWorkout(item.sets)}
-                  {#if summaryText}
-                    <div class="compact-summary">
-                      {#each summaryText.split('\n') as line}
-                        <div class="summary-line">{line}</div>
+                  {@const blocks = parseSummaryBlocks(summarizeCompletedWorkout(item.sets))}
+                  {#if blocks.length}
+                    <div class="compact-summary rich">
+                      {#each blocks as block}
+                        <div class="summary-block">
+                          <div class="summary-title">{block.title}</div>
+                          {#if block.items?.length}
+                            <div class="summary-items">
+                              {#each block.items as it}
+                                <span class="summary-chip">{it}</span>
+                              {/each}
+                            </div>
+                          {/if}
+                        </div>
                       {/each}
                     </div>
                   {/if}
@@ -2868,6 +2894,29 @@
   }
   .compact-summary .summary-line {
     line-height: 1.2;
+  }
+  .compact-summary.rich {
+    gap: 0.4rem;
+  }
+  .summary-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .summary-title {
+    font-weight: 700;
+  }
+  .summary-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .summary-chip {
+    padding: 0.25rem 0.5rem;
+    border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-surface-1) 65%, transparent);
+    font-size: 0.9rem;
   }
   .hr-card {
     display: flex;
