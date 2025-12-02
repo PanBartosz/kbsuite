@@ -7,18 +7,16 @@ export type CompletedSetLike = {
   type?: string | null
 }
 
-const formatDuration = (seconds?: number | null) => {
+const fmtDur = (seconds?: number | null) => {
   if (!seconds || seconds <= 0) return ''
   const mins = Math.floor(seconds / 60)
   const secs = Math.round(seconds % 60)
-  return `${mins}m ${secs}s`
+  return secs === 0 ? `${mins}:00` : `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
 const normalizeRound = (round?: string | null) => {
   if (!round) return ''
-  let value = round.trim()
-  value = value.replace(/[-_]?block$/i, '').trim()
-  return value
+  return round.trim().replace(/[-_]?block$/i, '').trim()
 }
 
 const baseLabel = (set: CompletedSetLike, roundName: string) => {
@@ -31,43 +29,27 @@ const baseLabel = (set: CompletedSetLike, roundName: string) => {
   return label
 }
 
-const workKey = (set: CompletedSetLike, roundName: string) =>
-  [
-    baseLabel(set, roundName),
-    set.reps ?? '',
-    set.weight ?? '',
-    set.duration_s ?? '',
-    'work'
-  ].join('|')
-
-const restKey = (set: CompletedSetLike) => `rest|${set.duration_s ?? ''}`
-
-const formatWork = (set: CompletedSetLike, roundName: string) => {
-  const label = baseLabel(set, roundName)
+const formatWorkRestPair = (work: CompletedSetLike, rest: CompletedSetLike | null, roundName: string) => {
+  const label = baseLabel(work, roundName)
   const parts: string[] = []
-  if (set.reps !== null && set.reps !== undefined) parts.push(String(set.reps))
-  if (set.weight !== null && set.weight !== undefined) parts.push(`@ ${set.weight}`)
-  const labelNeeded = label && label.toLowerCase() !== roundName.trim().toLowerCase()
-  const main = labelNeeded
-    ? parts.length
-      ? `${label}: ${parts.join(' ')}`
-      : label
-    : parts.length
-      ? parts.join(' ')
-      : label || 'Work'
-  const dur = set.duration_s ? ` (${formatDuration(set.duration_s)})` : ''
-  return `${main}${dur}`
+  if (work.reps !== null && work.reps !== undefined) parts.push(String(work.reps))
+  if (work.weight !== null && work.weight !== undefined) parts.push(`@ ${work.weight}`)
+  const dur = fmtDur(work.duration_s) ? ` (${fmtDur(work.duration_s)} on` : ''
+  const restDur = rest?.duration_s ? `${fmtDur(rest.duration_s)} off` : ''
+  const durPart = dur ? `${dur}${restDur ? ' / ' + restDur : ''})` : restDur ? ` (${restDur} off)` : ''
+  const main = parts.length ? `${label}: ${parts.join(' ')}` : label
+  return `${main}${durPart}`
 }
 
-const formatRest = (set: CompletedSetLike) => {
-  const dur = set.duration_s ? ` (${formatDuration(set.duration_s)})` : ''
-  return `Rest${dur}`
+const formatRestOnly = (rest: CompletedSetLike) => {
+  const dur = fmtDur(rest.duration_s)
+  return dur ? `Rest (${dur})` : 'Rest'
 }
 
 export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
   if (!Array.isArray(sets) || sets.length === 0) return ''
 
-  // Group contiguous sets by normalized round label (rest with empty round sticks to current)
+  // Group contiguous sets by normalized round label (rests without round stick to current)
   const segments: { round: string; sets: CompletedSetLike[] }[] = []
   let currentRound = normalizeRound(sets[0].round_label)
   let bucket: CompletedSetLike[] = []
@@ -88,7 +70,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
   }
   pushBucket()
 
-  // Merge adjacent segments with the same round
+  // Merge adjacent segments with same round
   const merged: { round: string; sets: CompletedSetLike[] }[] = []
   for (const seg of segments) {
     const last = merged[merged.length - 1]
@@ -102,75 +84,45 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
   const lines: string[] = []
 
   for (const seg of merged) {
-    const items: string[] = []
     const roundName = seg.round
-    let i = 0
+    const items: string[] = []
     const list = seg.sets
+    let i = 0
     while (i < list.length) {
       const curr = list[i]
       const type = (curr.type ?? 'work').toLowerCase()
 
-      // Detect repeating work+rest pairs
-      if (type === 'work' && i + 1 < list.length && (list[i + 1].type ?? 'rest').toLowerCase() !== 'work') {
-        const work = curr
-        const rest = list[i + 1]
-        const workK = workKey(work, roundName)
-        const restK = restKey(rest)
-        let count = 1
-        let trailingWork = 0
-        while (
-          i + count * 2 + 1 < list.length &&
-          workKey(list[i + count * 2], roundName) === workK &&
-          restKey(list[i + count * 2 + 1]) === restK
-        ) {
-          count++
-        }
-        // allow a final dangling work without matching rest (end of block)
-        const nextIndex = i + count * 2
-        if (nextIndex < list.length && (list[nextIndex].type ?? 'work').toLowerCase() === 'work' && workKey(list[nextIndex], roundName) === workK) {
-          trailingWork = 1
-        }
-        if (trailingWork) {
-          items.push(
-            count > 1
-              ? `${count} × (${formatWork(work, roundName)} + ${formatRest(rest)}) + ${formatWork(work, roundName)}`
-              : `${formatWork(work, roundName)} + ${formatRest(rest)} + ${formatWork(work, roundName)}`
-          )
-          i += count * 2 + 1
-        } else {
-          items.push(
-            count > 1
-              ? `${count} × (${formatWork(work, roundName)} + ${formatRest(rest)})`
-              : `${formatWork(work, roundName)} + ${formatRest(rest)}`
-          )
-          i += count * 2
-        }
-        continue
-      }
-
-      // Collapse consecutive identical singles
-      let count = 1
       if (type === 'work') {
-        const key = workKey(curr, roundName)
-        while (i + count < list.length && (list[i + count].type ?? 'work').toLowerCase() === 'work' && workKey(list[i + count], roundName) === key) {
-          count++
+        const next = list[i + 1]
+        const hasRest = next && (next.type ?? 'rest').toLowerCase() !== 'work'
+        if (hasRest) {
+          items.push(formatWorkRestPair(curr, next, roundName))
+          i += 2
+        } else {
+          items.push(formatWorkRestPair(curr, null, roundName))
+          i += 1
         }
-        items.push(count > 1 ? `${count} × ${formatWork(curr, roundName)}` : formatWork(curr, roundName))
-        i += count
-        continue
       } else {
-        const key = restKey(curr)
-        while (i + count < list.length && (list[i + count].type ?? 'rest').toLowerCase() !== 'work' && restKey(list[i + count]) === key) {
-          count++
-        }
-        items.push(count > 1 ? `${count} × ${formatRest(curr)}` : formatRest(curr))
-        i += count
-        continue
+        // rest-only (dangling)
+        items.push(formatRestOnly(curr))
+        i += 1
       }
     }
 
-    const joined = items.join('; ')
-    lines.push(roundName ? `${roundName}: ${joined}` : joined)
+    // Collapse identical consecutive items
+    const collapsed: string[] = []
+    let j = 0
+    while (j < items.length) {
+      let count = 1
+      while (j + count < items.length && items[j + count] === items[j]) {
+        count++
+      }
+      collapsed.push(count > 1 ? `${count} × ${items[j]}` : items[j])
+      j += count
+    }
+
+    const joined = collapsed.join('; ')
+    lines.push(`- ${roundName || 'Session'}: ${joined}`)
   }
 
   return lines.join('\n')
