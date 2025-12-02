@@ -38,9 +38,16 @@ const formatWorkRestPair = (work: CompletedSetLike, rest: CompletedSetLike | nul
   const parts: string[] = []
   if (work.reps !== null && work.reps !== undefined) parts.push(String(work.reps))
   if (work.weight !== null && work.weight !== undefined) parts.push(`@ ${work.weight}`)
-  const dur = fmtDur(work.duration_s) ? ` (${fmtDur(work.duration_s)} on` : ''
-  const restDur = rest?.duration_s ? `${fmtDur(rest.duration_s)} off` : ''
-  const durPart = dur ? `${dur}${restDur ? ' / ' + restDur : ''})` : restDur ? ` (${restDur} off)` : ''
+  const durOn = fmtDur(work.duration_s)
+  const durOff = rest?.duration_s ? fmtDur(rest.duration_s) : ''
+  const durPart =
+    durOn && durOff
+      ? ` (${durOn} on / ${durOff} off)`
+      : durOn
+        ? ` (${durOn})`
+        : durOff
+          ? ` (${durOff} off)`
+          : ''
   const main = parts.length ? `${label}: ${parts.join(' ')}` : label
   return `${main}${durPart}`
 }
@@ -63,8 +70,10 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
     bucket = []
   }
   for (const s of sets) {
+    const type = (s.type ?? 'work').toLowerCase()
+    if (type === 'roundtransition') continue
     const roundRaw = normalizeRound(s.round_label)
-    const isRest = (s.type ?? 'work').toLowerCase() !== 'work'
+    const isRest = type !== 'work'
     const round = isRest && !roundRaw ? currentRound : roundRaw
     if (round !== currentRound && bucket.length) {
       pushBucket()
@@ -88,11 +97,12 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
   const lines: string[] = []
 
   for (const seg of merged) {
-    const restOnly = seg.sets.every((s) => (s.type ?? 'rest').toLowerCase() !== 'work')
-    if (restOnly) continue
-    const roundName = seg.round
-    const items: string[] = []
+    const roundName = seg.round || 'Session'
     const list = seg.sets
+    if (list.every((s) => (s.type ?? 'rest').toLowerCase() !== 'work')) {
+      continue
+    }
+    const items: string[] = []
     let i = 0
     while (i < list.length) {
       const curr = list[i]
@@ -101,14 +111,22 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
       if (type === 'work') {
         const next = list[i + 1]
         const hasRest = next && (next.type ?? 'rest').toLowerCase() !== 'work'
-        // pattern: work + rest + same work (end of block)
-        const nextWork = hasRest && list[i + 2] && (list[i + 2].type ?? 'work').toLowerCase() === 'work'
-        const sameWork =
-          nextWork && workKey(list[i + 2], roundName) === workKey(curr, roundName)
-        if (hasRest && sameWork && (i + 3 >= list.length || (list[i + 3].type ?? 'work').toLowerCase() !== 'rest')) {
-          items.push(`2 × (${formatWorkRestPair(curr, next, roundName)})`)
+        const following = list[i + 2]
+        const hasTrailingWork =
+          hasRest &&
+          following &&
+          (following.type ?? 'work').toLowerCase() === 'work' &&
+          normalizeLabel(baseLabel(following, roundName)) === normalizeLabel(baseLabel(curr, roundName)) &&
+          following.reps === curr.reps &&
+          following.weight === curr.weight
+
+        if (hasRest && hasTrailingWork && (!list[i + 3] || (list[i + 3].type ?? 'rest').toLowerCase() !== 'work')) {
+          items.push(`2 × ${formatWorkRestPair(curr, next, roundName)}`)
           i += 3
-        } else if (hasRest) {
+          continue
+        }
+
+        if (hasRest) {
           items.push(formatWorkRestPair(curr, next, roundName))
           i += 2
         } else {
@@ -116,8 +134,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
           i += 1
         }
       } else {
-        // rest-only (dangling)
-        items.push(formatRestOnly(curr))
+        // rest-only (dangling) -> omit
         i += 1
       }
     }
@@ -135,7 +152,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
     }
 
     const joined = collapsed.join('; ')
-    lines.push(`- ${roundName || 'Session'}: ${joined}`)
+    lines.push(`- ${roundName}: ${joined}`)
   }
 
   return lines.join('\n')
