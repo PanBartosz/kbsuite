@@ -2435,13 +2435,14 @@
               <button class="ghost" on:click={cancelEdit}>Cancel</button>
             </div>
           {:else}
-            <div class="actions">
-              <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
-              <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
-              <button
-                class="ghost small"
-                on:click={() => {
-                  shareItem = item
+                  <div class="actions">
+                    <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
+                    <button class="ghost small" on:click={() => copyCompactSummary(item)}>Copy summary</button>
+                    <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
+                    <button
+                      class="ghost small"
+                      on:click={() => {
+                        shareItem = item
                   shareShowReps = true
                   shareShowWork = true
                   shareShowSets = true
@@ -2489,13 +2490,14 @@
                   </div>
                 {/each}
               </div>
-              <div class="actions">
-                <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
-                <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
-                <button class="ghost" on:click={() => {
-                  uploadTargetId = item.id
-                  if (fileInputEl) fileInputEl.click()
-                }}>
+                    <div class="actions">
+                      <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
+                      <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
+                      <button class="ghost" on:click={() => copyCompactSummary(item)}>Copy summary</button>
+                      <button class="ghost" on:click={() => {
+                        uploadTargetId = item.id
+                        if (fileInputEl) fileInputEl.click()
+                      }}>
                   {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
                 </button>
                 <button class="ghost" on:click={() => copySummary(item)}>Copy</button>
