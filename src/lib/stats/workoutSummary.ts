@@ -26,13 +26,24 @@ const workKey = (set: CompletedSetLike, includeRound = true) =>
 
 const restKey = (set: CompletedSetLike) => `${set.type ?? 'rest'}|${set.duration_s ?? ''}`
 
+const stripRoundPrefix = (label: string, roundName?: string) => {
+  if (!roundName) return label
+  const normalized = label.trim()
+  const round = roundName.trim()
+  if (normalized.toLowerCase().startsWith(round.toLowerCase() + ':')) {
+    return normalized.slice(round.length + 1).trim()
+  }
+  if (normalized.toLowerCase().startsWith(round.toLowerCase())) {
+    return normalized.slice(round.length).trim()
+  }
+  return normalized
+}
+
 const formatWork = (set: CompletedSetLike, includeRound = true, roundName?: string) => {
-  let label =
-    includeRound && set.round_label && set.set_label
-      ? `${set.round_label}: ${set.set_label}`
-      : set.set_label || set.round_label || 'Work'
-  if (!includeRound && roundName && label.startsWith(`${roundName}: `)) {
-    label = label.slice(roundName.length + 2)
+  const baseLabel = set.set_label || set.round_label || 'Work'
+  let label = includeRound && set.round_label && set.set_label ? `${set.round_label}: ${set.set_label}` : baseLabel
+  if (!includeRound) {
+    label = stripRoundPrefix(label, roundName)
   }
   const parts: string[] = []
   if (set.reps !== null && set.reps !== undefined) parts.push(String(set.reps))
@@ -137,7 +148,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
     const text = summarizeSets(seg.sets, false, seg.round || undefined)
     if (!text) return
     if (seg.round) {
-      lines.push(`${seg.round}: ${text.replace(/\n/g, '; ')}`)
+      lines.push(`${seg.round}: ${text.split('\n').join('; ')}`)
     } else {
       lines.push(text)
     }
