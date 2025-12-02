@@ -19,6 +19,7 @@
   import SetEditorModal from '$lib/timer/components/SetEditorModal.svelte'
   import SharePlanModal from '$lib/components/SharePlanModal.svelte'
   import { loadInvites, loadPendingCount, shares } from '$lib/stores/shares'
+  import type { SummaryBlock, SummaryItem } from '$lib/stats/workoutSummary'
 
   type Planned = {
     id: string
@@ -584,6 +585,81 @@
     }
   }
 
+  const fmtDur = (seconds?: number | null) => {
+    if (!seconds || seconds <= 0) return ''
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.round(seconds % 60)
+    return secs === 0 ? `${mins}:00` : `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  const normalizeRound = (round?: string | null) => {
+    if (!round) return ''
+    return round.trim().replace(/[-_]?block$/i, '').trim()
+  }
+
+  const normalizeRoundKey = (round?: string | null) =>
+    normalizeRound(round || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gi, ' ')
+      .trim()
+
+  const normalizeLabel = (value: string) => value.replace(/[^a-z0-9]/gi, '').toLowerCase()
+
+  const buildPlannedSummary = (plan: any): SummaryBlock[] => {
+    if (!plan?.rounds || !Array.isArray(plan.rounds)) return []
+    const blocks: SummaryBlock[] = []
+    const blockMap: Record<string, { title: string; items: SummaryItem[] }> = {}
+    const order: string[] = []
+
+    plan.rounds.forEach((round: any, roundIdx: number) => {
+      const roundTitle = normalizeRound(round?.label) || `Round ${roundIdx + 1}`
+      const roundKey = normalizeRoundKey(round?.label || roundTitle || `round-${roundIdx}`)
+      if (!blockMap[roundKey]) {
+        blockMap[roundKey] = { title: roundTitle, items: [] }
+        order.push(roundKey)
+      }
+      const sets = Array.isArray(round?.sets) ? round.sets : []
+      let lastNormLabel = ''
+      sets.forEach((set: any, setIdx: number) => {
+        const labelRaw = set?.label?.trim?.() || roundTitle || `Set ${setIdx + 1}`
+        const normLabel = normalizeLabel(labelRaw)
+        const includeLabel = normLabel !== lastNormLabel
+        lastNormLabel = normLabel
+        const on = fmtDur(set?.workSeconds)
+        const off = fmtDur((set?.restSeconds ?? 0) + (set?.transitionSeconds ?? 0))
+        const workText =
+          set?.repetitions && Number.isFinite(set.repetitions) ? `${set.repetitions}` : ''
+        const item: SummaryItem = {
+          raw: '',
+          baseRaw: '',
+          key: [normLabel, workText, on, off].join('|'),
+          label: includeLabel ? labelRaw : '',
+          work: workText,
+          on,
+          off,
+          count: 1
+        }
+        item.baseRaw = [item.label || '', item.work, [on, off].filter(Boolean).join(' / ')].filter(Boolean).join(' ')
+        item.raw = item.baseRaw
+        const list = blockMap[roundKey].items
+        const last = list[list.length - 1]
+        if (last && last.key === item.key) {
+          last.count = (last.count ?? 1) + 1
+        } else {
+          list.push(item)
+        }
+      })
+    })
+
+    order.forEach((k) => {
+      if (blockMap[k]?.items?.length) {
+        blocks.push({ title: blockMap[k].title, items: blockMap[k].items })
+      }
+    })
+
+    return blocks
+  }
+
 
   const systemPrompt = `You are an expert kettlebell and interval-training coach. Output ONLY valid YAML that fits this schema (no prose):
 title: string (required)
@@ -1048,6 +1124,50 @@ rounds: array of objects, in order
                       />
                     </div>
                   </div>
+                  {@const summaryBlocks = buildPlannedSummary(parsedPlan)}
+                  {#if summaryBlocks.length}
+                    <div class="compact-summary rich planner-summary">
+                      {#each summaryBlocks as block}
+                        <div class="summary-block">
+                          <div class="summary-title">{block.title}</div>
+                          {#if block.items?.length}
+                            <div class="summary-items">
+                              {#each block.items as it}
+                                <span class="summary-chip fancy">
+                                  {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                                  {#if it.work}
+                                    <span class="chip-pill">
+                                      {#if it.count && it.count > 1}<span class="count">{it.count} ×</span>{/if}
+                                      <span>{it.work}</span>
+                                    </span>
+                                  {:else if it.count && it.count > 1}
+                                    <span class="chip-pill">
+                                      <span class="count">{it.count} ×</span>
+                                    </span>
+                                  {/if}
+                                  {#if it.on || it.off}
+                                    <span class="chip-pill pill-rest">
+                                      {#if it.on}<span class="on">{it.on}</span>{/if}
+                                      {#if it.off}
+                                        <span class="divider">/</span>
+                                        <span class="off">{it.off}</span>
+                                      {/if}
+                                    </span>
+                                  {/if}
+                                  {#if !it.label && !it.work && !it.on && !it.off}
+                                    {#if it.count && it.count > 1}
+                                      <span class="chip-pill"><span class="count">{it.count} ×</span></span>
+                                    {/if}
+                                    <span>{it.baseRaw}</span>
+                                  {/if}
+                                </span>
+                              {/each}
+                            </div>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 {/if}
               {/if}
               {#if inviteStatus[invite.id]}
@@ -1117,6 +1237,50 @@ rounds: array of objects, in order
                       />
                     </div>
                   </div>
+                  {@const summaryBlocks = buildPlannedSummary(parsedPlan)}
+                  {#if summaryBlocks.length}
+                    <div class="compact-summary rich planner-summary">
+                      {#each summaryBlocks as block}
+                        <div class="summary-block">
+                          <div class="summary-title">{block.title}</div>
+                          {#if block.items?.length}
+                            <div class="summary-items">
+                              {#each block.items as it}
+                                <span class="summary-chip fancy">
+                                  {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                                  {#if it.work}
+                                    <span class="chip-pill">
+                                      {#if it.count && it.count > 1}<span class="count">{it.count} ×</span>{/if}
+                                      <span>{it.work}</span>
+                                    </span>
+                                  {:else if it.count && it.count > 1}
+                                    <span class="chip-pill">
+                                      <span class="count">{it.count} ×</span>
+                                    </span>
+                                  {/if}
+                                  {#if it.on || it.off}
+                                    <span class="chip-pill pill-rest">
+                                      {#if it.on}<span class="on">{it.on}</span>{/if}
+                                      {#if it.off}
+                                        <span class="divider">/</span>
+                                        <span class="off">{it.off}</span>
+                                      {/if}
+                                    </span>
+                                  {/if}
+                                  {#if !it.label && !it.work && !it.on && !it.off}
+                                    {#if it.count && it.count > 1}
+                                      <span class="chip-pill"><span class="count">{it.count} ×</span></span>
+                                    {/if}
+                                    <span>{it.baseRaw}</span>
+                                  {/if}
+                                </span>
+                              {/each}
+                            </div>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 {/if}
               {/if}
             </article>
@@ -1632,6 +1796,74 @@ rounds: array of objects, in order
     border: 1px solid var(--color-border);
     background: var(--color-surface-1);
     color: var(--color-text-primary);
+  }
+  /* Compact summary chips (reused from history) */
+  .compact-summary {
+    margin-top: 0.4rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+    border: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    color: var(--color-text-primary);
+    font-size: 0.95rem;
+  }
+  .compact-summary.rich {
+    gap: 0.4rem;
+  }
+  .summary-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .summary-title {
+    font-weight: 700;
+  }
+  .summary-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .summary-chip {
+    padding: 0.25rem 0.5rem;
+    border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-surface-1) 65%, transparent);
+    font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .summary-chip.fancy .chip-label {
+    font-weight: 600;
+    color: var(--color-text-primary);
+  }
+  .summary-chip.fancy .chip-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-surface-2) 85%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  }
+  .summary-chip.fancy .chip-pill.pill-rest {
+    background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+  }
+  .summary-chip.fancy .chip-pill .on {
+    font-weight: 600;
+  }
+  .summary-chip.fancy .chip-pill .count {
+    font-weight: 700;
+  }
+  .summary-chip.fancy .chip-pill .off {
+    opacity: 0.7;
+  }
+  .summary-chip.fancy .chip-pill .divider {
+    opacity: 0.5;
   }
   @media (max-width: 720px) {
     .today-head {
