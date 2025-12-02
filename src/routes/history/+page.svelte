@@ -1789,7 +1789,16 @@
                           {#each block.items as it}
                             <span class="summary-chip fancy">
                               {#if it.label}<span class="chip-label">{it.label}</span>{/if}
-                              {#if it.work}<span class="chip-pill">{it.work}</span>{/if}
+                              {#if it.work}
+                                <span class="chip-pill">
+                                  {#if it.count && it.count > 1}<span class="count">{it.count} ×</span>{/if}
+                                  <span>{it.work}</span>
+                                </span>
+                              {:else if it.count && it.count > 1}
+                                <span class="chip-pill">
+                                  <span class="count">{it.count} ×</span>
+                                </span>
+                              {/if}
                               {#if it.on || it.off}
                                 <span class="chip-pill pill-rest">
                                   {#if it.on}<span class="on">{it.on}</span>{/if}
@@ -1799,7 +1808,10 @@
                                   {/if}
                                 </span>
                               {/if}
-                              {#if !it.label && !it.work && !it.on && !it.off}{it.raw}{/if}
+                              {#if !it.label && !it.work && !it.on && !it.off}
+                                {#if it.count && it.count > 1}<span class="chip-pill"><span class="count">{it.count} ×</span></span>{/if}
+                                <span>{it.baseRaw}</span>
+                              {/if}
                             </span>
                           {/each}
                         </div>
@@ -2262,7 +2274,16 @@
                           {#each block.items as it}
                             <span class="summary-chip fancy">
                               {#if it.label}<span class="chip-label">{it.label}</span>{/if}
-                              {#if it.work}<span class="chip-pill">{it.work}</span>{/if}
+                              {#if it.work}
+                                <span class="chip-pill">
+                                  {#if it.count && it.count > 1}<span class="count">{it.count} ×</span>{/if}
+                                  <span>{it.work}</span>
+                                </span>
+                              {:else if it.count && it.count > 1}
+                                <span class="chip-pill">
+                                  <span class="count">{it.count} ×</span>
+                                </span>
+                              {/if}
                               {#if it.on || it.off}
                                 <span class="chip-pill pill-rest">
                                   {#if it.on}<span class="on">{it.on}</span>{/if}
@@ -2272,7 +2293,10 @@
                                   {/if}
                                 </span>
                               {/if}
-                              {#if !it.label && !it.work && !it.on && !it.off}{it.raw}{/if}
+                              {#if !it.label && !it.work && !it.on && !it.off}
+                                {#if it.count && it.count > 1}<span class="chip-pill"><span class="count">{it.count} ×</span></span>{/if}
+                                <span>{it.baseRaw}</span>
+                              {/if}
                             </span>
                           {/each}
                         </div>
@@ -2970,6 +2994,9 @@
   }
   .summary-chip.fancy .chip-pill .on {
     font-weight: 600;
+  }
+  .summary-chip.fancy .chip-pill .count {
+    font-weight: 700;
   }
   .summary-chip.fancy .chip-pill .off {
     opacity: 0.7;

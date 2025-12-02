@@ -9,6 +9,7 @@ export type CompletedSetLike = {
 
 export type SummaryItem = {
   raw: string
+  baseRaw: string
   label: string
   work: string
   on?: string
@@ -30,6 +31,12 @@ const normalizeRound = (round?: string | null) => {
   if (!round) return ''
   return round.trim().replace(/[-_]?block$/i, '').trim()
 }
+
+const normalizeRoundKey = (round?: string | null) =>
+  normalizeRound(round || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
 
 const normalizeLabel = (value: string) => value.replace(/[^a-z0-9]/gi, '').toLowerCase()
 
@@ -81,6 +88,7 @@ const buildEntry = (
         : ''
   return {
     raw,
+    baseRaw: raw,
     label: includeLabel ? label : '',
     work: workText,
     on: durOn || '',
@@ -92,44 +100,33 @@ const buildEntry = (
 export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSummary => {
   if (!Array.isArray(sets) || sets.length === 0) return { text: '', blocks: [] }
 
-  // Group contiguous sets by normalized round label (rests without round stick to current)
-  const segments: { round: string; sets: CompletedSetLike[] }[] = []
-  let currentRound = normalizeRound(sets[0].round_label)
-  let bucket: CompletedSetLike[] = []
-  const pushBucket = () => {
-    if (!bucket.length) return
-    segments.push({ round: currentRound, sets: bucket })
-    bucket = []
-  }
+  // Group sets by normalized round key (allow non-contiguous merging)
+  const blockMap: Record<string, { title: string; sets: CompletedSetLike[] }> = {}
+  const order: string[] = []
+  let currentKey = ''
+  let currentTitle = ''
   for (const s of sets) {
     const type = (s.type ?? 'work').toLowerCase()
     if (type === 'roundtransition') continue
-    const roundRaw = normalizeRound(s.round_label)
+    const rawLabel = s.round_label ?? ''
+    const displayLabel = normalizeRound(rawLabel) || currentTitle || 'Session'
     const isRest = type !== 'work'
-    const round = isRest && !roundRaw ? currentRound : roundRaw
-    if (round !== currentRound && bucket.length) {
-      pushBucket()
+    const key = normalizeRoundKey(isRest && !rawLabel ? currentTitle : rawLabel || currentKey || displayLabel || 'session')
+    const titleForBlock = key === currentKey && currentTitle ? currentTitle : displayLabel
+    if (!blockMap[key]) {
+      blockMap[key] = { title: titleForBlock || 'Session', sets: [] }
+      order.push(key)
     }
-    currentRound = round
-    bucket.push(s)
-  }
-  pushBucket()
-
-  // Merge adjacent segments with same round
-  const merged: { round: string; sets: CompletedSetLike[] }[] = []
-  for (const seg of segments) {
-    const last = merged[merged.length - 1]
-    if (last && last.round === seg.round) {
-      last.sets.push(...seg.sets)
-    } else {
-      merged.push({ ...seg })
-    }
+    blockMap[key].sets.push(s)
+    currentKey = key
+    currentTitle = blockMap[key].title
   }
 
   const blocks: SummaryBlock[] = []
 
-  for (const seg of merged) {
-    const roundName = seg.round || 'Session'
+  for (const key of order) {
+    const seg = blockMap[key]
+    const roundName = seg.title || 'Session'
     const list = seg.sets
     if (list.every((s) => (s.type ?? 'rest').toLowerCase() !== 'work')) {
       continue
@@ -162,8 +159,6 @@ export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSumma
 
         if (hasRest && hasTrailingWork && (!list[i + 3] || (list[i + 3].type ?? 'rest').toLowerCase() !== 'work')) {
           const entry = buildEntry(curr, next, roundName, includeLabel)
-          entry.raw = `2 × ${entry.raw}`
-          entry.work = entry.work ? `2 × ${entry.work}` : entry.raw
           entry.count = 2
           items.push(entry)
           i += 3
@@ -188,18 +183,20 @@ export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSumma
     let j = 0
     while (j < items.length) {
       let count = 1
-      while (j + count < items.length && items[j + count].raw === items[j].raw) {
+      let total = items[j].count ?? 1
+      while (
+        j + count < items.length &&
+        items[j + count].baseRaw === items[j].baseRaw &&
+        items[j + count].label === items[j].label &&
+        items[j + count].work === items[j].work &&
+        items[j + count].on === items[j].on &&
+        items[j + count].off === items[j].off
+      ) {
+        total += items[j + count].count ?? 1
         count++
       }
-      if (count > 1) {
-        const base = { ...items[j] }
-        base.raw = `${count} × ${base.raw}`
-        base.work = base.work ? `${count} × ${base.work}` : base.raw
-        base.count = count
-        collapsed.push(base)
-      } else {
-        collapsed.push(items[j])
-      }
+      const base = { ...items[j], count: total }
+      collapsed.push(base)
       j += count
     }
 
@@ -210,7 +207,12 @@ export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSumma
 
   const text = blocks
     .map((block) => {
-      const joined = block.items.map((it) => it.raw).join('; ')
+      const joined = block.items
+        .map((it) => {
+          const prefix = it.count && it.count > 1 ? `${it.count} × ` : ''
+          return `${prefix}${it.baseRaw}`
+        })
+        .join('; ')
       return `- ${block.title}: ${joined}`
     })
     .join('\n')
