@@ -14,9 +14,9 @@ const formatDuration = (seconds?: number | null) => {
   return `${mins}m ${secs}s`
 }
 
-const workKey = (set: CompletedSetLike) =>
+const workKey = (set: CompletedSetLike, includeRound = true) =>
   [
-    set.round_label ?? '',
+    includeRound ? set.round_label ?? '' : '',
     set.set_label ?? '',
     set.reps ?? '',
     set.weight ?? '',
@@ -26,11 +26,14 @@ const workKey = (set: CompletedSetLike) =>
 
 const restKey = (set: CompletedSetLike) => `${set.type ?? 'rest'}|${set.duration_s ?? ''}`
 
-const formatWork = (set: CompletedSetLike) => {
-  const label =
-    (set.round_label && set.set_label
+const formatWork = (set: CompletedSetLike, includeRound = true, roundName?: string) => {
+  let label =
+    includeRound && set.round_label && set.set_label
       ? `${set.round_label}: ${set.set_label}`
-      : set.set_label || set.round_label || 'Work') ?? 'Work'
+      : set.set_label || set.round_label || 'Work'
+  if (!includeRound && roundName && label.startsWith(`${roundName}: `)) {
+    label = label.slice(roundName.length + 2)
+  }
   const parts: string[] = []
   if (set.reps !== null && set.reps !== undefined) parts.push(String(set.reps))
   if (set.weight !== null && set.weight !== undefined) parts.push(`@ ${set.weight}`)
@@ -44,8 +47,8 @@ const formatRest = (set: CompletedSetLike) => {
   return `Rest${dur}`
 }
 
-export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
-  if (!Array.isArray(sets) || sets.length === 0) return ''
+const summarizeSets = (sets: CompletedSetLike[], includeRound = true, roundName?: string) => {
+  if (!sets.length) return ''
   const lines: string[] = []
   let i = 0
   while (i < sets.length) {
@@ -57,12 +60,12 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
       const next = sets[i + 1]
       const nextType = (next.type ?? 'rest').toLowerCase()
       if (nextType !== 'work') {
-        const workKeyBase = workKey(current)
+        const workKeyBase = workKey(current, includeRound)
         const restKeyBase = restKey(next)
         let count = 1
         while (
           i + count * 2 + 1 < sets.length &&
-          workKey(sets[i + count * 2]) === workKeyBase &&
+          workKey(sets[i + count * 2], includeRound) === workKeyBase &&
           restKey(sets[i + count * 2 + 1]) === restKeyBase
         ) {
           count += 1
@@ -79,19 +82,66 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
 
     // Collapse identical consecutive sets of the same type
     let count = 1
-    const keyFn = currentType === 'work' ? workKey : restKey
+    const keyFn = currentType === 'work' ? (s: CompletedSetLike) => workKey(s, includeRound) : restKey
     const baseKey = keyFn(current)
     while (i + count < sets.length && keyFn(sets[i + count]) === baseKey && (sets[i + count].type ?? currentType) === current.type) {
       count += 1
     }
 
     if (currentType === 'work') {
-      lines.push(count > 1 ? `${count} × ${formatWork(current)}` : formatWork(current))
+      lines.push(
+        count > 1 ? `${count} × ${formatWork(current, includeRound, roundName)}` : formatWork(current, includeRound, roundName)
+      )
     } else {
       lines.push(count > 1 ? `${count} × ${formatRest(current)}` : formatRest(current))
     }
     i += count
   }
+
+  return lines.join('\n')
+}
+
+export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
+  if (!Array.isArray(sets) || sets.length === 0) return ''
+  const segments: { round: string; sets: CompletedSetLike[] }[] = []
+  let currentRound = sets[0].round_label ?? ''
+  let bucket: CompletedSetLike[] = []
+  const pushBucket = () => {
+    if (!bucket.length) return
+    segments.push({ round: currentRound, sets: bucket })
+    bucket = []
+  }
+  sets.forEach((s) => {
+    const round = s.type !== 'work' && !s.round_label ? currentRound : s.round_label ?? ''
+    if (round !== currentRound && bucket.length) {
+      pushBucket()
+    }
+    currentRound = round
+    bucket.push(s)
+  })
+  pushBucket()
+
+  // merge adjacent segments with the same round label
+  const merged: { round: string; sets: CompletedSetLike[] }[] = []
+  segments.forEach((seg) => {
+    const last = merged[merged.length - 1]
+    if (last && last.round === seg.round) {
+      last.sets.push(...seg.sets)
+    } else {
+      merged.push({ ...seg })
+    }
+  })
+
+  const lines: string[] = []
+  merged.forEach((seg) => {
+    const text = summarizeSets(seg.sets, false, seg.round || undefined)
+    if (!text) return
+    if (seg.round) {
+      lines.push(`${seg.round}: ${text.replace(/\n/g, '; ')}`)
+    } else {
+      lines.push(text)
+    }
+  })
 
   return lines.join('\n')
 }
