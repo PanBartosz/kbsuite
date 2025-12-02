@@ -110,6 +110,7 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
         const workK = workKey(work, roundName)
         const restK = restKey(rest)
         let count = 1
+        let trailingWork = 0
         while (
           i + count * 2 + 1 < list.length &&
           workKey(list[i + count * 2], roundName) === workK &&
@@ -117,12 +118,26 @@ export const summarizeCompletedWorkout = (sets: CompletedSetLike[] = []) => {
         ) {
           count++
         }
-        items.push(
-          count > 1
-            ? `${count} × (${formatWork(work, roundName)} + ${formatRest(rest)})`
-            : `${formatWork(work, roundName)} + ${formatRest(rest)}`
-        )
-        i += count * 2
+        // allow a final dangling work without matching rest (end of block)
+        const nextIndex = i + count * 2
+        if (nextIndex < list.length && (list[nextIndex].type ?? 'work').toLowerCase() === 'work' && workKey(list[nextIndex], roundName) === workK) {
+          trailingWork = 1
+        }
+        if (trailingWork) {
+          items.push(
+            count > 1
+              ? `${count} × (${formatWork(work, roundName)} + ${formatRest(rest)}) + ${formatWork(work, roundName)}`
+              : `${formatWork(work, roundName)} + ${formatRest(rest)} + ${formatWork(work, roundName)}`
+          )
+          i += count * 2 + 1
+        } else {
+          items.push(
+            count > 1
+              ? `${count} × (${formatWork(work, roundName)} + ${formatRest(rest)})`
+              : `${formatWork(work, roundName)} + ${formatRest(rest)}`
+          )
+          i += count * 2
+        }
         continue
       }
 
