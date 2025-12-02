@@ -933,19 +933,55 @@
     const rowsForHeight = Math.min(sets.length || 1, maxRows)
     const width = 1200
     const pad = 60
-    const dividerGap = opts?.showDividers === false ? 0 : 18
+    const dividerGap = opts?.renderMode === 'summary' ? 0 : opts?.showDividers === false ? 0 : 18
     let dividerCount = 0
-    if (opts?.showDividers ?? true) {
-      let prevRound: string | null = null
-      for (const s of sets.slice(0, rowsForHeight)) {
-        const curr = s.round_label ?? ''
-        if (curr && prevRound && curr !== prevRound) dividerCount += 1
-        if (curr) prevRound = curr
+    if (!opts?.renderMode || opts.renderMode === 'detailed') {
+      if (opts?.showDividers ?? true) {
+        let prevRound: string | null = null
+        for (const s of sets.slice(0, rowsForHeight)) {
+          const curr = s.round_label ?? ''
+          if (curr && prevRound && curr !== prevRound) dividerCount += 1
+          if (curr) prevRound = curr
+        }
       }
     }
-    const headerBlock = 360 // title + stats + spacing before rows
-    const rowsHeight = rowsForHeight * rowHeight + dividerCount * dividerGap + 80
-    const height = Math.max(750, pad + headerBlock + rowsHeight + pad)
+    const renderSummary = opts?.renderMode === 'summary'
+    const headerBlock = 260
+    let rowsHeight = 0
+    if (renderSummary) {
+      const measureCtx = document.createElement('canvas').getContext('2d')
+      if (measureCtx) {
+        const startX = pad + 52
+        const endX = width - pad - 52
+        const maxWidth = endX - startX
+        let y = 34 // after "Summary" title
+        summary.blocks.forEach((block) => {
+          y += 18 // block top gap
+          measureCtx.font = '24px \"Inter\", system-ui, -apple-system, sans-serif'
+          y += 18 // title height
+          let x = startX
+          const h = 36
+          measureCtx.font = '21px \"Inter\", system-ui, -apple-system, sans-serif'
+          block.items.forEach((it) => {
+            const text = `${it.count && it.count > 1 ? `${it.count} × ` : ''}${it.baseRaw}`
+            const w = measureCtx.measureText(text).width + 26
+            if (x + w > startX + maxWidth) {
+              x = startX
+              y += h + 10
+            }
+            x += w + 10
+          })
+          y += h + 12
+        })
+        rowsHeight = y + 60
+      } else {
+        rowsHeight = 320
+      }
+    } else {
+      rowsHeight = rowsForHeight * rowHeight + dividerCount * dividerGap + 80
+    }
+
+    const height = Math.max(renderSummary ? 620 : 750, pad + headerBlock + rowsHeight + pad)
     const canvas = document.createElement('canvas')
     canvas.width = width
     canvas.height = height
@@ -1177,7 +1213,6 @@
 
     // Sets (capped for space)
     const listY = pillY + 120
-    const renderSummary = opts?.renderMode === 'summary'
 
     if (renderSummary) {
       const blockPadX = 36
