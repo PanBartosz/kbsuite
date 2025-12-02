@@ -627,24 +627,25 @@
         lastNormLabel = normLabel
         const on = fmtDur(set?.workSeconds)
         const off = fmtDur((set?.restSeconds ?? 0) + (set?.transitionSeconds ?? 0))
-        const workText =
-          set?.repetitions && Number.isFinite(set.repetitions) ? `${set.repetitions}` : ''
+        const repCount =
+          set?.repetitions && Number.isFinite(set.repetitions) ? Math.max(1, Number(set.repetitions)) : 1
+        const workText = '' // planner sets have no weight; keep work text empty
         const item: SummaryItem = {
           raw: '',
           baseRaw: '',
-          key: [normLabel, workText, on, off].join('|'),
+          key: [normLabel, on, off].join('|'),
           label: includeLabel ? labelRaw : '',
           work: workText,
           on,
           off,
-          count: 1
+          count: repCount
         }
         item.baseRaw = [item.label || '', item.work, [on, off].filter(Boolean).join(' / ')].filter(Boolean).join(' ')
         item.raw = item.baseRaw
         const list = blockMap[roundKey].items
         const last = list[list.length - 1]
         if (last && last.key === item.key) {
-          last.count = (last.count ?? 1) + 1
+          last.count = (last.count ?? 1) + (item.count ?? 1)
         } else {
           list.push(item)
         }
@@ -1114,16 +1115,6 @@ rounds: array of objects, in order
               {#if timelineForYaml(invite.yaml_source).length}
                 {@const parsedPlan = planFromYaml(invite.yaml_source)}
                 {#if parsedPlan}
-                  <div class="plan-timeline mini-rounds">
-                    <div class="mini-rounds__title">Rounds &amp; sets</div>
-                    <div class="mini-rounds__scroller">
-                      <RoundsSetsView
-                        plan={parsedPlan}
-                        timeline={timelineForYaml(invite.yaml_source)}
-                        showEditButtons={false}
-                      />
-                    </div>
-                  </div>
                   {@const summaryBlocks = buildPlannedSummary(parsedPlan)}
                   {#if summaryBlocks.length}
                     <div class="compact-summary rich planner-summary">
@@ -1135,14 +1126,10 @@ rounds: array of objects, in order
                               {#each block.items as it}
                                 <span class="summary-chip fancy">
                                   {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                                  <span class="chip-pill pill-count">{it.count ?? 1} ×</span>
                                   {#if it.work}
                                     <span class="chip-pill">
-                                      {#if it.count && it.count > 1}<span class="count">{it.count} ×</span>{/if}
                                       <span>{it.work}</span>
-                                    </span>
-                                  {:else if it.count && it.count > 1}
-                                    <span class="chip-pill">
-                                      <span class="count">{it.count} ×</span>
                                     </span>
                                   {/if}
                                   {#if it.on || it.off}
@@ -1155,9 +1142,6 @@ rounds: array of objects, in order
                                     </span>
                                   {/if}
                                   {#if !it.label && !it.work && !it.on && !it.off}
-                                    {#if it.count && it.count > 1}
-                                      <span class="chip-pill"><span class="count">{it.count} ×</span></span>
-                                    {/if}
                                     <span>{it.baseRaw}</span>
                                   {/if}
                                 </span>
@@ -1227,35 +1211,23 @@ rounds: array of objects, in order
               {#if timelineForYaml(item.yaml_source).length}
                 {@const parsedPlan = planFromYaml(item.yaml_source)}
                 {#if parsedPlan}
-                  <div class="plan-timeline mini-rounds">
-                    <div class="mini-rounds__title">Rounds &amp; sets</div>
-                    <div class="mini-rounds__scroller">
-                      <RoundsSetsView
-                        plan={parsedPlan}
-                        timeline={timelineForYaml(item.yaml_source)}
-                        showEditButtons={false}
-                      />
-                    </div>
-                  </div>
                   {@const summaryBlocks = buildPlannedSummary(parsedPlan)}
                   {#if summaryBlocks.length}
                     <div class="compact-summary rich planner-summary">
                       {#each summaryBlocks as block}
                         <div class="summary-block">
                           <div class="summary-title">{block.title}</div>
-                          {#if block.items?.length}
+                              {#if block.items?.length}
                             <div class="summary-items">
                               {#each block.items as it}
                                 <span class="summary-chip fancy">
                                   {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                                  {#if it.count && it.count > 1}
+                                    <span class="chip-pill pill-count">{it.count} ×</span>
+                                  {/if}
                                   {#if it.work}
                                     <span class="chip-pill">
-                                      {#if it.count && it.count > 1}<span class="count">{it.count} ×</span>{/if}
                                       <span>{it.work}</span>
-                                    </span>
-                                  {:else if it.count && it.count > 1}
-                                    <span class="chip-pill">
-                                      <span class="count">{it.count} ×</span>
                                     </span>
                                   {/if}
                                   {#if it.on || it.off}
@@ -1864,6 +1836,10 @@ rounds: array of objects, in order
   }
   .summary-chip.fancy .chip-pill .divider {
     opacity: 0.5;
+  }
+  .summary-chip.fancy .chip-pill.pill-count {
+    font-weight: 700;
+    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
   }
   @media (max-width: 720px) {
     .today-head {
