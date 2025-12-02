@@ -1274,7 +1274,7 @@
         ctx.font = '24px "Inter", system-ui, -apple-system, sans-serif'
         ctx.fillStyle = textPrimary
         ctx.fillText(block.title, startX, yCursor)
-        yCursor += 18
+        yCursor += 28
         let x = startX
         ctx.font = '21px "Inter", system-ui, -apple-system, sans-serif'
         block.items.forEach((it) => {

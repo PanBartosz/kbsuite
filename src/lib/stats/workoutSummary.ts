@@ -206,8 +206,41 @@ export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSumma
       j += count
     }
 
-    if (collapsed.length) {
-      blocks.push({ title: roundName, items: collapsed })
+    // Second pass: detect repeating cycle across the sequence
+    const detectCycle = (arr: SummaryItem[]) => {
+      const n = arr.length
+      for (let len = 1; len <= n; len++) {
+        if (n % len !== 0) continue
+        const cycle = arr.slice(0, len)
+        let matches = true
+        for (let i = 0; i < n; i++) {
+          const a = arr[i]
+          const b = cycle[i % len]
+          if (a.key !== b.key || (a.label && b.label && normalizeLabel(a.label) !== normalizeLabel(b.label))) {
+            matches = false
+            break
+          }
+        }
+        if (matches) {
+          const cycles = n / len
+          return { cycles, pattern: cycle }
+        }
+      }
+      return null
+    }
+
+    let finalItems: SummaryItem[] = collapsed
+    let blockTitle = roundName
+    if (collapsed.length > 1) {
+      const cycle = detectCycle(collapsed)
+      if (cycle && cycle.cycles > 1 && cycle.pattern.length > 0) {
+        finalItems = cycle.pattern
+        blockTitle = `${cycle.cycles} × ${roundName}`
+      }
+    }
+
+    if (finalItems.length) {
+      blocks.push({ title: blockTitle, items: finalItems })
     }
   }
 
