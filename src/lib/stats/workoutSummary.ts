@@ -113,6 +113,48 @@ const buildEntry = (
 export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSummary => {
   if (!Array.isArray(sets) || sets.length === 0) return { text: '', blocks: [] }
 
+  const sameItem = (a: SummaryItem, b: SummaryItem) =>
+    a.key === b.key && (!a.label || !b.label || normalizeLabel(a.label) === normalizeLabel(b.label))
+
+  const hasNextWindow = (start: number, len: number, repeat: number, total: number) =>
+    start + (repeat + 1) * len <= total
+
+  // Find the best contiguous cycle starting at `start`. Picks the cycle that covers the most items,
+  // preferring longer patterns when coverage ties (to surface maximal sub-cycles).
+  const findCycleAt = (arr: SummaryItem[], start: number) => {
+    const remaining = arr.length - start
+    const maxLen = Math.floor(remaining / 2)
+    let best: { len: number; count: number; coverage: number } | null = null
+
+    for (let len = 1; len <= maxLen; len++) {
+      let repeats = 1
+      while (
+        hasNextWindow(start, len, repeats, arr.length) &&
+        (() => {
+          for (let i = 0; i < len; i++) {
+            if (!sameItem(arr[start + i], arr[start + repeats * len + i])) return false
+          }
+          return true
+        })()
+      ) {
+        repeats++
+      }
+
+      if (repeats > 1) {
+        const coverage = repeats * len
+        const shouldTake =
+          !best ||
+          coverage > best.coverage ||
+          (coverage === best.coverage && repeats > best.count) ||
+          (coverage === best.coverage && repeats === best.count && len < best.len)
+
+        if (shouldTake) best = { len, count: repeats, coverage }
+      }
+    }
+
+    return best ? { len: best.len, count: best.count } : null
+  }
+
   // Group sets by normalized round key (allow non-contiguous merging)
   const blockMap: Record<string, { title: string; sets: CompletedSetLike[] }> = {}
   const order: string[] = []
@@ -206,42 +248,29 @@ export const buildWorkoutSummary = (sets: CompletedSetLike[] = []): WorkoutSumma
       j += count
     }
 
-    // Second pass: detect repeating cycle across the sequence
-    const detectCycle = (arr: SummaryItem[]) => {
-      const n = arr.length
-      for (let len = 1; len <= n; len++) {
-        if (n % len !== 0) continue
-        const cycle = arr.slice(0, len)
-        let matches = true
-        for (let i = 0; i < n; i++) {
-          const a = arr[i]
-          const b = cycle[i % len]
-          if (a.key !== b.key || (a.label && b.label && normalizeLabel(a.label) !== normalizeLabel(b.label))) {
-            matches = false
-            break
-          }
-        }
-        if (matches) {
-          const cycles = n / len
-          return { cycles, pattern: cycle }
-        }
-      }
-      return null
-    }
-
-    let finalItems: SummaryItem[] = collapsed
-    let blockTitle = roundName
-    if (collapsed.length > 1) {
-      const cycle = detectCycle(collapsed)
-      if (cycle && cycle.cycles > 1 && cycle.pattern.length > 0) {
-        finalItems = cycle.pattern
-        blockTitle = `${cycle.cycles} × ${roundName}`
+    // Second pass: detect repeating cycles within the sequence (supports multiple cycles per round)
+    const pendingPlain: SummaryItem[] = []
+    const flushPlain = () => {
+      if (pendingPlain.length) {
+        blocks.push({ title: roundName, items: [...pendingPlain] })
+        pendingPlain.length = 0
       }
     }
 
-    if (finalItems.length) {
-      blocks.push({ title: blockTitle, items: finalItems })
+    let cursor = 0
+    while (cursor < collapsed.length) {
+      const cycle = findCycleAt(collapsed, cursor)
+      if (cycle) {
+        flushPlain()
+        const pattern = collapsed.slice(cursor, cursor + cycle.len)
+        blocks.push({ title: `${cycle.count} × ${roundName}`, items: pattern })
+        cursor += cycle.len * cycle.count
+        continue
+      }
+      pendingPlain.push(collapsed[cursor])
+      cursor++
     }
+    flushPlain()
   }
 
   const text = blocks

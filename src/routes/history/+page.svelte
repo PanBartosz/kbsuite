@@ -928,7 +928,7 @@
     const { totalReps, totalWorkSeconds, totalSets } = computeTotals(item)
     const filtered = (item.sets ?? []).filter((s) => (s.type ?? '').toLowerCase() !== 'prep')
     const sets = mergeRests(filtered)
-    const rowHeight = 58
+    const rowHeight = 88
     const maxRows = 28
     const rowsForHeight = Math.min(sets.length || 1, maxRows)
     const width = 1200
@@ -994,7 +994,7 @@
         summary.blocks.forEach((block) => {
           y += 18 // block top gap
           measureCtx.font = '24px "Inter", system-ui, -apple-system, sans-serif'
-          y += 18 // title height
+          y += 28 // title height
           let x = startX
           block.items.forEach((it) => {
             const w = measureChip(it)
