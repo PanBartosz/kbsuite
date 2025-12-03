@@ -1,6 +1,9 @@
 title: KettleFlow System Test
 preStartSeconds: 20
 preStartLabel: Gear up!
+defaultRepCounterMode: swing
+enableRepCounter: work
+enableModeChanging: true
 rounds:
   - id: warmup-block
     label: Dynamic Warm-up
@@ -13,6 +16,7 @@ rounds:
         restSeconds: 15
         repetitions: 2
         transitionSeconds: 10
+        repCounterMode: disabled
         announcements:
           - text: "Warm-up starting. Stay light."
             atSeconds: 0
@@ -31,6 +35,7 @@ rounds:
         repetitions: 1
         transitionSeconds: 12
         targetRpm: 18
+        repCounterMode: swing
         announcements:
           - text: "Round {rep}: step through the lunge"
             atSeconds: 0
@@ -47,6 +52,7 @@ rounds:
         repetitions: 1
         transitionSeconds: 0
         targetRpm: 10
+        repCounterMode: lockout
         announcements:
           - text: "Steady get-up"
             atSeconds: 0
@@ -65,6 +71,7 @@ rounds:
         repetitions: 3
         transitionSeconds: 10
         targetRpm: 24
+        repCounterMode: swing
         announcements:
           - text: "Swings on!"
             atSeconds: 0
@@ -79,6 +86,7 @@ rounds:
         repetitions: 2
         transitionSeconds: 8
         targetRpm: 14
+        repCounterMode: disabled
         announcements:
           - text: "Drop into push-ups"
             atSeconds: 0
@@ -90,6 +98,7 @@ rounds:
         restSeconds: 15
         repetitions: 1
         transitionSeconds: 10
+        repCounterMode: disabled
         announcements:
           - text: "Lock out your hollow hold"
             atSeconds: 0
@@ -106,6 +115,7 @@ rounds:
         repetitions: 4
         transitionSeconds: 12
         targetRpm: 16
+        repCounterMode: lockout
         announcements:
           - text: "Clean + Press. Stay smooth."
             atSeconds: 0
@@ -118,6 +128,7 @@ rounds:
         repetitions: 2
         transitionSeconds: 0
         targetRpm: 22
+        repCounterMode: disabled
         announcements:
           - text: "Sink into the squat"
             atSeconds: 0

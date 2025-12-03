@@ -50,6 +50,19 @@ import '$lib/timer/app.css'
     return Math.max(1, Math.round(numeric))
   }
 
+  const normalizeRepCounterMode = (value) => {
+    if (typeof value !== 'string') return 'disabled'
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'swing' || normalized === 'lockout') return normalized
+    if (normalized === 'disabled') return 'disabled'
+    return 'disabled'
+  }
+
+  const normalizeRepCounterScope = (value) => (value === 'all' ? 'all' : 'work')
+
+  const normalizeBoolean = (value, defaultValue) =>
+    value === true ? true : value === false ? false : defaultValue
+
   const normalizePlan = (candidate) => {
     if (!candidate || typeof candidate !== 'object') {
       throw new Error('Plan must be a YAML mapping/object')
@@ -64,6 +77,9 @@ import '$lib/timer/app.css'
         : 'Prepare'
     const description =
       typeof candidate.description === 'string' ? candidate.description.trim() : ''
+    const defaultRepCounterMode = normalizeRepCounterMode(candidate.defaultRepCounterMode)
+    const enableRepCounter = normalizeRepCounterScope(candidate.enableRepCounter)
+    const enableModeChanging = normalizeBoolean(candidate.enableModeChanging, true)
 
     const rounds = candidate.rounds.map((round, roundIndex) => {
       if (!round || typeof round !== 'object') {
@@ -100,7 +116,12 @@ import '$lib/timer/app.css'
                 ? Math.max(Number(set.targetRpm) || 0, 0)
                 : null,
             announcements: cleanAnnouncements(set.announcements),
-            restAnnouncements: cleanAnnouncements(set.restAnnouncements)
+            restAnnouncements: cleanAnnouncements(set.restAnnouncements),
+            repCounterMode: normalizeRepCounterMode(set.repCounterMode ?? defaultRepCounterMode),
+            enableModeChanging: normalizeBoolean(
+              set.enableModeChanging,
+              enableModeChanging
+            )
           }
         })
       }
@@ -111,7 +132,10 @@ import '$lib/timer/app.css'
       description,
       preStartSeconds,
       preStartLabel,
-      rounds
+      rounds,
+      defaultRepCounterMode,
+      enableRepCounter,
+      enableModeChanging
     }
   }
 

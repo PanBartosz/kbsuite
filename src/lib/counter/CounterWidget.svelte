@@ -18,11 +18,23 @@
   export function pause() {
     sessionRef?.pauseSession?.()
   }
+  export function resume() {
+    sessionRef?.resumeSession?.()
+  }
   export function stop() {
     sessionRef?.stopSession?.()
   }
   export function reset() {
     sessionRef?.resetReps?.()
+  }
+  export function setMode(mode: 'swing' | 'lockout' | 'disabled', options?: { silent?: boolean }) {
+    sessionRef?.setModeFromHost?.(mode, options)
+  }
+  export function setGesturesEnabled(enabled: boolean) {
+    sessionRef?.setGesturesEnabled?.(enabled)
+  }
+  export function setCountingEnabled(enabled: boolean) {
+    sessionRef?.setCountingEnabled?.(enabled)
   }
 </script>
 

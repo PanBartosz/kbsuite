@@ -47,6 +47,9 @@
         <ul>
           <li><code>preStartSeconds</code> (number, optional, default 0): Countdown before the first set.</li>
           <li><code>preStartLabel</code> (string, optional): Text shown during the pre-start countdown.</li>
+          <li><code>defaultRepCounterMode</code> (string, optional, <code>swing</code> | <code>lockout</code> | <code>disabled</code>, default <code>disabled</code>): Default rep-counter mode applied to sets without an explicit override.</li>
+          <li><code>enableRepCounter</code> (string, optional, <code>work</code> | <code>all</code>, default <code>work</code>): Phases where the rep counter should run (<code>work</code> phases only, or every phase).</li>
+          <li><code>enableModeChanging</code> (boolean, optional, default <code>true</code>): Allow gesture-based mode changes globally; can be overridden per set.</li>
           <li><code>title</code> (string): Name of the workout.</li>
           <li><code>description</code> (string, optional): Short summary displayed in the planner.</li>
           <li><code>rounds</code> (array): Ordered rounds performed sequentially.</li>
@@ -71,6 +74,8 @@
           <li><code>transitionSeconds</code> (number, optional, default 0): Rest before the next set in the round.</li>
           <li><code>announcements</code> (array, optional): Voice prompts with <code>text</code> and <code>atSeconds</code> (seconds from the start of work; negative values count back from the end); optional <code>once</code> and <code>voice</code>.</li>
           <li><code>restAnnouncements</code> (array, optional): Voice prompts for rest phases (same structure as <code>announcements</code>).</li>
+          <li><code>repCounterMode</code> (string, optional): Override the global mode for this set (<code>swing</code> | <code>lockout</code> | <code>disabled</code>).</li>
+          <li><code>enableModeChanging</code> (boolean, optional): Whether gestures can change rep-counter mode during this set.</li>
         </ul>
 
         <h3>Example</h3>

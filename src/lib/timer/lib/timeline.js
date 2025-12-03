@@ -100,12 +100,29 @@ const createPhase = ({
   isSkippable: duration <= 0
 })
 
+const normalizeRepCounterMode = (value) => {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'swing' || normalized === 'lockout') return normalized
+  if (normalized === 'disabled') return 'disabled'
+  return null
+}
+
+const normalizeRepCounterScope = (value) => (value === 'all' ? 'all' : 'work')
+
+const normalizeBoolean = (value, defaultValue) =>
+  value === true ? true : value === false ? false : defaultValue
+
 /*
   Build a flattened timeline of workout phases (work, rest, transition, round rest).
   Each phase describes duration, human-friendly label, and reference back to the source round/set.
 */
 export const buildTimeline = (plan) => {
   if (!plan || !Array.isArray(plan.rounds)) return []
+
+  const defaultRepCounterMode = normalizeRepCounterMode(plan.defaultRepCounterMode) ?? 'disabled'
+  const enableRepCounter = normalizeRepCounterScope(plan.enableRepCounter)
+  const enableModeChanging = normalizeBoolean(plan.enableModeChanging, true)
 
   const phases = []
   let phaseIndex = 0
@@ -142,12 +159,27 @@ export const buildTimeline = (plan) => {
         const targetRpm = Number(set.targetRpm) || null
         const workAnnouncements = cleanAnnouncements(set.announcements)
         const restAnnouncements = cleanAnnouncements(set.restAnnouncements)
+        const setMode = normalizeRepCounterMode(set.repCounterMode)
+        const resolvedMode = setMode ?? defaultRepCounterMode
+        const setModeChangingOverride =
+          typeof set.enableModeChanging === 'boolean' ? set.enableModeChanging : null
+        const resolvedModeChanging =
+          setModeChangingOverride === null ? enableModeChanging : setModeChangingOverride
+
+        const repCounterMeta = {
+          repCounterMode: resolvedMode,
+          enableModeChanging: resolvedModeChanging
+        }
 
         for (let repIndex = 0; repIndex < repetitions; repIndex += 1) {
           const repLabel =
             repetitions > 1
               ? `${setLabel} · Round ${roundRep + 1} · Rep ${repIndex + 1}/${repetitions}`
               : `${setLabel} · Round ${roundRep + 1}`
+
+          const repCounterEnabledWork =
+            resolvedMode !== 'disabled' &&
+            (enableRepCounter === 'all' || enableRepCounter === 'work')
 
           if (workSeconds > 0) {
             phases.push(
@@ -165,7 +197,9 @@ export const buildTimeline = (plan) => {
                 metadata: {
                   roundLabel,
                   setLabel,
-                  targetRpm
+                  targetRpm,
+                  ...repCounterMeta,
+                  repCounterEnabled: repCounterEnabledWork
                 },
                 announcements: workAnnouncements
               })
@@ -189,6 +223,8 @@ export const buildTimeline = (plan) => {
             restSeconds > 0 &&
             (hasNextRep || hasNextSet || hasNextRoundCycle || hasNextRoundTransition)
           ) {
+            const repCounterEnabledRest =
+              resolvedMode !== 'disabled' && enableRepCounter === 'all'
             phases.push(
               createPhase({
                 id: `phase-${phaseIndex++}`,
@@ -203,7 +239,9 @@ export const buildTimeline = (plan) => {
                 repetitionCount: repetitions,
                 metadata: {
                   roundLabel,
-                  setLabel
+                  setLabel,
+                  ...repCounterMeta,
+                  repCounterEnabled: repCounterEnabledRest
                 },
                 announcements: restAnnouncements
               })
@@ -212,6 +250,8 @@ export const buildTimeline = (plan) => {
         }
 
         if (setIndex < round.sets.length - 1 && transitionSeconds > 0) {
+          const repCounterEnabledTransition =
+            resolvedMode !== 'disabled' && enableRepCounter === 'all'
           phases.push(
             createPhase({
               id: `phase-${phaseIndex++}`,
@@ -227,7 +267,9 @@ export const buildTimeline = (plan) => {
               metadata: {
                 roundLabel,
                 fromSetLabel: setLabel,
-                toSetLabel: round.sets[setIndex + 1].label ?? `Set ${setIndex + 2}`
+                toSetLabel: round.sets[setIndex + 1].label ?? `Set ${setIndex + 2}`,
+                ...repCounterMeta,
+                repCounterEnabled: repCounterEnabledTransition
               }
             })
           )
@@ -249,7 +291,10 @@ export const buildTimeline = (plan) => {
             roundId,
             setId: null,
             metadata: {
-              roundLabel
+              roundLabel,
+              repCounterMode: defaultRepCounterMode,
+              repCounterEnabled: false,
+              enableModeChanging
             }
           })
         )
@@ -266,7 +311,10 @@ export const buildTimeline = (plan) => {
             setId: null,
             metadata: {
               fromRoundLabel: roundLabel,
-              toRoundLabel: plan.rounds[roundIndex + 1].label ?? `Round ${roundIndex + 2}`
+              toRoundLabel: plan.rounds[roundIndex + 1].label ?? `Round ${roundIndex + 2}`,
+              repCounterMode: defaultRepCounterMode,
+              repCounterEnabled: false,
+              enableModeChanging
             }
           })
         )

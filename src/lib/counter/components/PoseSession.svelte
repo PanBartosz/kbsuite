@@ -51,6 +51,9 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   let debugOverlay = $settings.counter.debugOverlay
   let videoAspect = 16 / 9
   let lowFpsMode = $settings.counter.lowFpsMode
+  let gesturesEnabled = true
+  let countingEnabled = true
+  let overlayMode: ExerciseId | 'disabled' = 'swing'
   const LOCKOUT_HEAD_THRESH = 0.5
   const LOCKOUT_HOLD_MS = 100
 
@@ -79,6 +82,7 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   }
 
   const handleGestureEvents = (events: GestureEvent[]) => {
+    if (!gesturesEnabled) return
     for (const evt of events) {
       if (evt.id === 'reset') {
         resetCount('Counter reset', true)
@@ -90,12 +94,18 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
     }
   }
 
-  const setExerciseMode = (id: ExerciseId) => {
-    if (id === $exercise) return
+  const setExerciseMode = (id: ExerciseId, options: { silent?: boolean } = {}) => {
+    const silent = options?.silent ?? false
+    if (id === $exercise) {
+      return
+    }
     exercise.set(id)
+    overlayMode = id
     const opt = getExerciseOption(id)
-    feedback.set(`Mode: ${opt.label}`)
-    playModeCue(id)
+    if (!silent) {
+      feedback.set(`Mode: ${opt.label}`)
+      playModeCue(id)
+    }
   }
 
   const handleVoiceChange = async (event: Event) => {
@@ -183,11 +193,13 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
 
     const frameSignals = extractFrameSignals(pose)
     lastSignals = frameSignals
-    const gestureEvents = gestureEngine.update(frameSignals, currentThresholds.swing, ts)
+    const gestureEvents = gesturesEnabled
+      ? gestureEngine.update(frameSignals, currentThresholds.swing, ts)
+      : []
     if (gestureEvents.length) {
       handleGestureEvents(gestureEvents)
     }
-    const update = counter?.update(frameSignals, ts)
+    const update = countingEnabled ? counter?.update(frameSignals, ts) : null
     lastActiveHand = typeof counter?.getActiveHand === 'function' ? counter.getActiveHand() : null
     if (update?.state) lastPhase = update.state
     if (update) {
@@ -206,13 +218,14 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
       if (update.feedback && update.feedback.toLowerCase() !== 'rep counted') {
         feedback.set(update.feedback)
       }
-      poseStats.update((s) => ({
-        ...s,
-        fps,
-        confidence: frameSignals.confidence,
-        backend
-      }))
     }
+
+    poseStats.update((s) => ({
+      ...s,
+      fps,
+      confidence: frameSignals.confidence,
+      backend
+    }))
 
     if (debugOverlay && lastSignals) {
       drawDebugOverlay(ctx, lastSignals, lastActiveHand, lastPhase, lastCount)
@@ -285,6 +298,9 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
     counter?.reset()
     feedback.set(null)
     gestureEngine.reset()
+    gesturesEnabled = true
+    countingEnabled = true
+    overlayMode = $exercise
     lastSendTs = 0
     initAudio()
     await startCamera()
@@ -293,6 +309,10 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
 
   export const pauseSession = () => {
     runState.set('paused')
+  }
+
+  export const resumeSession = () => {
+    runState.set('running')
   }
 
   const resetCount = (message: string | null = null, announce = false) => {
@@ -310,8 +330,41 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
 
   export const stopSession = () => {
     runState.set('idle')
+    gesturesEnabled = true
+    countingEnabled = true
+    overlayMode = $exercise
     stopCamera()
   }
+
+  export const setModeFromHost = (
+    mode: ExerciseId | 'disabled',
+    options: { silent?: boolean } = {}
+  ) => {
+    if (mode === 'disabled') {
+      countingEnabled = false
+      overlayMode = 'disabled'
+      return
+    }
+    overlayMode = mode
+    const silent = options.silent ?? true
+    setExerciseMode(mode, { silent })
+  }
+
+  export const setGesturesEnabled = (enabled: boolean) => {
+    gesturesEnabled = !!enabled
+  }
+
+  export const setCountingEnabled = (enabled: boolean) => {
+    countingEnabled = !!enabled
+  }
+
+  $: effectiveMode = countingEnabled ? overlayMode : 'disabled'
+  $: modeBadgeLabel =
+    effectiveMode === 'disabled'
+      ? 'Disabled'
+      : effectiveMode === 'lockout'
+        ? 'Lockout mode'
+        : 'Swing mode'
 
   onMount(() => {
     client = new PoseClient({
@@ -360,9 +413,9 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   <div class="video-panel" style={`aspect-ratio: ${videoAspect}`}>
     <video bind:this={videoEl} muted playsinline></video>
     <canvas bind:this={canvasEl}></canvas>
-    <div class="mode-badge" class:lockout={$exercise === 'lockout'}>
+    <div class="mode-badge" class:lockout={effectiveMode === 'lockout'} class:disabled={effectiveMode === 'disabled'}>
       <div class="mode-label">Mode</div>
-      <div class="mode-value">{currentExercise.label}</div>
+      <div class="mode-value">{modeBadgeLabel}</div>
     </div>
     <div class="rep-badge">
       <div class="rep-label">Reps</div>
@@ -601,6 +654,11 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   .mode-badge.lockout {
     background: linear-gradient(135deg, #f97316, #fb923c);
     color: #0a0a0a;
+  }
+  .mode-badge.disabled {
+    background: linear-gradient(135deg, #1f2937, #111827);
+    color: #e5e7eb;
+    border: 1px solid #374151;
   }
   .mode-badge {
     box-shadow: none;

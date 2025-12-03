@@ -506,6 +506,19 @@
     return Math.max(1, Math.round(numeric))
   }
 
+  const normalizeRepCounterMode = (value: any) => {
+    if (typeof value !== 'string') return 'disabled'
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'swing' || normalized === 'lockout') return normalized
+    if (normalized === 'disabled') return 'disabled'
+    return 'disabled'
+  }
+
+  const normalizeRepCounterScope = (value: any) => (value === 'all' ? 'all' : 'work')
+
+  const normalizeBoolean = (value: any, defaultValue: boolean) =>
+    value === true ? true : value === false ? false : defaultValue
+
   const formatDuration = (seconds?: number | null) => {
     const safe = Number(seconds)
     if (!Number.isFinite(safe) || safe <= 0) return '0s'
@@ -530,6 +543,9 @@
         : 'Prepare'
     const description =
       typeof candidate.description === 'string' ? candidate.description.trim() : ''
+    const defaultRepCounterMode = normalizeRepCounterMode(candidate.defaultRepCounterMode)
+    const enableRepCounter = normalizeRepCounterScope(candidate.enableRepCounter)
+    const enableModeChanging = normalizeBoolean(candidate.enableModeChanging, true)
 
     const rounds = candidate.rounds.map((round: any, roundIndex: number) => {
       if (!round || typeof round !== 'object') {
@@ -565,13 +581,24 @@
             transitionSeconds,
             targetRpm: Number.isFinite(Number(set.targetRpm)) ? Number(set.targetRpm) : null,
             announcements: Array.isArray(set.announcements) ? set.announcements : [],
-            restAnnouncements: Array.isArray(set.restAnnouncements) ? set.restAnnouncements : []
+            restAnnouncements: Array.isArray(set.restAnnouncements) ? set.restAnnouncements : [],
+            repCounterMode: normalizeRepCounterMode(set.repCounterMode ?? defaultRepCounterMode),
+            enableModeChanging: normalizeBoolean(set.enableModeChanging, enableModeChanging)
           }
         })
       }
     })
 
-    return { ...candidate, preStartSeconds, preStartLabel, description, rounds }
+    return {
+      ...candidate,
+      preStartSeconds,
+      preStartLabel,
+      description,
+      rounds,
+      defaultRepCounterMode,
+      enableRepCounter,
+      enableModeChanging
+    }
   }
 
   const tryParsePlan = (source: string) => {

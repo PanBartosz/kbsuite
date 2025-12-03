@@ -9,11 +9,29 @@
   const workoutId = $derived($page.url.searchParams.get('workout') ?? '')
   const plannedId = $derived($page.url.searchParams.get('planned') ?? '')
 
+  const applyRepCounterDirectives = (phase: any) => {
+    const metadata = phase?.metadata ?? {}
+    const mode = metadata.repCounterMode ?? 'disabled'
+    const enabled = metadata.repCounterEnabled === true
+    const gesturesAllowed = enabled && metadata.enableModeChanging !== false
+
+    counterRef?.setGesturesEnabled?.(gesturesAllowed)
+    counterRef?.setCountingEnabled?.(enabled)
+
+    if (mode === 'swing' || mode === 'lockout' || mode === 'disabled') {
+      counterRef?.setMode?.(mode, { silent: true })
+    }
+  }
+
   const handleStart = () => counterRef?.start?.()
   const handlePause = () => counterRef?.pause?.()
-  const handleResume = () => counterRef?.start?.()
+  const handleResume = () => counterRef?.resume?.()
   const handleStop = () => counterRef?.stop?.()
-  const handlePhaseChange = () => counterRef?.reset?.()
+  const handlePhaseChange = (event: CustomEvent<any>) => {
+    const phase = event?.detail?.phase
+    counterRef?.reset?.()
+    applyRepCounterDirectives(phase)
+  }
 </script>
 
 <div class="big-shell">
