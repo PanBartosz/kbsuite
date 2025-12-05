@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte'
+  import Ajv from 'ajv'
   import schema from '$lib/timer/config/workout-schema.json'
 
   export let title = 'Configuration (YAML)'
@@ -27,7 +28,27 @@
   let monacoError: string | null = null
   let disposeFns: (() => void)[] = []
   let lastEmitted = value
+  let schemaIssues: string[] = []
 
+  const ajv = new Ajv({ allErrors: true, strict: false })
+  const validateSchema = ajv.compile(schema as any)
+  const formatAjvError = (err: any) => {
+    const path = err?.instancePath || err?.schemaPath || '/'
+    let message = err?.message ?? 'Schema validation failed'
+    if (err?.keyword === 'enum' && Array.isArray(err?.params?.allowedValues)) {
+      message += ` (allowed: ${err.params.allowedValues.join(', ')})`
+    }
+    if (err?.keyword === 'type' && err?.params?.type) {
+      message += ` (expected type ${err.params.type})`
+    }
+    if (err?.keyword === 'required' && err?.params?.missingProperty) {
+      message += ` (missing property "${err.params.missingProperty}")`
+    }
+    if (err?.keyword === 'additionalProperties' && err?.params?.additionalProperty) {
+      message += ` (unknown property "${err.params.additionalProperty}")`
+    }
+    return `${path}: ${message}`
+  }
   const formatDuration = (seconds?: number | null) => {
     const safe = Number(seconds)
     if (!Number.isFinite(safe) || safe <= 0) return '0s'
@@ -73,8 +94,6 @@
       const yamlLib = await import('yaml')
       const YAML: any = yamlLib?.default ?? yamlLib
       const monacoEditor: any = (monacoModule as any).editor
-      const MarkerSeverity: any = (monacoModule as any).MarkerSeverity ?? (monacoEditor as any).MarkerSeverity
-
       // Provide a noop worker resolver to silence Monaco's worker warning (we run without workers)
       if (typeof self !== 'undefined' && !(self as any).MonacoEnvironment) {
         ;(self as any).MonacoEnvironment = {
@@ -89,25 +108,27 @@
       monacoEditor.setModelLanguage(monacoModel, 'yaml')
       const runValidation = () => {
         if (!monacoModel) return
+        const issues: string[] = []
+        let parsed: any = null
         try {
-          YAML.parse(monacoModel.getValue())
-          monacoEditor.setModelMarkers(monacoModel, 'yaml', [])
+          parsed = YAML.parse(monacoModel.getValue())
         } catch (err: any) {
           const pos = err?.linePos?.[0]
           const line = pos?.line ?? err?.line ?? 1
           const col = pos?.col ?? err?.column ?? 1
-          const severity = MarkerSeverity?.Error ?? monacoEditor?.MarkerSeverity?.Error ?? 8
-          monacoEditor.setModelMarkers(monacoModel, 'yaml', [
-            {
-              severity,
-              message: err?.message ?? 'Invalid YAML',
-              startLineNumber: line,
-              startColumn: col,
-              endLineNumber: line,
-              endColumn: col + 1
-            }
-          ])
+          issues.push(`Parse error (line ${line}, col ${col}): ${err?.message ?? 'Invalid YAML'}`)
         }
+        if (parsed && typeof validateSchema === 'function') {
+          const ok = validateSchema(parsed)
+          if (!ok && validateSchema.errors?.length) {
+            for (const err of validateSchema.errors) {
+              issues.push(formatAjvError(err))
+            }
+          }
+        }
+        schemaIssues = issues
+        // Keep Monaco markers empty so validation is shown in the status area instead
+        monacoEditor.setModelMarkers(monacoModel, 'yaml', [])
       }
       const d1 = monacoModel.onDidChangeContent(() => {
         const next = monacoModel.getValue()
@@ -269,6 +290,15 @@
         <p class="status status--error">
           Parse error: {parseError.message}
         </p>
+      {:else if schemaIssues.length}
+        <div class="status status--pending">
+          <p class="status">Validation issues:</p>
+          <ul class="schema-issues">
+            {#each schemaIssues as issue}
+              <li>{issue}</li>
+            {/each}
+          </ul>
+        </div>
       {:else if hasPendingChanges}
         <p class="status status--pending">
           Parsed successfully. Apply to update the workout overview.
@@ -356,6 +386,8 @@
     min-height: 420px;
     max-height: 760px;
     overflow: hidden;
+    position: relative;
+    z-index: 0;
   }
   .hidden {
     display: none;
@@ -377,6 +409,11 @@
   }
   .status--error {
     color: var(--color-danger, #f87171);
+  }
+  .schema-issues {
+    margin: 0.25rem 0 0;
+    padding-left: 1.25rem;
+    color: var(--color-text-muted, #94a3b8);
   }
   .config-editor__summary {
     list-style: none;
