@@ -4,6 +4,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { libraryTemplates } from '$lib/timer/library/index.js'
 import YAML from 'yaml'
+import { defaultInsightsPrompt } from '$lib/ai/prompts'
 
 let db: Database.Database | null = null
 
@@ -201,6 +202,7 @@ const migrateSharedWorkoutInvites = () => {
 
 const defaultSettings = () => ({
   theme: 'dark',
+  aiInsightsPrompt: defaultInsightsPrompt,
   timer: {
     ttsEnabled: false,
     enableMetronome: false,

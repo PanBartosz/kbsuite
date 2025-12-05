@@ -1,11 +1,13 @@
 import { browser } from '$app/environment'
 import { writable } from 'svelte/store'
+import { defaultInsightsPrompt } from '$lib/ai/prompts'
 
 export type ThemeOption = 'dark' | 'light' | 'vibrant' | 'neon' | 'midnight' | 'sand'
 
 interface SettingsState {
   theme: ThemeOption
   openAiKey: string
+  aiInsightsPrompt: string
   timer: {
     ttsEnabled: boolean
     enableMetronome: boolean
@@ -31,6 +33,7 @@ interface SettingsState {
 
 const themeKey = 'gs_ai_timer_theme'
 const apiKeyKey = 'gs_ai_timer_openai_key'
+const aiInsightsKey = 'gs_ai_timer_ai_insights_prompt'
 const timerKey = 'gs_ai_timer_settings_timer'
 const counterKey = 'gs_ai_timer_settings_counter'
 
@@ -49,6 +52,7 @@ const defaultTheme = (): ThemeOption => {
 const defaultState = (): SettingsState => ({
   theme: 'dark',
   openAiKey: '',
+  aiInsightsPrompt: defaultInsightsPrompt,
   timer: { ttsEnabled: false, enableMetronome: false, notificationsEnabled: false, audioEnabled: true, openAiVoice: 'alloy' },
   counter: {
     lowFpsMode: false,
@@ -75,6 +79,11 @@ const loadSettings = (): SettingsState => {
         ? storedTheme
         : defaultTheme()
     const openAiKey = window.localStorage.getItem(apiKeyKey) ?? ''
+    const aiInsightsPrompt =
+      window.localStorage.getItem(aiInsightsKey) ??
+      // backward compat with prior key, if present
+      window.localStorage.getItem('gs_ai_timer_ai_prompt') ??
+      defaultInsightsPrompt
     const timerRaw = window.localStorage.getItem(timerKey)
     const counterRaw = window.localStorage.getItem(counterKey)
     const timer = timerRaw
@@ -83,7 +92,7 @@ const loadSettings = (): SettingsState => {
     const counter = counterRaw
       ? { ...defaultState().counter, ...JSON.parse(counterRaw) }
       : { ...defaultState().counter }
-    return { theme, openAiKey, timer, counter }
+    return { theme, openAiKey, aiInsightsPrompt, timer, counter }
   } catch {
     return defaultState()
   }
@@ -102,6 +111,11 @@ if (browser) {
         window.localStorage.setItem(apiKeyKey, value.openAiKey)
       } else {
         window.localStorage.removeItem(apiKeyKey)
+      }
+      if (value.aiInsightsPrompt) {
+        window.localStorage.setItem(aiInsightsKey, value.aiInsightsPrompt)
+      } else {
+        window.localStorage.removeItem(aiInsightsKey)
       }
       window.localStorage.setItem(timerKey, JSON.stringify(value.timer))
       window.localStorage.setItem(counterKey, JSON.stringify(value.counter))

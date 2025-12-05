@@ -18,6 +18,7 @@
   import RoundEditorModal from '$lib/timer/components/RoundEditorModal.svelte'
   import SetEditorModal from '$lib/timer/components/SetEditorModal.svelte'
   import SharePlanModal from '$lib/components/SharePlanModal.svelte'
+  import { defaultAiSystemPrompt } from '$lib/ai/prompts'
   import { loadInvites, loadPendingCount, shares } from '$lib/stores/shares'
   import type { SummaryBlock, SummaryItem } from '$lib/stats/workoutSummary'
 
@@ -75,6 +76,7 @@
   const OPENAI_CHAT_MODEL = 'gpt-4o-mini'
   let openAiKey = ''
   $: openAiKey = $settings.openAiKey ?? ''
+  const systemPrompt = defaultAiSystemPrompt
   let shareModalOpen = false
   let shareTarget: Planned | null = null
   let shareDefaultDate = ''
@@ -695,31 +697,6 @@
     return blocks
   }
 
-
-  const systemPrompt = `You are an expert kettlebell and interval-training coach. Output ONLY valid YAML that fits this schema (no prose):
-title: string (required)
-description: string (optional)
-preStartSeconds: number >= 0
-preStartLabel: string
-rounds: array of objects, in order
-  - id: string (optional)
-    label: string (mandatory)
-    repetitions: integer >= 1
-    restAfterSeconds: number >= 0 (optional)
-    sets: array of objects, in order
-      - id: string (optional)
-        label: string (mandatory)
-        workSeconds: number > 0
-        restSeconds: number >= 0 (optional)
-        repetitions: integer >= 1 (optional, default 1)
-        transitionSeconds: number >= 0 (optional, default 0)
-        targetRpm: number > 0 (optional)
-        announcements: optional array of objects
-          - text: string
-            atSeconds: number or array (>=0; negative means seconds before end)
-            once: boolean (optional)
-            voice: string (optional)
-        restAnnouncements: optional array of objects (same shape)`
 
   const extractYaml = (content: string) => {
     if (!content) return ''

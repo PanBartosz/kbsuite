@@ -46,11 +46,13 @@
   }
 
   let localKey = ''
+  let localPrompt = $settings.aiInsightsPrompt ?? ''
   let localTheme: ThemeOption = 'dark'
   let localTimer = $settings.timer
   let localCounter = { ...defaultCounter, ...$settings.counter }
 
   $: localKey = $settings.openAiKey ?? ''
+  $: localPrompt = ($settings.aiInsightsPrompt as string) ?? ''
   $: localTheme = ($settings.theme as ThemeOption) ?? 'dark'
   $: localTimer = $settings.timer
   $: localCounter = { ...defaultCounter, ...$settings.counter }
@@ -60,7 +62,7 @@
   }
 
   const handleSave = () => {
-    setSettings({ openAiKey: localKey.trim(), theme: localTheme })
+    setSettings({ openAiKey: localKey.trim(), aiInsightsPrompt: localPrompt.trim(), theme: localTheme })
     setTimerSettings(localTimer)
     setCounterSettings(localCounter)
     closeSettingsModal()
@@ -113,6 +115,16 @@
           autocomplete="off"
         />
         <small>Stored locally in your browser only. Required for AI generation and TTS.</small>
+      </label>
+
+      <label>
+        <span>AI insights prompt (stored on server)</span>
+        <textarea
+          rows="6"
+          bind:value={localPrompt}
+          placeholder="Base instructions sent when analyzing logged workouts (History)"
+        ></textarea>
+        <small>Used only for insights; workout generation keeps its built-in prompt.</small>
       </label>
 
       <div class="group">
@@ -287,13 +299,19 @@
     color: var(--color-text-primary);
   }
   select,
-  input {
+  input,
+  textarea {
     background: var(--color-surface-1);
     color: var(--color-text-primary);
     border: 1px solid var(--color-border);
     border-radius: 10px;
     padding: 0.75rem 0.9rem;
     font-size: 1rem;
+  }
+  textarea {
+    min-height: 140px;
+    resize: vertical;
+    line-height: 1.4;
   }
   small {
     color: var(--color-text-muted);

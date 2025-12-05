@@ -4,6 +4,9 @@
   import { buildTimeline } from '$lib/timer/lib/timeline'
   import { browser } from '$app/environment'
   import { buildWorkoutSummary } from '$lib/stats/workoutSummary'
+  import { buildAiPayloadBatch } from '$lib/stats/aiPayload'
+  import { settings, openSettingsModal } from '$lib/stores/settings'
+  import { getInsightsPrompt, defaultInsightsPrompt } from '$lib/ai/prompts'
 
   type CompletedSet = {
     phase_index?: number
@@ -93,6 +96,17 @@
     max: 'rgba(255,170,120,0.9)'
   }
   let hrSparkColors: HrSparkColors = { ...defaultSparkColors }
+  const OPENAI_CHAT_MODEL = 'gpt-4o-mini'
+  let openAiKey = ''
+  let insightsPrompt = defaultInsightsPrompt
+  $: openAiKey = $settings.openAiKey ?? ''
+  $: insightsPrompt = getInsightsPrompt($settings.aiInsightsPrompt)
+  let insightsQuestion = ''
+  let insightsStatus = ''
+  let insightsError = ''
+  let insightsAnswer = ''
+  let insightsLoading = false
+  let insightsModalOpen = false
 
   const toRgba = (color: string, alpha = 1) => {
     const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)))
@@ -260,6 +274,70 @@
     }
   }
   computeHrSparkColors()
+
+  const generateInsights = async () => {
+    const key = openAiKey.trim()
+    if (!key) {
+      insightsError = 'Add your OpenAI API key in Settings to generate insights.'
+      insightsStatus = ''
+      return
+    }
+    if (!visibleItems.length) {
+      insightsError = 'No workouts to analyze. Adjust filters first.'
+      insightsStatus = ''
+      return
+    }
+    const payload = buildAiPayloadBatch(visibleItems, hrSummary, 25)
+    const question =
+      insightsQuestion.trim() ||
+      'Find notable trends in volume, HR vs RPE, and suggest next-step focus areas.'
+
+    insightsLoading = true
+    insightsError = ''
+    insightsStatus = 'Contacting OpenAI…'
+
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${key}`
+        },
+        body: JSON.stringify({
+          model: OPENAI_CHAT_MODEL,
+          temperature: 0.4,
+          messages: [
+            { role: 'system', content: insightsPrompt },
+            {
+              role: 'user',
+              content: [
+                'Analyze these completed workouts (array of objects).',
+                'Highlight trends in volume/intensity, HR vs RPE, and recovery needs.',
+                'Return 3-6 concise bullet points. Prefer specific suggestions over generic advice.',
+                `User question: ${question}`,
+                'Data:',
+                JSON.stringify(payload)
+              ].join('\n')
+            }
+          ]
+        })
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`OpenAI request failed: ${res.status} ${text.slice(0, 180)}`)
+      }
+      const data = await res.json()
+      const content = data?.choices?.[0]?.message?.content ?? ''
+      insightsAnswer = typeof content === 'string' ? content.trim() : ''
+      insightsStatus = `Analyzed ${payload.length} session${payload.length === 1 ? '' : 's'}.`
+    } catch (err) {
+      insightsError = (err as any)?.message ?? 'Failed to generate insights.'
+      insightsStatus = ''
+    } finally {
+      insightsLoading = false
+    }
+  }
 
   const loadHistory = async () => {
     loading = true
@@ -1696,6 +1774,7 @@
     <div class="toolbar">
       <button class="ghost" on:click={createEmptyCompletedWorkout}>New empty session log</button>
       <button class="ghost" on:click={() => (templateModalOpen = true)}>From template</button>
+      <button class="ghost" on:click={() => (insightsModalOpen = true)}>Insights</button>
       <div class="filters">
         <input
           type="search"
@@ -2969,6 +3048,51 @@
     </div>
   {/if}
 
+  {#if insightsModalOpen}
+    <div class="modal-backdrop"></div>
+    <div class="insights-modal">
+      <header class="insights-head">
+        <div>
+          <p class="eyebrow">AI insights</p>
+          <p class="muted tiny">Uses your OpenAI key. Sends up to 25 filtered sessions.</p>
+        </div>
+        <div class="insights-head__actions">
+          <button class="ghost small" type="button" on:click={openSettingsModal}>Settings</button>
+          <button class="ghost small" type="button" on:click={() => (insightsModalOpen = false)}>✕</button>
+        </div>
+      </header>
+      <textarea
+        rows="4"
+        placeholder="Ask for trends or feedback (e.g., 'Spot fatigue signs and suggest deloads')"
+        bind:value={insightsQuestion}
+      ></textarea>
+      <div class="muted tiny">Visible sessions: {Math.min(visibleItems.length, 25)}</div>
+      {#if !openAiKey.trim()}
+        <p class="muted tiny">Add your API key in Settings to enable insights.</p>
+      {/if}
+      <div class="insights-actions">
+        <button
+          class="primary"
+          type="button"
+          disabled={insightsLoading || !visibleItems.length || !openAiKey.trim()}
+          on:click={generateInsights}
+        >
+          {#if insightsLoading}Generating…{:else}Generate insights{/if}
+        </button>
+        <button class="ghost" type="button" on:click={() => (insightsModalOpen = false)}>Close</button>
+        {#if insightsStatus}<span class="status small">{insightsStatus}</span>{/if}
+        {#if insightsError}<span class="error small">{insightsError}</span>{/if}
+      </div>
+      {#if insightsAnswer}
+        <div class="ai-output">
+          {#each insightsAnswer.split('\n') as line}
+            <div>{line}</div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   {#if templateModalOpen}
     <div class="modal-backdrop"></div>
     <div class="template-modal">
@@ -3087,6 +3211,71 @@
   }
   header h1 {
     margin: 0;
+  }
+  .ai-output {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--color-surface-1) 75%, transparent);
+    padding: 0.75rem;
+    font-size: 0.95rem;
+    white-space: pre-wrap;
+    line-height: 1.35;
+    max-height: 240px;
+    overflow: auto;
+  }
+  .insights-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(620px, 95vw);
+    max-height: 90vh;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    padding: 1rem;
+    z-index: 505;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  }
+  .insights-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .insights-head__actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+  .insights-modal textarea {
+    width: 100%;
+    border-radius: 12px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1);
+    color: var(--color-text-primary);
+    padding: 0.6rem 0.7rem;
+    resize: vertical;
+    min-height: 120px;
+  }
+  .insights-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.8rem;
+    margin: 0;
+    color: var(--color-text-muted);
+  }
+  .muted.tiny {
+    font-size: 0.8rem;
   }
   .list {
     width: 100%;
@@ -4021,6 +4210,10 @@
   }
   .status {
     color: var(--color-text-muted);
+  }
+  .status.small,
+  .error.small {
+    font-size: 0.9rem;
   }
   .title-input {
     width: 100%;
