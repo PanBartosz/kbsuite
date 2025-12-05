@@ -10,4 +10,7 @@ declare global {
 	}
 }
 
+declare module 'monaco-editor/esm/vs/editor/editor.api';
+declare module 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution';
+
 export {};

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte'
+  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte'
+  import schema from '$lib/timer/config/workout-schema.json'
 
   export let title = 'Configuration (YAML)'
   export let value = ''
@@ -17,8 +18,15 @@
   export let disableReset = false
 
   const dispatch = createEventDispatcher()
-
   const emit = (event: string, detail?: any) => dispatch(event, detail)
+
+  let monacoContainer: HTMLDivElement | null = null
+  let editor: any = null
+  let monacoModel: any = null
+  let monacoReady = false
+  let monacoError: string | null = null
+  let disposeFns: (() => void)[] = []
+  let lastEmitted = value
 
   const formatDuration = (seconds?: number | null) => {
     const safe = Number(seconds)
@@ -27,6 +35,148 @@
     const secs = Math.round(safe % 60)
     if (mins <= 0) return `${secs}s`
     return `${mins}m ${secs}s`
+  }
+
+  const destroyMonaco = () => {
+    disposeFns.forEach((fn) => {
+      try {
+        fn()
+      } catch {
+        // ignore
+      }
+    })
+    disposeFns = []
+    if (editor?.dispose) editor.dispose()
+    if (monacoModel?.dispose) monacoModel.dispose()
+    editor = null
+    monacoModel = null
+    monacoReady = false
+  }
+
+  onDestroy(() => {
+    destroyMonaco()
+  })
+
+  onMount(async () => {
+    if (typeof window === 'undefined') return
+    try {
+      await tick()
+      if (!monacoContainer) {
+        throw new Error('Editor container not ready')
+      }
+      // Separate imports to keep TS ignore localized
+      // @ts-ignore
+      const monacoModule = await import('monaco-editor/esm/vs/editor/editor.api')
+      // @ts-ignore
+      await import('monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution')
+      // @ts-ignore
+      const yamlLib = await import('yaml')
+      const YAML: any = yamlLib?.default ?? yamlLib
+      const monacoEditor: any = (monacoModule as any).editor
+      const MarkerSeverity: any = (monacoModule as any).MarkerSeverity ?? (monacoEditor as any).MarkerSeverity
+
+      // Provide a noop worker resolver to silence Monaco's worker warning (we run without workers)
+      if (typeof self !== 'undefined' && !(self as any).MonacoEnvironment) {
+        ;(self as any).MonacoEnvironment = {
+          getWorkerUrl: () =>
+            'data:text/javascript;charset=utf-8,' +
+            encodeURIComponent('self.onmessage = () => self.close();')
+        }
+      }
+      const Uri: any = (monacoModule as any).Uri
+      const modelUri = Uri.parse('file:///workout.yaml')
+      monacoModel = monacoEditor.createModel(value ?? '', 'yaml', modelUri)
+      monacoEditor.setModelLanguage(monacoModel, 'yaml')
+      const runValidation = () => {
+        if (!monacoModel) return
+        try {
+          YAML.parse(monacoModel.getValue())
+          monacoEditor.setModelMarkers(monacoModel, 'yaml', [])
+        } catch (err: any) {
+          const pos = err?.linePos?.[0]
+          const line = pos?.line ?? err?.line ?? 1
+          const col = pos?.col ?? err?.column ?? 1
+          const severity = MarkerSeverity?.Error ?? monacoEditor?.MarkerSeverity?.Error ?? 8
+          monacoEditor.setModelMarkers(monacoModel, 'yaml', [
+            {
+              severity,
+              message: err?.message ?? 'Invalid YAML',
+              startLineNumber: line,
+              startColumn: col,
+              endLineNumber: line,
+              endColumn: col + 1
+            }
+          ])
+        }
+      }
+      const d1 = monacoModel.onDidChangeContent(() => {
+        const next = monacoModel.getValue()
+        if (next === lastEmitted) return
+        lastEmitted = next
+        emit('valueChange', next)
+        runValidation()
+      })
+      runValidation()
+
+      const prefersLight =
+        typeof document !== 'undefined' &&
+        document.documentElement.getAttribute('data-theme') === 'light'
+
+      monacoEditor.defineTheme('kb-theme', {
+        base: prefersLight ? 'vs' : 'vs-dark',
+        inherit: true,
+        rules: [],
+        colors: {
+          'editor.background': prefersLight ? '#f8fafc' : '#0d1628',
+          'editor.foreground': prefersLight ? '#0f172a' : '#e2e8f0',
+          'editorLineNumber.foreground': prefersLight ? '#94a3b8' : '#475569',
+          'editorCursor.foreground': prefersLight ? '#0f172a' : '#e2e8f0',
+          'editor.selectionBackground': prefersLight ? '#cbd5e1' : '#1f2937'
+        }
+      })
+
+      editor = monacoEditor.create(monacoContainer!, {
+        model: monacoModel,
+        language: 'yaml',
+        minimap: { enabled: false },
+        fontSize: 14,
+        lineNumbers: 'on',
+        automaticLayout: true,
+        scrollBeyondLastLine: false,
+        renderWhitespace: 'selection',
+        theme: 'kb-theme',
+        quickSuggestions: true
+      })
+
+      const d2 = editor.onDidChangeModelContent(() => {
+        const next = monacoModel.getValue()
+        if (next === lastEmitted) return
+        lastEmitted = next
+        emit('valueChange', next)
+        runValidation()
+      })
+
+      disposeFns = [
+        d1.dispose.bind(d1),
+        d2.dispose.bind(d2)
+      ].filter(Boolean)
+      monacoReady = true
+      monacoError = null
+    } catch (error) {
+      const err: any = error
+      console.warn('Failed to init Monaco YAML editor', err)
+      monacoError = err?.message ?? 'Failed to load editor'
+      monacoReady = false
+      destroyMonaco()
+    }
+  })
+
+  $: if (monacoReady && monacoModel) {
+    const current = monacoModel.getValue()
+    if (value !== current) {
+      monacoModel.setValue(value ?? '')
+      lastEmitted = value ?? ''
+    }
   }
 </script>
 
@@ -101,13 +251,19 @@
     {/if}
   </div>
   <div class="config-editor__body">
-    <textarea
-      class:has-error={!!parseError}
-      bind:value={value}
-      rows="18"
-      spellcheck="false"
-      on:input={() => emit('valueChange', value)}
-    ></textarea>
+    <div class="monaco-shell" class:hidden={!monacoReady} bind:this={monacoContainer}></div>
+    {#if !monacoReady}
+      <textarea
+        class:has-error={!!parseError}
+        bind:value={value}
+        rows="18"
+        spellcheck="false"
+        on:input={() => emit('valueChange', value)}
+      ></textarea>
+      {#if monacoError}
+        <p class="status status--warning">Editor fallback: {monacoError}</p>
+      {/if}
+    {/if}
     <div class="config-editor__status">
       {#if parseError}
         <p class="status status--error">
@@ -193,6 +349,16 @@
   }
   textarea.has-error {
     border-color: var(--color-danger, #f87171);
+  }
+  .monaco-shell {
+    border: 1px solid var(--color-border, #1f2a40);
+    border-radius: 10px;
+    min-height: 420px;
+    max-height: 760px;
+    overflow: hidden;
+  }
+  .hidden {
+    display: none;
   }
   .config-editor__status {
     display: flex;

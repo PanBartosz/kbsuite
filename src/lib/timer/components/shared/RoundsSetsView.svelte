@@ -123,6 +123,24 @@
     if (mins <= 0) return `${secs}s`
     return `${mins}m ${secs}s`
   }
+
+  const normalizeRepMode = (value: any) => {
+    const str = typeof value === 'string' ? value.trim().toLowerCase() : ''
+    return str === 'swing' || str === 'lockout' ? str : 'disabled'
+  }
+
+  const normalizeRepScope = (value: any) => (value === 'all' ? 'all' : 'work')
+
+  const repPreviewFor = (set: any, planConfig: any) => {
+    const mode = normalizeRepMode(set?.repCounterMode ?? planConfig?.defaultRepCounterMode)
+    const scope = normalizeRepScope(planConfig?.enableRepCounter)
+    const enabled = mode !== 'disabled' && (scope === 'all' || scope === 'work')
+    return {
+      mode,
+      enabled,
+      label: enabled ? (mode === 'lockout' ? 'RC lockout' : 'RC swing') : 'RC off'
+    }
+  }
 </script>
 
 <section class="rounds">
@@ -192,10 +210,23 @@
                     roundIndex < (plan?.rounds?.length ?? 0) - 1
                   )}
                   {@const hasSetBadge = segments.setRepetitions > 1 && segments.hasSegments}
+                  {@const repPreview = repPreviewFor(set, plan)}
                   <li class="set">
                     <div class="set__header">
                       <div>
-                        <h4>{set.label}</h4>
+                        <h4>
+                          {set.label}
+                          <span
+                            class="rep-badge"
+                            class:rep-badge--on={repPreview.enabled}
+                            class:rep-badge--lockout={repPreview.mode === 'lockout' && repPreview.enabled}
+                            class:rep-badge--off={!repPreview.enabled}
+                            title={`Rep counter: ${repPreview.label}`}
+                            aria-label={`Rep counter: ${repPreview.label}`}
+                          >
+                            {repPreview.label}
+                          </span>
+                        </h4>
                         <p>
                           {set.repetitions} × {formatDuration(set.workSeconds)} work
                           {#if set.restSeconds}
@@ -468,6 +499,10 @@
   .set h4 {
     margin: 0 0 0.35rem;
     font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
   }
 
   .set p {
@@ -489,6 +524,36 @@
   .set__meta-total {
     font-weight: 600;
     color: var(--color-text-primary, #e2e8f0);
+  }
+
+  .rep-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    background: color-mix(in srgb, var(--color-surface-deeper, #0b1220) 80%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-border, #1f2a40) 70%, transparent);
+    color: var(--color-text-secondary, #cbd5f5);
+    line-height: 1.1;
+  }
+
+  .rep-badge--on {
+    border-color: color-mix(in srgb, var(--color-accent, #4f9cf9) 55%, transparent);
+    color: var(--color-text-primary, #e2e8f0);
+    background: color-mix(in srgb, var(--color-accent, #4f9cf9) 16%, transparent);
+  }
+
+  .rep-badge--lockout {
+    border-color: color-mix(in srgb, #f97316 60%, transparent);
+    background: color-mix(in srgb, #f97316 14%, transparent);
+    color: #ffedd5;
+  }
+
+  .rep-badge--off {
+    opacity: 0.75;
   }
 
   .set__edit-button {
