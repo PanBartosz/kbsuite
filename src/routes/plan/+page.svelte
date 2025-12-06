@@ -83,6 +83,9 @@
   let inviteDates: Record<string, string> = {}
   let inviteStatus: Record<string, string> = {}
   let inviteError: Record<string, string> = {}
+  let confirmDeleteId: string | null = null
+  let deleteStatus = ''
+  let deleteError = ''
 
   const dayKey = (ts: number) => {
     const d = new Date(ts)
@@ -295,13 +298,28 @@
     }
   }
 
+  const requestDeletePlan = (id: string) => {
+    confirmDeleteId = id
+    deleteStatus = ''
+    deleteError = ''
+  }
+
   const deletePlan = async (id: string) => {
+    deleteStatus = 'Deleting…'
+    deleteError = ''
     try {
-      await fetch(`/api/planned-workouts/${id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/planned-workouts/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || data?.error) throw new Error(data?.error ?? 'Failed to delete plan')
       plans = plans.filter((p) => p.id !== id)
+      await loadPlans()
       computeToday()
-    } catch {
-      // ignore
+      deleteStatus = 'Deleted'
+      setTimeout(() => (deleteStatus = ''), 1500)
+      confirmDeleteId = null
+    } catch (err) {
+      deleteStatus = ''
+      deleteError = (err as any)?.message ?? 'Failed to delete plan'
     }
   }
 
@@ -959,7 +977,7 @@
             <button class="ghost" on:click={() => openShare(todayPlan!)}>Share</button>
             <button class="ghost" on:click={() => openEdit(todayPlan!)}>Edit</button>
             <button class="text-button" on:click={() => openDuplicate(todayPlan!)}>Duplicate</button>
-            <button class="ghost danger" on:click={() => deletePlan(todayPlan!.id)}>Delete</button>
+            <button class="ghost danger" on:click={() => requestDeletePlan(todayPlan!.id)}>Delete</button>
           </div>
         </div>
       {:else}
@@ -1221,7 +1239,7 @@
                   <button class="ghost" on:click={() => openEdit(item)}>Edit</button>
                   <button class="text-button" on:click={() => openDuplicate(item)}>Duplicate</button>
                   <button class="ghost" on:click={() => openShare(item)}>Share</button>
-                  <button class="ghost danger" on:click={() => deletePlan(item.id)}>Delete</button>
+                  <button class="ghost danger" on:click={() => requestDeletePlan(item.id)}>Delete</button>
                 </div>
               </div>
               {#if timelineForYaml(item.yaml_source).length}
@@ -1303,6 +1321,33 @@
     <div class="actions">
       <button class="primary" on:click={handleDuplicateSave}>Duplicate</button>
       <button class="ghost" on:click={closeDuplicate}>Cancel</button>
+    </div>
+  </div>
+{/if}
+
+{#if confirmDeleteId}
+  <div class="modal-backdrop"></div>
+  <div class="confirm-modal">
+    <p>Delete this planned workout?</p>
+    {#if deleteError}<p class="error small">{deleteError}</p>{/if}
+    <div class="actions">
+      <button
+        class="ghost"
+        on:click={() => {
+          confirmDeleteId = null
+          deleteError = ''
+          deleteStatus = ''
+        }}
+      >
+        Cancel
+      </button>
+      <button
+        class="danger"
+        disabled={deleteStatus === 'Deleting…'}
+        on:click={() => confirmDeleteId && deletePlan(confirmDeleteId)}
+      >
+        {deleteStatus || 'Delete'}
+      </button>
     </div>
   </div>
 {/if}
@@ -1633,6 +1678,23 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
+  }
+  .confirm-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 120;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 1rem;
+    min-width: 260px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+  }
+  .confirm-modal .actions {
+    justify-content: flex-end;
+    margin-top: 0.75rem;
   }
   .modal-backdrop {
     position: fixed;

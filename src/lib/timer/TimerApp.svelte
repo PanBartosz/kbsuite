@@ -441,6 +441,9 @@ let plan =
   let hasPendingChanges = false
   let isUsingDefaultSource = true
   let savedWorkouts = []
+  let confirmSavedDeleteId = null
+  let savedDeleteError = ''
+  let savedDeleteStatus = ''
   let saveName = ''
   let selectedWorkoutId = null
   let fileInputEl
@@ -2046,11 +2049,24 @@ Rules:
   }
 
   const deleteWorkout = (id) => {
+    savedDeleteStatus = 'Deleting…'
+    savedDeleteError = ''
     savedWorkouts = savedWorkouts.filter((item) => item.id !== id)
     persistSavedWorkouts(savedWorkouts)
     if (selectedWorkoutId === id) {
       selectedWorkoutId = null
     }
+    savedDeleteStatus = 'Deleted'
+    setTimeout(() => {
+      if (savedDeleteStatus === 'Deleted') savedDeleteStatus = ''
+    }, 1500)
+    confirmSavedDeleteId = null
+  }
+
+  const requestDeleteWorkout = (id) => {
+    confirmSavedDeleteId = id
+    savedDeleteError = ''
+    savedDeleteStatus = ''
   }
 
   const loadPlannedWorkout = async (id) => {
@@ -2441,7 +2457,7 @@ Rules:
                   <button
                     type="button"
                     class="text-button text-button--danger"
-                    on:click={() => deleteWorkout(workout.id)}
+                    on:click={() => requestDeleteWorkout(workout.id)}
                   >
                     Delete
                   </button>
@@ -2451,6 +2467,34 @@ Rules:
           </ul>
         {/if}
       </section>
+      {#if confirmSavedDeleteId}
+        <div class="modal-backdrop"></div>
+        <div class="confirm-modal">
+          <p>Delete this saved workout?</p>
+          {#if savedDeleteError}<p class="error small">{savedDeleteError}</p>{/if}
+          <div class="confirm-actions">
+            <button
+              class="ghost"
+              type="button"
+              on:click={() => {
+                confirmSavedDeleteId = null
+                savedDeleteError = ''
+                savedDeleteStatus = ''
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              class="danger"
+              type="button"
+              disabled={savedDeleteStatus === 'Deleting…'}
+              on:click={() => confirmSavedDeleteId && deleteWorkout(confirmSavedDeleteId)}
+            >
+              {savedDeleteStatus || 'Delete'}
+            </button>
+          </div>
+        </div>
+      {/if}
 
       <section class="ai-panel">
         <h2>AI Assistant</h2>
@@ -4121,6 +4165,38 @@ Rules:
   button.primary:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 30;
+  }
+
+  .confirm-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 31;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 1rem;
+    min-width: 260px;
+    box-shadow: 0 16px 60px rgba(0, 0, 0, 0.4);
+  }
+
+  .confirm-modal .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+
+  .error.small {
+    font-size: 0.9rem;
   }
 
   @media (max-width: 680px) {

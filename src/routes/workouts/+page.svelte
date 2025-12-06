@@ -15,6 +15,9 @@
   let loading = false
   let error = ''
   let status = ''
+  let confirmDeleteId: string | null = null
+  let deleteError = ''
+  let deleteStatus = ''
 
   const loadWorkouts = async () => {
     loading = true
@@ -44,10 +47,29 @@
     }
   }
 
+  const requestDeleteWorkout = (id: string, isTemplate?: boolean) => {
+    if (isTemplate) return
+    confirmDeleteId = id
+    deleteError = ''
+    deleteStatus = ''
+  }
+
   const deleteWorkout = async (id: string, isTemplate?: boolean) => {
     if (isTemplate) return
-    await fetch(`/api/workouts/${id}`, { method: 'DELETE' })
-    workouts = workouts.filter((w) => w.id !== id)
+    deleteStatus = 'Deleting…'
+    deleteError = ''
+    try {
+      const res = await fetch(`/api/workouts/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || data?.error) throw new Error(data?.error ?? 'Delete failed')
+      workouts = workouts.filter((w) => w.id !== id)
+      confirmDeleteId = null
+      deleteStatus = 'Deleted'
+      setTimeout(() => (deleteStatus = ''), 1500)
+    } catch (err) {
+      deleteStatus = ''
+      deleteError = (err as any)?.message ?? 'Delete failed'
+    }
   }
 
   const startInTimer = (id: string) => {
@@ -96,7 +118,11 @@
             <button class="primary" on:click={() => startInTimer(workout.id)}>Start (Timer)</button>
             <button class="ghost" on:click={() => startInBigPicture(workout.id)}>Start (Big Picture)</button>
             <button class="ghost" on:click={() => copyYaml(workout.yaml_source)}>Copy YAML</button>
-            <button class="danger" disabled={workout.is_template} on:click={() => deleteWorkout(workout.id, workout.is_template)}>
+            <button
+              class="danger"
+              disabled={workout.is_template}
+              on:click={() => requestDeleteWorkout(workout.id, workout.is_template)}
+            >
               Delete
             </button>
           </div>
@@ -107,6 +133,33 @@
 
   {#if status}
     <p class="status">{status}</p>
+  {/if}
+
+  {#if confirmDeleteId}
+    <div class="modal-backdrop"></div>
+    <div class="confirm-modal">
+      <p>Delete this workout?</p>
+      {#if deleteError}<p class="error small">{deleteError}</p>{/if}
+      <div class="actions">
+        <button
+          class="ghost"
+          on:click={() => {
+            confirmDeleteId = null
+            deleteError = ''
+            deleteStatus = ''
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          class="danger"
+          disabled={deleteStatus === 'Deleting…'}
+          on:click={() => confirmDeleteId && deleteWorkout(confirmDeleteId)}
+        >
+          {deleteStatus || 'Delete'}
+        </button>
+      </div>
+    </div>
   {/if}
 </main>
 
@@ -195,8 +248,36 @@
   .error {
     color: var(--color-danger);
   }
+  .error.small {
+    font-size: 0.9rem;
+  }
   .status {
     color: var(--color-text-muted);
+  }
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 10;
+  }
+  .confirm-modal {
+    position: fixed;
+    z-index: 11;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    padding: 1rem;
+    border-radius: 12px;
+    min-width: 280px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  }
+  .confirm-modal .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
   }
 
   @media (max-width: 780px) {

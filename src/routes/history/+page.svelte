@@ -47,6 +47,7 @@
   let editRpe: number | null = null
   let editTags: string[] = []
   let newTagInput = ''
+  let confirmDeleteSetIdx: number | null = null
   let newWorkoutStatus = ''
   let searchTerm = ''
   let dateFilter: 'all' | '7' | '30' = 'all'
@@ -78,6 +79,9 @@
   let shareSelectableRows: { label: string; index: number }[] = []
   let shareRenderMode: 'detailed' | 'summary' = 'detailed'
   let hrAttached: Record<string, boolean> = {}
+  let hrRemoveTarget: string | null = null
+  let hrRemoveError = ''
+  let hrRemoveStatus = ''
   let uploadTargetId: string | null = null
   let uploadStatus: Record<string, string> = {}
   let fileInputEl: HTMLInputElement | null = null
@@ -168,6 +172,8 @@
   }
 
   const removeHrFile = async (id: string) => {
+    hrRemoveStatus = 'Removing…'
+    hrRemoveError = ''
     uploadStatus = { ...uploadStatus, [id]: 'Removing…' }
     try {
       const res = await fetch(`/api/completed-workouts/${id}/hr`, { method: 'DELETE' })
@@ -179,13 +185,26 @@
       hrDetails = restDetails
       hrAttached = { ...hrAttached, [id]: false }
       uploadStatus = { ...uploadStatus, [id]: 'Removed' }
+      hrRemoveStatus = 'Removed'
+      hrRemoveTarget = null
     } catch (err) {
       uploadStatus = { ...uploadStatus, [id]: (err as any)?.message ?? 'Remove failed' }
+      hrRemoveStatus = ''
+      hrRemoveError = (err as any)?.message ?? 'Remove failed'
     } finally {
       setTimeout(() => {
         uploadStatus = { ...uploadStatus, [id]: '' }
       }, 2000)
+      setTimeout(() => {
+        if (hrRemoveStatus === 'Removed') hrRemoveStatus = ''
+      }, 2000)
     }
+  }
+
+  const requestRemoveHrFile = (id: string) => {
+    hrRemoveTarget = id
+    hrRemoveError = ''
+    hrRemoveStatus = ''
   }
 
   const toggleExpanded = (id: string, state?: boolean) => {
@@ -1642,6 +1661,10 @@
     editSets = editSets.filter((_, i) => i !== idx)
   }
 
+  const requestDeleteSet = (idx: number) => {
+    confirmDeleteSetIdx = idx
+  }
+
   const moveSet = (idx: number, delta: number) => {
     const target = idx + delta
     if (target < 0 || target >= editSets.length) return
@@ -2349,7 +2372,7 @@
                               <button class="ghost small icon-btn" aria-label="Move down" on:click={() => moveSet(idx, 1)} disabled={idx === editSets.length - 1}>
                                 <i class="ri-arrow-down-line"></i>
                               </button>
-                              <button class="ghost small danger icon-btn" aria-label="Delete row" on:click={() => deleteSet(idx)}>
+                              <button class="ghost small danger icon-btn" aria-label="Delete row" on:click={() => requestDeleteSet(idx)}>
                                 <i class="ri-delete-bin-6-line"></i>
                               </button>
                             </div>
@@ -2449,7 +2472,7 @@
                       <button class="ghost" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
                       <button class="ghost" on:click={() => duplicateLog(item)}>Log again</button>
                       {#if hrAttached[item.id] || hrSummary[item.id]}
-                        <button class="ghost danger" on:click={() => removeHrFile(item.id)}>Remove HR file</button>
+                        <button class="ghost danger" on:click={() => requestRemoveHrFile(item.id)}>Remove HR file</button>
                       {/if}
                       <button class="danger" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
                     </div>
@@ -2834,7 +2857,7 @@
                         <button class="ghost small icon-btn" aria-label="Move down" on:click={() => moveSet(idx, 1)} disabled={idx === editSets.length - 1}>
                           <i class="ri-arrow-down-line"></i>
                         </button>
-                        <button class="ghost small danger icon-btn" aria-label="Delete row" on:click={() => deleteSet(idx)}>
+                        <button class="ghost small danger icon-btn" aria-label="Delete row" on:click={() => requestDeleteSet(idx)}>
                           <i class="ri-delete-bin-6-line"></i>
                         </button>
                       </div>
@@ -2935,7 +2958,7 @@
                 <button class="ghost" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
                 <button class="ghost" on:click={() => duplicateLog(item)}>Log again</button>
                 {#if hrAttached[item.id] || hrSummary[item.id]}
-                  <button class="ghost danger" on:click={() => removeHrFile(item.id)}>Remove HR file</button>
+                  <button class="ghost danger" on:click={() => requestRemoveHrFile(item.id)}>Remove HR file</button>
                 {/if}
                 <button class="danger" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
               </div>
@@ -2954,6 +2977,50 @@
 
   {#if status}
     <p class="status">{status}</p>
+  {/if}
+  {#if hrRemoveTarget}
+    <div class="modal-backdrop"></div>
+    <div class="confirm-modal">
+      <p>Remove HR file from this session?</p>
+      {#if hrRemoveError}<p class="error small">{hrRemoveError}</p>{/if}
+      <div class="actions">
+        <button
+          class="ghost"
+          on:click={() => {
+            hrRemoveTarget = null
+            hrRemoveError = ''
+            hrRemoveStatus = ''
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          class="danger"
+          disabled={hrRemoveStatus === 'Removing…'}
+          on:click={() => hrRemoveTarget && removeHrFile(hrRemoveTarget)}
+        >
+          {hrRemoveStatus || 'Remove'}
+        </button>
+      </div>
+    </div>
+  {/if}
+  {#if confirmDeleteSetIdx !== null}
+    <div class="modal-backdrop"></div>
+    <div class="confirm-modal">
+      <p>Delete this row?</p>
+      <div class="actions">
+        <button class="ghost" on:click={() => (confirmDeleteSetIdx = null)}>Cancel</button>
+        <button
+          class="danger"
+          on:click={() => {
+            if (confirmDeleteSetIdx !== null) deleteSet(confirmDeleteSetIdx)
+            confirmDeleteSetIdx = null
+          }}
+        >
+          Delete
+        </button>
+      </div>
+    </div>
   {/if}
   {#if confirmDeleteId}
     <div class="modal-backdrop"></div>
