@@ -3127,7 +3127,9 @@
         {#if insightsError}<span class="error small">{insightsError}</span>{/if}
       </div>
       {#if insightsAnswer}
-        <div class="ai-output rich" {@html={insightsHtml || insightsAnswer}}></div>
+        <div class="ai-output rich">
+          {@html insightsHtml || insightsAnswer}
+        </div>
       {/if}
     </div>
   {/if}
