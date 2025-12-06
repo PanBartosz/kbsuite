@@ -96,7 +96,8 @@
     max: 'rgba(255,170,120,0.9)'
   }
   let hrSparkColors: HrSparkColors = { ...defaultSparkColors }
-  const OPENAI_CHAT_MODEL = 'gpt-4o-mini'
+  // Insights use a richer model; workout generation elsewhere stays on its own model.
+  const OPENAI_CHAT_MODEL = 'gpt-5.1'
   let openAiKey = ''
   let insightsPrompt = defaultInsightsPrompt
   $: openAiKey = $settings.openAiKey ?? ''
@@ -105,6 +106,7 @@
   let insightsStatus = ''
   let insightsError = ''
   let insightsAnswer = ''
+  let insightsHtml = ''
   let insightsLoading = false
   let insightsModalOpen = false
 
@@ -275,6 +277,40 @@
   }
   computeHrSparkColors()
 
+  const escapeHtml = (value: string) =>
+    value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+
+  const renderMarkdown = (md: string) => {
+    const lines = md.split(/\r?\n+/)
+    let html = ''
+    let inList = false
+    for (const line of lines) {
+      const bullet = line.match(/^\s*[-*]\s+(.*)/)
+      if (bullet) {
+        if (!inList) {
+          html += '<ul>'
+          inList = true
+        }
+        html += `<li>${escapeHtml(bullet[1])}</li>`
+        continue
+      }
+      if (inList) {
+        html += '</ul>'
+        inList = false
+      }
+      if (line.trim()) {
+        html += `<p>${escapeHtml(line.trim())}</p>`
+      }
+    }
+    if (inList) html += '</ul>'
+    return html
+  }
+
   const generateInsights = async () => {
     const key = openAiKey.trim()
     if (!key) {
@@ -297,6 +333,12 @@
     insightsStatus = 'Contacting OpenAI…'
 
     try {
+      console.log('insights payload', {
+        prompt: insightsPrompt,
+        question,
+        model: OPENAI_CHAT_MODEL,
+        payload
+      })
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -313,7 +355,7 @@
               content: [
                 'Analyze these completed workouts (array of objects).',
                 'Highlight trends in volume/intensity, HR vs RPE, and recovery needs.',
-                'Return 3-6 concise bullet points. Prefer specific suggestions over generic advice.',
+                'Return 3-6 concise bullet points in Markdown (unordered list). Prefer specific suggestions over generic advice.',
                 `User question: ${question}`,
                 'Data:',
                 JSON.stringify(payload)
@@ -330,6 +372,7 @@
       const data = await res.json()
       const content = data?.choices?.[0]?.message?.content ?? ''
       insightsAnswer = typeof content === 'string' ? content.trim() : ''
+      insightsHtml = renderMarkdown(insightsAnswer)
       insightsStatus = `Analyzed ${payload.length} session${payload.length === 1 ? '' : 's'}.`
     } catch (err) {
       insightsError = (err as any)?.message ?? 'Failed to generate insights.'
@@ -3084,11 +3127,7 @@
         {#if insightsError}<span class="error small">{insightsError}</span>{/if}
       </div>
       {#if insightsAnswer}
-        <div class="ai-output">
-          {#each insightsAnswer.split('\n') as line}
-            <div>{line}</div>
-          {/each}
-        </div>
+        <div class="ai-output rich" {@html={insightsHtml || insightsAnswer}}></div>
       {/if}
     </div>
   {/if}
