@@ -64,11 +64,22 @@ let todaySummary: PlannedSummaryBlock[] = []
 let planLoading = false
 let planError = ''
 
-let historyLoading = false
-let historyError = ''
-let completed: CompletedWorkout[] = []
-let weekSummary = { sessions: 0, totalMinutes: 0, avgRpe: null as number | null, streak: 0 }
-let weekSeries: { label: string; minutes: number }[] = []
+  type WindowRange = 7 | 30
+
+  let historyLoading = false
+  let historyError = ''
+  let completed: CompletedWorkout[] = []
+  let recentRange: WindowRange = 7
+  let movementRange: WindowRange = 30
+  let recentSummary = { sessions: 0, totalMinutes: 0, avgRpe: null as number | null, streak: 0 }
+  let recentSeries: { key: string; label: string; minutes: number }[] = []
+  let recentItems: CompletedWorkout[] = []
+  let minutesTrend: number[] = []
+  let hrSummaryHome: Record<string, { avgHr: number | null; maxHr: number | null }> = {}
+  let hrFetchStatus: Record<string, 'pending' | 'done' | 'error'> = {}
+  let hrAvgSeries: (number | null)[] = []
+  let hrMaxSeries: (number | null)[] = []
+  let hasRecentActivity = false
   let invites: Invite[] = []
   let inviteDates: Record<string, string> = {}
   let inviteStatus: Record<string, string> = {}
@@ -78,17 +89,17 @@ let weekSeries: { label: string; minutes: number }[] = []
   let chart: any = null
   let chartModule: any = null
   let movementChartEl: HTMLCanvasElement | null = null
-let movementChart: any = null
-let movementBalance: {
-  key: string
-  label: string
-  value: number
+  let movementChart: any = null
+  let movementBalance: {
+    key: string
+    label: string
+    value: number
     shared: number
     pure: number
     weight: number
-  sharedWeight: number
-}[] = []
-let movementSetCount = 0
+    sharedWeight: number
+  }[] = []
+  let movementSetCount = 0
 
 let openAiKey = ''
 let insightsPrompt = defaultInsightsPrompt
@@ -317,7 +328,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     }
   }
 
-  const movementFromSets = (items: CompletedWorkout[]) => {
+  const movementFromSets = (items: CompletedWorkout[], range: WindowRange) => {
     const totals: Record<string, number> = {
       hinge: 0,
       push: 0,
@@ -329,7 +340,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     }
     const shared: Record<string, number> = { hinge: 0, push: 0, pull: 0, squat: 0, carry: 0, core: 0, other: 0 }
     const pure: Record<string, number> = { hinge: 0, push: 0, pull: 0, squat: 0, carry: 0, core: 0, other: 0 }
-    const cutoff = Date.now() - 30 * 24 * 3600 * 1000
+    const cutoff = Date.now() - range * 24 * 3600 * 1000
     let countedSets = 0
     items.forEach((item) => {
       const ts = Number(item.finished_at ?? item.started_at ?? item.created_at ?? 0)
@@ -480,27 +491,55 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     }
   }
 
-  const computeWeekView = (items: CompletedWorkout[]) => {
+  const trendWindowForRange = (range: WindowRange) => (range === 7 ? 7 : 7)
+
+  const rollingAverage = (values: number[], window: number) =>
+    values.map((_, idx) => {
+      const start = Math.max(0, idx - window + 1)
+      const slice = values.slice(start, idx + 1)
+      const sum = slice.reduce((acc, v) => acc + v, 0)
+      return Math.round((sum / slice.length) * 10) / 10
+    })
+
+  const emaSmooth = (values: number[], alpha: number) => {
+    let prev: number | null = null
+    return values.map((v) => {
+      const next = prev === null ? v : prev * (1 - alpha) + v * alpha
+      prev = next
+      return Math.round(next * 10) / 10
+    })
+  }
+
+  const buildTrendSeries = (values: number[], range: WindowRange) => {
+    if (!values.length) return []
+    if (range === 7) {
+      // Short window: use exponential smoothing to soften rest-day dips while still showing direction.
+      return emaSmooth(values, 0.35)
+    }
+    return rollingAverage(values, 7)
+  }
+
+  const computeRecentView = (items: CompletedWorkout[], range: WindowRange) => {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    const cutoff7 = new Date(today)
-    cutoff7.setDate(today.getDate() - 6)
+    const cutoff = new Date(today)
+    cutoff.setDate(today.getDate() - (range - 1))
     const perDay: Record<string, number> = {}
-    for (let i = 6; i >= 0; i--) {
+    for (let i = range - 1; i >= 0; i--) {
       const d = new Date(today)
       d.setDate(today.getDate() - i)
       perDay[dayKey(d.getTime())] = 0
     }
 
-    const items7 = items.filter((item) => {
+    const itemsInRange = items.filter((item) => {
       const ts = Number(item.finished_at ?? item.started_at ?? item.created_at ?? 0)
       if (!Number.isFinite(ts)) return false
       const normalized = new Date(ts)
       normalized.setHours(0, 0, 0, 0)
-      return normalized.getTime() >= cutoff7.getTime() && normalized.getTime() <= today.getTime()
+      return normalized.getTime() >= cutoff.getTime() && normalized.getTime() <= today.getTime()
     })
 
-    items7.forEach((item) => {
+    itemsInRange.forEach((item) => {
       const ts = Number(item.finished_at ?? item.started_at ?? item.created_at ?? 0)
       if (!Number.isFinite(ts)) return
       const key = dayKey(ts)
@@ -508,7 +547,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
       perDay[key] = (perDay[key] ?? 0) + (Number.isFinite(minutes) ? Math.max(minutes, 0) : 0)
     })
 
-    const rpeValues = items7
+    const rpeValues = itemsInRange
       .map((it) => Number(it.rpe))
       .filter((v) => Number.isFinite(v) && v > 0) as number[]
     const avgRpe =
@@ -518,11 +557,16 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
 
     const series = Object.entries(perDay)
       .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([label, minutes]) => ({ label: label.slice(5).replace('-', '/'), minutes: Math.round(minutes) }))
+      .map(([key, minutes]) => ({
+        key,
+        label: key.slice(5).replace('-', '/'),
+        minutes: Math.round(minutes)
+      }))
 
     const streak = (() => {
       let count = 0
-      for (let i = 0; i < 30; i++) {
+      const lookback = Math.max(30, range + 7)
+      for (let i = 0; i < lookback; i++) {
         const d = new Date(today)
         d.setDate(today.getDate() - i)
         const key = dayKey(d.getTime())
@@ -541,15 +585,104 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
       return count
     })()
 
-    weekSummary = {
-      sessions: items7.length,
+    recentSummary = {
+      sessions: itemsInRange.length,
       totalMinutes: Math.round(series.reduce((acc, cur) => acc + cur.minutes, 0)),
       avgRpe,
       streak
     }
-    weekSeries = series
-    movementBalance = movementFromSets(items)
+    recentItems = itemsInRange
+    recentSeries = series
+    hrAvgSeries = new Array(series.length).fill(null)
+    hrMaxSeries = new Array(series.length).fill(null)
+    minutesTrend = series.length ? buildTrendSeries(series.map((s) => s.minutes), range) : []
   }
+
+  const updateMovementBalance = (items: CompletedWorkout[], range: WindowRange) => {
+    movementBalance = movementFromSets(items, range)
+  }
+
+  const buildHrSeries = () => {
+    const perDay: Record<string, { avg: number[]; max: number[] }> = {}
+    recentItems.forEach((item) => {
+      const ts = Number(item.finished_at ?? item.started_at ?? item.created_at ?? 0)
+      if (!Number.isFinite(ts)) return
+      const key = dayKey(ts)
+      const summary = hrSummaryHome[item.id]
+      if (!summary) return
+      if (!perDay[key]) perDay[key] = { avg: [], max: [] }
+      if (typeof summary.avgHr === 'number') perDay[key].avg.push(summary.avgHr)
+      if (typeof summary.maxHr === 'number') perDay[key].max.push(summary.maxHr)
+    })
+    const avgSeries: (number | null)[] = []
+    const maxSeries: (number | null)[] = []
+    recentSeries.forEach((s) => {
+      const bucket = perDay[s.key]
+      if (bucket?.avg.length) {
+        const sum = bucket.avg.reduce((acc, v) => acc + v, 0)
+        avgSeries.push(Math.round((sum / bucket.avg.length) * 10) / 10)
+      } else {
+        avgSeries.push(null)
+      }
+      if (bucket?.max.length) {
+        const sum = bucket.max.reduce((acc, v) => acc + v, 0)
+        maxSeries.push(Math.round((sum / bucket.max.length) * 10) / 10)
+      } else {
+        maxSeries.push(null)
+      }
+    })
+    hrAvgSeries = avgSeries
+    hrMaxSeries = maxSeries
+    if (browser && chartEl && recentSeries.length) updateChart()
+  }
+
+  const fetchHrSummary = async (id: string) => {
+    if (hrFetchStatus[id] === 'pending' || hrFetchStatus[id] === 'done') return
+    hrFetchStatus = { ...hrFetchStatus, [id]: 'pending' }
+    try {
+      const res = await fetch(`/api/completed-workouts/${id}/hr?details=1`)
+      const data = await res.json().catch(() => ({}))
+      if (data?.summary) {
+        hrSummaryHome = {
+          ...hrSummaryHome,
+          [id]: {
+            avgHr: data.summary.avgHr ?? null,
+            maxHr: data.summary.maxHr ?? null
+          }
+        }
+      }
+      hrFetchStatus = { ...hrFetchStatus, [id]: 'done' }
+    } catch {
+      hrFetchStatus = { ...hrFetchStatus, [id]: 'error' }
+    }
+  }
+
+  const refreshHrForRecent = async () => {
+    const targets = recentItems.filter(
+      (item) => !hrSummaryHome[item.id] && hrFetchStatus[item.id] !== 'pending'
+    )
+    if (!targets.length) {
+      buildHrSeries()
+      return
+    }
+    await Promise.all(targets.map((item) => fetchHrSummary(item.id)))
+    buildHrSeries()
+  }
+
+  const setRecentRange = (range: WindowRange) => {
+    if (recentRange === range) return
+    recentRange = range
+    computeRecentView(completed, recentRange)
+    refreshHrForRecent()
+  }
+
+  const setMovementRange = (range: WindowRange) => {
+    if (movementRange === range) return
+    movementRange = range
+    updateMovementBalance(completed, movementRange)
+  }
+
+  const rangeLabel = (range: WindowRange) => `${range}d`
 
   const updateChart = async () => {
     if (!browser || !chartEl) return
@@ -563,20 +696,65 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     }
     const accent = getCssVar('--color-accent', '#22d3ee')
     const accentHover = getCssVar('--color-accent-hover', accent)
+    const trendColor = getCssVar('--color-warning', '#fbbf24')
+    const hrAvgColor = getCssVar('--color-success', '#34d399')
+    const hrMaxColor = getCssVar('--color-danger', '#f87171')
     const textColor = getCssVar('--color-text-muted', '#94a3b8')
     const gridColor = toRgba(getCssVar('--color-border', 'rgba(255,255,255,0.1)'), 0.65)
+    const labels = recentSeries.map((s) => s.label)
+    const trendLabel = recentRange === 7 ? 'Smoothed trend' : '7-day avg'
     chart = new ChartCtor(chartEl.getContext('2d'), {
       type: 'bar',
       data: {
-        labels: weekSeries.map((s) => s.label),
+        labels,
         datasets: [
           {
             label: 'Minutes',
-            data: weekSeries.map((s) => s.minutes),
+            data: recentSeries.map((s) => s.minutes),
             backgroundColor: toRgba(accent, 0.8),
             borderColor: accentHover,
             borderWidth: 1,
-            borderRadius: 6
+            borderRadius: 8
+          },
+          {
+            type: 'line',
+            label: trendLabel,
+            data: minutesTrend,
+            fill: false,
+            borderColor: trendColor,
+            backgroundColor: trendColor,
+            tension: 0.35,
+            pointRadius: 3,
+            pointBackgroundColor: trendColor,
+            yAxisID: 'y',
+            borderWidth: 2
+          },
+          {
+            type: 'line',
+            label: 'Avg HR',
+            data: hrAvgSeries,
+            spanGaps: true,
+            borderColor: hrAvgColor,
+            backgroundColor: hrAvgColor,
+            tension: 0.25,
+            pointRadius: 3,
+            pointBackgroundColor: hrAvgColor,
+            yAxisID: 'y1',
+            borderWidth: 2
+          },
+          {
+            type: 'line',
+            label: 'Max HR',
+            data: hrMaxSeries,
+            spanGaps: true,
+            borderColor: hrMaxColor,
+            backgroundColor: hrMaxColor,
+            tension: 0.2,
+            pointRadius: 3,
+            pointBackgroundColor: hrMaxColor,
+            yAxisID: 'y1',
+            borderDash: [6, 4],
+            borderWidth: 2
           }
         ]
       },
@@ -588,12 +766,23 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
             ticks: { color: textColor },
             grid: { color: gridColor }
           },
+          y1: {
+            position: 'right',
+            ticks: { color: textColor },
+            grid: { drawOnChartArea: false },
+            title: { display: true, text: 'HR (bpm)', color: textColor }
+          },
           x: {
             ticks: { color: textColor },
             grid: { display: false }
           }
         },
-        plugins: { legend: { display: false } }
+        plugins: {
+          legend: {
+            display: true,
+            labels: { color: textColor }
+          }
+        }
       }
     })
   }
@@ -616,6 +805,21 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     const sharedData = movementBalance.map((b) => b.shared)
     const maxVal = Math.max(...movementBalance.map((b) => b.value)) || 100
     const paddedMax = Math.min(100, Math.ceil((maxVal + 5) / 10) * 10)
+    const roundedForDataset = (datasetIndex: number) => (ctx: any) => {
+      const idx = ctx.dataIndex
+      const pureVal = pureData[idx]
+      const sharedVal = sharedData[idx]
+      if (pureVal <= 0 && sharedVal <= 0) return 0
+      const r = 10
+      if (datasetIndex === 0) {
+        if (pureVal <= 0) return 0
+        const right = sharedVal > 0 ? 0 : r
+        return { topLeft: r, bottomLeft: r, topRight: right, bottomRight: right }
+      }
+      if (sharedVal <= 0) return 0
+      const left = pureVal > 0 ? 0 : r
+      return { topLeft: left, bottomLeft: left, topRight: r, bottomRight: r }
+    }
 
     movementChart = new ChartCtor(movementChartEl.getContext('2d'), {
       type: 'bar',
@@ -626,7 +830,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
             label: 'Pure',
             data: pureData,
             backgroundColor: toRgba(accent, 0.8),
-            borderRadius: 0,
+            borderRadius: roundedForDataset(0),
             borderSkipped: false,
             stack: 'sets'
           },
@@ -634,7 +838,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
             label: 'Shared',
             data: sharedData,
             backgroundColor: toRgba(warning, 0.75),
-            borderRadius: 0,
+            borderRadius: roundedForDataset(1),
             borderSkipped: false,
             stack: 'sets'
           }
@@ -718,12 +922,19 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
       if (!res.ok) throw new Error('Failed to load history')
       const data = await res.json()
       completed = (data?.items ?? []).map(normalizeCompleted)
-      computeWeekView(completed)
+      computeRecentView(completed, recentRange)
+      updateMovementBalance(completed, movementRange)
+      await refreshHrForRecent()
     } catch (err) {
       historyError = (err as any)?.message ?? 'Failed to load history'
-      weekSeries = []
+      recentSeries = []
+      hrAvgSeries = []
+      hrMaxSeries = []
+      recentItems = []
+      minutesTrend = []
       movementBalance = []
-      weekSummary = { sessions: 0, totalMinutes: 0, avgRpe: null, streak: 0 }
+      movementSetCount = 0
+      recentSummary = { sessions: 0, totalMinutes: 0, avgRpe: null, streak: 0 }
     } finally {
       historyLoading = false
     }
@@ -750,13 +961,25 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     if (movementChart) movementChart.destroy()
   })
 
-  $: if (browser && weekSeries.length && chartEl) {
+  $: hasRecentActivity = recentSeries.some((s) => s.minutes > 0)
+
+  $: if (!hasRecentActivity && chart) {
+    chart.destroy()
+    chart = null
+  }
+
+  $: if (!movementBalance.length && movementChart) {
+    movementChart.destroy()
+    movementChart = null
+  }
+
+  $: if (browser && recentSeries.length && chartEl) {
     updateChart()
   }
   $: if (browser && movementBalance.length && movementChartEl) {
     updateMovementChart()
   }
-  $: if (browser && currentTheme && weekSeries.length && chartEl) {
+  $: if (browser && currentTheme && recentSeries.length && chartEl) {
     updateChart()
   }
   $: if (browser && currentTheme && movementBalance.length && movementChartEl) {
@@ -930,10 +1153,28 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     <section class="panel week-card">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Week at a glance</p>
+          <p class="eyebrow">Last {rangeLabel(recentRange)}</p>
           <h2>Recent training</h2>
         </div>
-        <a class="ghost" href="/history">History</a>
+        <div class="panel-actions">
+          <div class="range-toggle" aria-label="Select training range">
+            <button
+              class={`toggle ${recentRange === 7 ? 'active' : ''}`}
+              type="button"
+              on:click={() => setRecentRange(7)}
+            >
+              7d
+            </button>
+            <button
+              class={`toggle ${recentRange === 30 ? 'active' : ''}`}
+              type="button"
+              on:click={() => setRecentRange(30)}
+            >
+              30d
+            </button>
+          </div>
+          <a class="ghost" href="/history">History</a>
+        </div>
       </div>
 
       {#if historyLoading}
@@ -944,25 +1185,25 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
       {:else}
         <div class="week-stats">
           <div class="stat">
-            <p class="label">Sessions (7d)</p>
-            <strong>{weekSummary.sessions}</strong>
+            <p class="label">Sessions ({rangeLabel(recentRange)})</p>
+            <strong>{recentSummary.sessions}</strong>
           </div>
           <div class="stat">
             <p class="label">Volume (min)</p>
-            <strong>{weekSummary.totalMinutes}</strong>
+            <strong>{recentSummary.totalMinutes}</strong>
           </div>
           <div class="stat">
             <p class="label">Avg RPE</p>
-            <strong>{weekSummary.avgRpe ?? '—'}</strong>
+            <strong>{recentSummary.avgRpe ?? '—'}</strong>
           </div>
           <div class="stat">
             <p class="label">Streak</p>
-            <strong>{weekSummary.streak}d</strong>
+            <strong>{recentSummary.streak}d</strong>
           </div>
         </div>
         <div class="chart-card">
-          {#if weekSeries.length === 0}
-            <p class="muted">No sessions in the last week.</p>
+          {#if !hasRecentActivity}
+            <p class="muted">No sessions in the selected window.</p>
           {:else}
             <div class="chart-shell">
               <canvas bind:this={chartEl}></canvas>
@@ -976,15 +1217,31 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
           <div class="balance-head">
             <div class="balance-title">
               <p class="label">Movement mix</p>
-              <span class="muted small">Last 30d, name heuristic</span>
+              <span class="muted small">Last {rangeLabel(movementRange)}, name heuristic</span>
             </div>
             <div class="balance-actions">
+              <div class="range-toggle small" aria-label="Select movement range">
+                <button
+                  class={`toggle ${movementRange === 7 ? 'active' : ''}`}
+                  type="button"
+                  on:click={() => setMovementRange(7)}
+                >
+                  7d
+                </button>
+                <button
+                  class={`toggle ${movementRange === 30 ? 'active' : ''}`}
+                  type="button"
+                  on:click={() => setMovementRange(30)}
+                >
+                  30d
+                </button>
+              </div>
               <span class="muted small">Total sets: {movementSetCount}</span>
               <button class="ghost info-btn" type="button" on:click={() => (movementInfoOpen = true)}>?</button>
             </div>
           </div>
           {#if !movementBalance.length}
-            <p class="muted small">No recent sets to categorize.</p>
+            <p class="muted small">No sets in the last {rangeLabel(movementRange)}.</p>
           {:else}
             <div class="movement-legend">
               <span class="swatch pure"></span> Pure
@@ -1065,7 +1322,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
         </div>
         <div class="insights-body">
           <ul>
-            <li>Scope: completed sets from the last 30 days.</li>
+            <li>Scope: completed sets from the selected window (7d or 30d).</li>
             <li>Skip labels that look like warmup, cooldown, transition, prep, rest.</li>
             <li>Categorize using set + round name; a set can hit multiple buckets.</li>
             <li>Each set starts as weight = 1. If it hits N buckets, each gets 1/N (shared shown in yellow).</li>
@@ -1117,6 +1374,42 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
 
   .panel h2 {
     margin: 0;
+  }
+
+  .panel-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .range-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    padding: 0.1rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
+  }
+
+  .range-toggle.small {
+    padding: 0.05rem;
+  }
+
+  .range-toggle .toggle {
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    padding: 0.2rem 0.7rem;
+    border-radius: 999px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .range-toggle .toggle.active {
+    background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+    color: var(--color-text-primary);
   }
 
   .panel .pill {
