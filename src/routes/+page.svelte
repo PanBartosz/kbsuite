@@ -4,6 +4,12 @@
   import { browser } from '$app/environment'
   import { computePlanTotals } from '$lib/timer/lib/planTotals'
   import { loadInvites, loadPendingCount, shares, type Invite } from '$lib/stores/shares'
+  import { buildPlannedSummary, type PlannedSummaryBlock } from '$lib/timer/lib/planSummary'
+  import { categorizeExercise } from '$lib/timer/lib/exerciseCategorizer'
+  import { buildAiPayloadBatch } from '$lib/stats/aiPayload'
+  import { defaultInsightsPrompt, getInsightsPrompt } from '$lib/ai/prompts'
+  import { settings } from '$lib/stores/settings'
+  import SessionOverview from '$lib/timer/components/shared/SessionOverview.svelte'
 
   type Planned = {
     id: string
@@ -51,17 +57,18 @@
   ]
 
   let todayPlan: Planned | null = null
+  let nextPlan: Planned | null = null
   let planTotals: Totals | null = null
-  let planLoading = false
-  let planError = ''
+let todayPlanParsed: any | null = null
+let todaySummary: PlannedSummaryBlock[] = []
+let planLoading = false
+let planError = ''
 
-  let historyLoading = false
-  let historyError = ''
-  let completed: CompletedWorkout[] = []
-  let weekSummary = { sessions: 0, totalMinutes: 0, avgRpe: null as number | null, streak: 0 }
-  let weekSeries: { label: string; minutes: number }[] = []
-  let movementBalance: { key: string; label: string; value: number }[] = []
-
+let historyLoading = false
+let historyError = ''
+let completed: CompletedWorkout[] = []
+let weekSummary = { sessions: 0, totalMinutes: 0, avgRpe: null as number | null, streak: 0 }
+let weekSeries: { label: string; minutes: number }[] = []
   let invites: Invite[] = []
   let inviteDates: Record<string, string> = {}
   let inviteStatus: Record<string, string> = {}
@@ -70,13 +77,39 @@
   let chartEl: HTMLCanvasElement | null = null
   let chart: any = null
   let chartModule: any = null
+  let movementChartEl: HTMLCanvasElement | null = null
+let movementChart: any = null
+let movementBalance: {
+  key: string
+  label: string
+  value: number
+    shared: number
+    pure: number
+    weight: number
+  sharedWeight: number
+}[] = []
+let movementSetCount = 0
+
+let openAiKey = ''
+let insightsPrompt = defaultInsightsPrompt
+  let insightsQuestion = ''
+  let insightsStatus = ''
+  let insightsError = ''
+let insightsAnswer = ''
+let insightsHtml = ''
+let insightsLoading = false
+let insightsModalOpen = false
+let currentTheme = ''
+
+$: openAiKey = $settings.openAiKey ?? ''
+$: insightsPrompt = getInsightsPrompt($settings.aiInsightsPrompt)
+$: currentTheme = $settings.theme ?? ''
 
   const bucketLabels: Record<string, string> = {
     hinge: 'Hinge',
     push: 'Push',
     pull: 'Pull',
     squat: 'Squat',
-    overhead: 'Overhead',
     carry: 'Carry',
     core: 'Core',
     other: 'Other'
@@ -103,6 +136,32 @@
     const numeric = Number(value)
     if (!Number.isFinite(numeric) || numeric <= 0) return 1
     return Math.max(1, Math.round(numeric))
+  }
+
+  const getCssVar = (name: string, fallback: string) => {
+    if (!browser) return fallback
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+    return v || fallback
+  }
+
+  const toRgba = (color: string, alpha = 1) => {
+    if (!color) return `rgba(255,255,255,${alpha})`
+    if (color.startsWith('#')) {
+      const hex = color.slice(1)
+      const full = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex
+      const num = parseInt(full, 16)
+      const r = (num >> 16) & 255
+      const g = (num >> 8) & 255
+      const b = num & 255
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`
+    }
+    const m = color.match(/rgba?\(([^)]+)\)/)
+    if (m) {
+      const parts = m[1].split(',').map((p) => parseFloat(p.trim()))
+      const [r, g, b] = parts
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`
+    }
+    return color
   }
 
   const normalizePlan = (candidate: any) => {
@@ -148,12 +207,22 @@
     }
   }
 
-  const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
+const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
+  if (!yaml) return null
+  try {
+    const parsed = YAML.parse(yaml)
+    const plan = normalizePlan(parsed)
+    return computePlanTotals(plan)
+  } catch {
+    return null
+  }
+}
+
+  const parsePlanFromYaml = (yaml?: string | null) => {
     if (!yaml) return null
     try {
       const parsed = YAML.parse(yaml)
-      const plan = normalizePlan(parsed)
-      return computePlanTotals(plan)
+      return normalizePlan(parsed)
     } catch {
       return null
     }
@@ -247,59 +316,167 @@
     }
   }
 
-  const bucketFor = (text: string): keyof typeof bucketLabels => {
-    const value = text.toLowerCase()
-    const has = (needle: string) => value.includes(needle)
-    if (has('swing') || has('hinge') || has('dead') || has('clean') || has('snatch')) return 'hinge'
-    if (has('press') || has('push') || has('dip') || has('jerk') || has('strict')) return 'push'
-    if (has('row') || has('pull') || has('chin') || has('high pull')) return 'pull'
-    if (has('squat') || has('lunge') || has('split') || has('step')) return 'squat'
-    if (has('oh') || has('overhead')) return 'overhead'
-    if (has('carry') || has('walk') || has('farmer') || has('rack')) return 'carry'
-    if (has('plank') || has('hollow') || has('core') || has('windmill') || has('get up') || has('get-up') || has('tgu'))
-      return 'core'
-    return 'other'
-  }
-
   const movementFromSets = (items: CompletedWorkout[]) => {
     const totals: Record<string, number> = {
       hinge: 0,
       push: 0,
       pull: 0,
       squat: 0,
-      overhead: 0,
       carry: 0,
       core: 0,
       other: 0
     }
+    const shared: Record<string, number> = { hinge: 0, push: 0, pull: 0, squat: 0, carry: 0, core: 0, other: 0 }
+    const pure: Record<string, number> = { hinge: 0, push: 0, pull: 0, squat: 0, carry: 0, core: 0, other: 0 }
     const cutoff = Date.now() - 30 * 24 * 3600 * 1000
+    let countedSets = 0
     items.forEach((item) => {
       const ts = Number(item.finished_at ?? item.started_at ?? item.created_at ?? 0)
       if (!Number.isFinite(ts) || ts < cutoff) return
       if (!item.sets?.length && item.tags?.length) {
         const tagText = item.tags.join(' ')
-        const bucket = bucketFor(tagText)
-        totals[bucket] += 1
+        const cats = categorizeExercise(tagText)
+        cats.forEach((c) => {
+          const bucket = (c.toLowerCase() as keyof typeof totals) || 'other'
+          totals[bucket] = (totals[bucket] ?? 0) + 1
+          pure[bucket] = (pure[bucket] ?? 0) + 1
+        })
+        countedSets += 1
         return
       }
       item.sets?.forEach((set) => {
-        const text = [set.set_label, set.round_label, set.type].filter(Boolean).join(' ')
-        if (!text.trim()) return
-        const bucket = bucketFor(text)
-        const magnitude = Number(set.reps) || Number(set.duration_s) || 1
-        totals[bucket] += magnitude > 0 ? magnitude : 1
+        const cats = categorizeExercise(set.set_label, set.round_label)
+        if (!cats.size) return
+        countedSets += 1
+        const share = 1 / cats.size
+        cats.forEach((c) => {
+          const bucket = (c.toLowerCase() as keyof typeof totals) || 'other'
+          totals[bucket] = (totals[bucket] ?? 0) + share
+          if (cats.size > 1) {
+            shared[bucket] = (shared[bucket] ?? 0) + share
+          } else {
+            pure[bucket] = (pure[bucket] ?? 0) + 1
+          }
+        })
       })
     })
     const total = Object.values(totals).reduce((acc, v) => acc + v, 0)
-    if (total === 0) return []
+    movementSetCount = countedSets
+    if (total === 0 || countedSets === 0) return []
     return Object.entries(totals).map(([key, value]) => {
       const bucketKey = key as keyof typeof bucketLabels
+      const sharedVal = shared[key] ?? 0
+      const pureVal = Math.max(value - sharedVal, 0)
       return {
         key,
         label: bucketLabels[bucketKey] ?? key,
-        value: Math.round((value / total) * 100)
+        value: Math.round((value / total) * 100),
+        shared: Math.round((sharedVal / total) * 100),
+        pure: Math.round((pureVal / total) * 100),
+        weight: value,
+        sharedWeight: sharedVal
       }
     })
+  }
+
+  const insightsItems = () => {
+    const cutoff = Date.now() - 7 * 24 * 3600 * 1000
+    return completed.filter((item) => {
+      const ts = Number(item.finished_at ?? item.started_at ?? item.created_at ?? 0)
+      return Number.isFinite(ts) && ts >= cutoff
+    })
+  }
+
+  const renderMarkdown = (input: string) => {
+    if (!input) return ''
+    const escapeHtml = (str: string) =>
+      str.replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m] as string))
+    const lines = input.split('\n')
+    let html = ''
+    let inList = false
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed.startsWith('- ')) {
+        if (!inList) {
+          html += '<ul>'
+          inList = true
+        }
+        html += `<li>${escapeHtml(trimmed.slice(2))}</li>`
+        continue
+      }
+      if (inList) {
+        html += '</ul>'
+        inList = false
+      }
+      if (trimmed) {
+        html += `<p>${escapeHtml(trimmed)}</p>`
+      }
+    }
+    if (inList) html += '</ul>'
+    return html
+  }
+
+  const generateInsights = async () => {
+    const key = openAiKey.trim()
+    if (!key) {
+      insightsError = 'Add your OpenAI API key in Settings to generate insights.'
+      insightsStatus = ''
+      return
+    }
+    const items = insightsItems()
+    if (!items.length) {
+      insightsError = 'No workouts to analyze in the last 7 days.'
+      insightsStatus = ''
+      return
+    }
+    const payload = buildAiPayloadBatch(items, {}, 25)
+    const question =
+      insightsQuestion.trim() ||
+      'Find notable trends in volume, RPE, and suggest focus areas for the next week.'
+    insightsLoading = true
+    insightsError = ''
+    insightsStatus = 'Contacting OpenAI…'
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${key}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.1',
+          temperature: 0.4,
+          messages: [
+            { role: 'system', content: insightsPrompt },
+            {
+              role: 'user',
+              content: [
+                'Analyze these completed workouts (array of objects).',
+                'Highlight trends in volume/intensity, HR vs RPE, and recovery needs.',
+                'Return 3-6 concise bullet points in Markdown (unordered list). Prefer specific suggestions over generic advice.',
+                `User question: ${question}`,
+                'Data:',
+                JSON.stringify(payload)
+              ].join('\n')
+            }
+          ]
+        })
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`OpenAI request failed: ${res.status} ${text.slice(0, 180)}`)
+      }
+      const data = await res.json()
+      const content = data?.choices?.[0]?.message?.content ?? ''
+      insightsAnswer = typeof content === 'string' ? content.trim() : ''
+      insightsHtml = renderMarkdown(insightsAnswer)
+      insightsStatus = `Analyzed ${payload.length} session${payload.length === 1 ? '' : 's'}.`
+    } catch (err) {
+      insightsError = (err as any)?.message ?? 'Failed to generate insights.'
+      insightsStatus = ''
+    } finally {
+      insightsLoading = false
+    }
   }
 
   const computeWeekView = (items: CompletedWorkout[]) => {
@@ -383,6 +560,10 @@
     if (chart) {
       chart.destroy()
     }
+    const accent = getCssVar('--color-accent', '#22d3ee')
+    const accentHover = getCssVar('--color-accent-hover', accent)
+    const textColor = getCssVar('--color-text-muted', '#94a3b8')
+    const gridColor = toRgba(getCssVar('--color-border', 'rgba(255,255,255,0.1)'), 0.65)
     chart = new ChartCtor(chartEl.getContext('2d'), {
       type: 'bar',
       data: {
@@ -391,8 +572,8 @@
           {
             label: 'Minutes',
             data: weekSeries.map((s) => s.minutes),
-            backgroundColor: 'var(--color-accent)',
-            borderColor: 'var(--color-accent-hover)',
+            backgroundColor: toRgba(accent, 0.8),
+            borderColor: accentHover,
             borderWidth: 1,
             borderRadius: 6
           }
@@ -403,11 +584,11 @@
         maintainAspectRatio: false,
         scales: {
           y: {
-            ticks: { color: 'var(--color-text-muted)' },
-            grid: { color: 'color-mix(in srgb, var(--color-border) 70%, transparent)' }
+            ticks: { color: textColor },
+            grid: { color: gridColor }
           },
           x: {
-            ticks: { color: 'var(--color-text-muted)' },
+            ticks: { color: textColor },
             grid: { display: false }
           }
         },
@@ -416,24 +597,116 @@
     })
   }
 
+  const updateMovementChart = async () => {
+    if (!browser || !movementChartEl || !movementBalance.length) return
+    if (!chartModule) {
+      chartModule = await import('chart.js/auto')
+    }
+    const ChartCtor = chartModule.default
+    if (!ChartCtor) return
+    if (movementChart) movementChart.destroy()
+    const accent = getCssVar('--color-accent', '#22d3ee')
+    const warning = getCssVar('--color-warning', '#fbbf24')
+    const textColor = getCssVar('--color-text-muted', '#94a3b8')
+    const gridColor = toRgba(getCssVar('--color-border', 'rgba(255,255,255,0.1)'), 0.35)
+
+    const labels = movementBalance.map((b) => b.label)
+    const pureData = movementBalance.map((b) => Math.max(b.value - b.shared, 0))
+    const sharedData = movementBalance.map((b) => b.shared)
+    const maxVal = Math.max(...movementBalance.map((b) => b.value)) || 100
+    const paddedMax = Math.min(100, Math.ceil((maxVal + 5) / 10) * 10)
+
+    movementChart = new ChartCtor(movementChartEl.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Pure',
+            data: pureData,
+            backgroundColor: toRgba(accent, 0.8),
+            borderRadius: 0,
+            borderSkipped: false,
+            stack: 'sets'
+          },
+          {
+            label: 'Shared',
+            data: sharedData,
+            backgroundColor: toRgba(warning, 0.75),
+            borderRadius: 0,
+            borderSkipped: false,
+            stack: 'sets'
+          }
+        ]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx: any) => {
+                const cat = labels[ctx.dataIndex]
+                const pct = ctx.parsed.x
+                const bucket = movementBalance[ctx.dataIndex]
+                const weight = ctx.dataset.label === 'Shared' ? bucket.sharedWeight : bucket.weight - bucket.sharedWeight
+                const setsText = `${weight.toFixed(weight % 1 ? 1 : 0)} weighted sets`
+                return `${ctx.dataset.label} ${cat}: ${pct}% (${setsText})`
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            stacked: true,
+            min: 0,
+            max: paddedMax,
+            ticks: { color: textColor, callback: (v: number) => `${v}%` },
+            grid: { color: gridColor }
+          },
+          y: {
+            stacked: true,
+            ticks: { color: textColor },
+            grid: { display: false }
+          }
+        }
+      }
+    })
+  }
+
   const loadTodayPlan = async () => {
     planLoading = true
     planError = ''
     todayPlan = null
+    nextPlan = null
     planTotals = null
+    todayPlanParsed = null
+    todaySummary = []
     try {
       const res = await fetch('/api/planned-workouts')
-      if (!res.ok) throw new Error('Failed to load plans')
+    if (!res.ok) throw new Error('Failed to load plans')
       const data = await res.json().catch(() => ({}))
       const items: Planned[] = data?.items ?? []
       const key = dayKey(Date.now())
       todayPlan = items.find((p) => dayKey(p.planned_for) === key) ?? null
-      planTotals = todayPlan ? safeTotalsFromYaml(todayPlan.yaml_source) : null
-    } catch (err) {
-      planError = (err as any)?.message ?? 'Failed to load plans'
-    } finally {
-      planLoading = false
-    }
+      if (!todayPlan) {
+        const upcoming = items
+          .filter((p) => p.planned_for > Date.now())
+          .sort((a, b) => a.planned_for - b.planned_for)
+        nextPlan = upcoming[0] ?? null
+      }
+      if (todayPlan?.yaml_source) {
+        todayPlanParsed = parsePlanFromYaml(todayPlan.yaml_source)
+        planTotals = todayPlanParsed ? computePlanTotals(todayPlanParsed) : safeTotalsFromYaml(todayPlan.yaml_source)
+        todaySummary = todayPlanParsed ? buildPlannedSummary(todayPlanParsed) : []
+      }
+  } catch (err) {
+    planError = (err as any)?.message ?? 'Failed to load plans'
+  } finally {
+    planLoading = false
+  }
   }
 
   const loadHistory = async () => {
@@ -473,31 +746,85 @@
   onDestroy(() => {
     if (unsubscribeShares) unsubscribeShares()
     if (chart) chart.destroy()
+    if (movementChart) movementChart.destroy()
   })
 
   $: if (browser && weekSeries.length && chartEl) {
     updateChart()
   }
+  $: if (browser && movementBalance.length && movementChartEl) {
+    updateMovementChart()
+  }
+  $: if (browser && currentTheme && weekSeries.length && chartEl) {
+    updateChart()
+  }
+  $: if (browser && currentTheme && movementBalance.length && movementChartEl) {
+    updateMovementChart()
+  }
 </script>
 
 <main class="page home">
-  <header class="page-head">
-    <div>
-      <p class="eyebrow">Dashboard</p>
-      <h1>Welcome back</h1>
+  <section class="panel invites-card">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Invites</p>
+        <h2>Shared workouts</h2>
+      </div>
+      <button class="ghost" on:click={() => loadInvites('incoming', 'pending')}>Refresh</button>
     </div>
-    <button class="ghost refresh" on:click={loadAll} aria-label="Refresh dashboard">
-      <i class="ri-refresh-line"></i>
-      Refresh
-    </button>
-  </header>
+    {#if invites.length === 0}
+      <p class="muted">No incoming workouts right now.</p>
+    {:else}
+      <div class="invite-list">
+        {#each invites.slice(0, 4) as invite}
+          {@const dateId = `invite-${invite.id}-date`}
+          <article class="invite">
+            <div class="invite-meta">
+              <h3>{invite.title || 'Shared workout'}</h3>
+              <p class="muted small">
+                From {invite.sender_username ?? 'partner'} • {invite.planned_for ? formatDate(invite.planned_for) : 'No date'}
+              </p>
+              {#if invite.message}<p class="muted small">{invite.message}</p>{/if}
+            </div>
+            <div class="invite-actions">
+              <label class="muted small" for={dateId}>When</label>
+              <input
+                type="date"
+                id={dateId}
+                value={inviteDates[invite.id] || defaultInviteDate(invite)}
+                on:input={(e) => setInviteDate(invite.id, (e.target as HTMLInputElement).value)}
+              />
+              <div class="buttons">
+                <button class="primary" on:click={() => acceptInvite(invite.id)} disabled={!!inviteStatus[invite.id]}>
+                  {inviteStatus[invite.id] || 'Accept'}
+                </button>
+                <button class="ghost danger" on:click={() => rejectInvite(invite.id)} disabled={inviteStatus[invite.id] === 'Updating…'}>
+                  Reject
+                </button>
+              </div>
+              {#if inviteError[invite.id]}<p class="error small">{inviteError[invite.id]}</p>{/if}
+            </div>
+          </article>
+        {/each}
+        {#if invites.length > 4}
+          <p class="muted small">More invites available in Planner.</p>
+        {/if}
+      </div>
+    {/if}
+  </section>
 
   <div class="split">
     <section class="panel today-card">
-      <div class="panel-head">
+      <div class="panel-head today-head">
         <div>
           <p class="eyebrow">Today</p>
-          <h2>{formatDate(Date.now())}</h2>
+          {#if todayPlan}
+            <h2>{todayPlan.title}</h2>
+            <p class="muted small">{formatDate(todayPlan.planned_for)}</p>
+          {:else}
+            <h2>{formatDate(Date.now())}</h2>
+            <p class="muted small">No planned session</p>
+          {/if}
         </div>
         {#if todayPlan}
           <span class="pill success">Planned</span>
@@ -513,37 +840,67 @@
         <button class="ghost" on:click={loadTodayPlan}>Retry</button>
       {:else if todayPlan}
         <div class="today-body">
-          <div class="title-row">
-            <h3>{todayPlan.title}</h3>
-            {#if todayPlan.tags?.length}
-              <div class="tags">
-                {#each todayPlan.tags.slice(0, 4) as tag}
-                  <span class="tag-pill">{tag}</span>
-                {/each}
-                {#if todayPlan.tags.length > 4}
-                  <span class="tag-pill muted">+{todayPlan.tags.length - 4}</span>
-                {/if}
-              </div>
-            {/if}
-          </div>
+          {#if todayPlan.tags?.length}
+            <div class="tags">
+              {#each todayPlan.tags.slice(0, 4) as tag}
+                <span class="tag-pill">{tag}</span>
+              {/each}
+              {#if todayPlan.tags.length > 4}
+                <span class="tag-pill muted">+{todayPlan.tags.length - 4}</span>
+              {/if}
+            </div>
+          {/if}
           {#if todayPlan.notes}
             <p class="muted">{todayPlan.notes}</p>
           {/if}
-          {#if planTotals}
-            <div class="stat-row">
-              <div class="stat">
-                <p class="label">Total</p>
-                <strong>{Math.round(planTotals.total / 60)} min</strong>
+          {#if todayPlanParsed}
+            <SessionOverview
+              totals={planTotals ?? { work: 0, rest: 0, total: 0 }}
+              roundCount={todayPlanParsed?.rounds?.length ?? 0}
+            />
+            {#if todaySummary.length}
+              <div class="compact-summary rich planner-summary">
+                {#each todaySummary as block}
+                  <div class="summary-block">
+                    <div class="summary-title">
+                      {#if block.count && block.count > 1}
+                        <span class="chip-pill pill-count">{block.count} ×</span>
+                      {/if}
+                      {block.title}
+                    </div>
+                    {#if block.items?.length}
+                      <div class="summary-items">
+                        {#each block.items as it}
+                          <span class="summary-chip fancy">
+                            {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                            <span class="chip-pill pill-count">{it.count ?? 1} ×</span>
+                            {#if it.work}
+                              <span class="chip-pill">
+                                <span>{it.work}</span>
+                              </span>
+                            {/if}
+                            {#if it.on || it.off}
+                              <span class="chip-pill pill-rest">
+                                {#if it.on}<span class="on">{it.on}</span>{/if}
+                                {#if it.off}
+                                  <span class="divider">/</span>
+                                  <span class="off">{it.off}</span>
+                                {/if}
+                              </span>
+                            {/if}
+                            {#if !it.label && !it.work && !it.on && !it.off}
+                              <span>{it.baseRaw}</span>
+                            {/if}
+                          </span>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
               </div>
-              <div class="stat">
-                <p class="label">Work</p>
-                <strong>{Math.round(planTotals.work / 60)} min</strong>
-              </div>
-              <div class="stat">
-                <p class="label">Rest</p>
-                <strong>{Math.round(planTotals.rest / 60)} min</strong>
-              </div>
-            </div>
+            {/if}
+          {:else if planTotals}
+            <SessionOverview totals={planTotals} roundCount={todayPlan?.yaml_source ? 0 : 0} />
           {/if}
           <div class="actions">
             <a class="btn primary" href={`/timer?planned=${todayPlan.id}`}>Start timer</a>
@@ -554,6 +911,13 @@
       {:else}
         <div class="empty">
           <p>No planned session today.</p>
+          {#if nextPlan}
+            <div class="next-plan">
+              <p class="label muted small">Next planned</p>
+              <p class="next-title">{nextPlan.title}</p>
+              <p class="muted small">{formatDate(nextPlan.planned_for)}</p>
+            </div>
+          {/if}
           <div class="actions">
             <a class="btn primary" href="/plan">Open planner</a>
             <a class="btn ghost" href="/timer">Start blank timer</a>
@@ -604,24 +968,23 @@
             </div>
           {/if}
         </div>
+        <div class="insights-row">
+          <button class="btn ghost" type="button" on:click={() => (insightsModalOpen = true)}>Ask AI (7d)</button>
+        </div>
         <div class="balance">
           <div class="balance-head">
             <p class="label">Movement mix (last 30d, name heuristic)</p>
-            <span class="hint">Non-standard names fall into “Other”.</span>
+            <span class="hint">Based on sets; shared color = multi-category sets. Total sets: {movementSetCount}</span>
           </div>
           {#if !movementBalance.length}
             <p class="muted small">No recent sets to categorize.</p>
           {:else}
-            <div class="balance-grid">
-              {#each movementBalance as bucket}
-                <div class="balance-row">
-                  <span class="balance-label">{bucket.label}</span>
-                  <div class="bar">
-                    <span style={`width:${Math.min(Math.max(bucket.value, 2), 100)}%`}></span>
-                  </div>
-                  <span class="balance-value">{bucket.value}%</span>
-                </div>
-              {/each}
+            <div class="movement-legend">
+              <span class="swatch pure"></span> Pure
+              <span class="swatch shared"></span> Shared
+            </div>
+            <div class="movement-chart">
+              <canvas bind:this={movementChartEl} style={`height:${movementBalance.length * 36 + 20}px`}></canvas>
             </div>
           {/if}
         </div>
@@ -629,81 +992,66 @@
     </section>
   </div>
 
-  <section class="panel invites-card">
-    <div class="panel-head">
-      <div>
-        <p class="eyebrow">Invites</p>
-        <h2>Shared workouts</h2>
-      </div>
-      <button class="ghost" on:click={() => loadInvites('incoming', 'pending')}>Refresh</button>
-    </div>
-    {#if invites.length === 0}
-      <p class="muted">No incoming workouts right now.</p>
-    {:else}
-      <div class="invite-list">
-        {#each invites.slice(0, 4) as invite}
-          {@const dateId = `invite-${invite.id}-date`}
-          <article class="invite">
-            <div class="invite-meta">
-              <h3>{invite.title || 'Shared workout'}</h3>
-              <p class="muted small">
-                From {invite.sender_username ?? 'partner'} • {invite.planned_for ? formatDate(invite.planned_for) : 'No date'}
-              </p>
-                {#if invite.message}<p class="muted small">{invite.message}</p>{/if}
-              </div>
-              <div class="invite-actions">
-                <label class="muted small" for={dateId}>When</label>
-                <input
-                  type="date"
-                id={dateId}
-                value={inviteDates[invite.id] || defaultInviteDate(invite)}
-                on:input={(e) => setInviteDate(invite.id, (e.target as HTMLInputElement).value)}
-              />
-              <div class="buttons">
-                <button class="primary" on:click={() => acceptInvite(invite.id)} disabled={!!inviteStatus[invite.id]}>
-                  {inviteStatus[invite.id] || 'Accept'}
-                </button>
-                <button class="ghost danger" on:click={() => rejectInvite(invite.id)} disabled={inviteStatus[invite.id] === 'Updating…'}>
-                  Reject
-                </button>
-              </div>
-              {#if inviteError[invite.id]}<p class="error small">{inviteError[invite.id]}</p>{/if}
-            </div>
-          </article>
-        {/each}
-        {#if invites.length > 4}
-          <p class="muted small">More invites available in Planner.</p>
-        {/if}
-      </div>
-    {/if}
-  </section>
-
+  <div class="lower-grid">
   <section class="panel modules">
-    <div class="panel-head">
-      <div>
-        <p class="eyebrow">Shortcuts</p>
-        <h2>Jump to modules</h2>
-      </div>
-    </div>
     <div class="cards">
       {#each modules as mod}
         <a class="card" href={mod.href}>
           <div class="icon">
-            <i class={mod.icon}></i>
+              <i class={mod.icon}></i>
+            </div>
+            <div class="card-body">
+              <h3>{mod.label}</h3>
+              <p class="muted small">{mod.desc}</p>
+            </div>
+          </a>
+        {/each}
+      </div>
+    </section>
+  </div>
+
+  {#if insightsModalOpen}
+    <div class="insights-modal">
+      <div class="insights-panel">
+        <div class="insights-head">
+          <div>
+            <p class="eyebrow">AI insights</p>
+            <h3>Last 7 days</h3>
           </div>
-          <div class="card-body">
-            <h3>{mod.label}</h3>
-            <p class="muted small">{mod.desc}</p>
+          <button class="ghost" type="button" on:click={() => (insightsModalOpen = false)}>✕</button>
+        </div>
+        <textarea
+          placeholder="Ask a question (optional). Default: trends in volume and RPE."
+          bind:value={insightsQuestion}
+        ></textarea>
+        <div class="insights-actions">
+          <button
+            class="primary"
+            type="button"
+            on:click={generateInsights}
+            disabled={insightsLoading || !openAiKey.trim()}
+          >
+            {insightsLoading ? 'Generating…' : 'Generate insights'}
+          </button>
+          <button class="ghost" type="button" on:click={() => (insightsModalOpen = false)}>Close</button>
+          {#if insightsStatus}<span class="muted small">{insightsStatus}</span>{/if}
+          {#if insightsError}<span class="error small">{insightsError}</span>{/if}
+        </div>
+        {#if insightsAnswer}
+          <div class="insights-body" aria-live="polite">
+            {@html insightsHtml || insightsAnswer}
           </div>
-        </a>
-      {/each}
+        {/if}
+      </div>
     </div>
-  </section>
+  {/if}
 </main>
 
 <style>
   .home {
     gap: 1rem;
+    max-width: 1420px;
+    width: 100%;
   }
 
   .page-head {
@@ -713,23 +1061,9 @@
     gap: 0.75rem;
   }
 
-  .page-head h1 {
-    margin: 0;
-  }
-
-  .refresh {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    border-radius: 12px;
-    padding: 0.4rem 0.75rem;
-    border: 1px solid var(--color-border);
-    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
-  }
-
   .split {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
     gap: 1rem;
   }
 
@@ -754,21 +1088,16 @@
     color: var(--color-text-muted);
   }
 
-  .today-card .title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .today-card h3 {
-    margin: 0;
-  }
-
   .tags {
     display: inline-flex;
     gap: 0.35rem;
     flex-wrap: wrap;
+  }
+
+  /* tighten overview grid on home so four stats fit one row */
+  .today-card :global(.overview__grid) {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 0.5rem;
   }
 
   .tag-pill {
@@ -783,27 +1112,16 @@
     color: var(--color-text-muted);
   }
 
-  .stat-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 0.65rem;
-    margin-top: 0.75rem;
-  }
-
-  .stat {
+  .next-plan {
     padding: 0.65rem 0.75rem;
+    border: 1px dashed var(--color-border);
     border-radius: 12px;
-    border: 1px solid var(--color-border);
-    background: color-mix(in srgb, var(--color-surface-2) 75%, transparent);
+    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
   }
 
-  .stat .label {
-    margin: 0 0 0.25rem;
-    color: var(--color-text-muted);
-  }
-
-  .stat strong {
-    font-size: 1.1rem;
+  .next-title {
+    margin: 0.2rem 0;
+    font-weight: 600;
   }
 
   .actions {
@@ -841,8 +1159,8 @@
 
   .week-card .week-stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 0.65rem;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 0.55rem;
   }
 
   .chart-card {
@@ -855,6 +1173,10 @@
 
   .chart-shell {
     height: 220px;
+  }
+
+  .insights-row {
+    margin-top: 0.35rem;
   }
 
   .balance {
@@ -876,40 +1198,100 @@
     color: var(--color-text-muted);
   }
 
-  .balance-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-
-  .balance-row {
-    display: grid;
-    grid-template-columns: 90px 1fr 50px;
-    gap: 0.4rem;
+  .movement-legend {
+    display: inline-flex;
     align-items: center;
-  }
-
-  .balance-label {
-    color: var(--color-text-secondary);
-  }
-
-  .balance-value {
-    text-align: right;
+    gap: 0.5rem;
+    font-size: 0.9rem;
     color: var(--color-text-muted);
   }
 
-  .bar {
-    position: relative;
-    height: 10px;
-    background: color-mix(in srgb, var(--color-border) 60%, transparent);
-    border-radius: 999px;
-    overflow: hidden;
+  .movement-legend .swatch {
+    width: 14px;
+    height: 8px;
+    border-radius: 4px;
+    display: inline-block;
+  }
+  .movement-legend .swatch.pure {
+    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+  }
+  .movement-legend .swatch.shared {
+    background: color-mix(in srgb, var(--color-warning) 60%, transparent);
   }
 
-  .bar span {
-    position: absolute;
+  .movement-chart {
+    margin-top: 0.5rem;
+  }
+
+  .movement-values {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin-top: 0.4rem;
+  }
+
+  .movement-row {
+    display: flex;
+    justify-content: space-between;
+    color: var(--color-text-muted);
+    font-size: 0.95rem;
+  }
+  .movement-label {
+    color: var(--color-text-primary);
+  }
+
+  .insights-modal {
+    position: fixed;
     inset: 0;
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 300;
+    padding: 1rem;
+  }
+  .insights-panel {
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    width: min(640px, 95vw);
+    max-height: 90vh;
+    overflow: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .insights-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .insights-head h3 {
+    margin: 0;
+  }
+  .insights-panel textarea {
+    width: 100%;
+    min-height: 80px;
+    border-radius: 12px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1);
+    color: var(--color-text-primary);
+    padding: 0.75rem;
+  }
+  .insights-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .insights-body {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 0.75rem;
+    background: color-mix(in srgb, var(--color-surface-1) 75%, transparent);
+    max-height: 300px;
+    overflow: auto;
   }
 
   .invites-card .invite-list {
@@ -952,12 +1334,99 @@
     gap: 0.35rem;
     flex-wrap: wrap;
   }
+  /* Compact summary chips (shared with planner) */
+  .compact-summary {
+    margin-top: 0.4rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+    border: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    color: var(--color-text-primary);
+    font-size: 0.95rem;
+  }
+  .compact-summary.rich {
+    gap: 0.4rem;
+  }
+  .summary-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .summary-title {
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .summary-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .summary-chip {
+    padding: 0.25rem 0.5rem;
+    border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-surface-1) 65%, transparent);
+    font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .chip-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  }
+  .summary-chip.fancy .chip-label {
+    font-weight: 600;
+    color: var(--color-text-primary);
+  }
+  .summary-chip.fancy .chip-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-surface-2) 85%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  }
+  .summary-chip.fancy .chip-pill.pill-rest {
+    background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+  }
+  .summary-chip.fancy .chip-pill .on {
+    font-weight: 600;
+  }
+  .summary-chip.fancy .chip-pill .off {
+    opacity: 0.7;
+  }
+  .summary-chip.fancy .chip-pill .divider {
+    opacity: 0.5;
+  }
+  .summary-chip.fancy .chip-pill.pill-count,
+  .chip-pill.pill-count {
+    font-weight: 700;
+    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+  }
+
+  .lower-grid {
+    display: block;
+  }
 
   .modules .cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 0.75rem;
-    margin-top: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 0.85rem 1rem;
+    margin-top: 0.35rem;
+    align-items: stretch;
   }
 
   .modules .card {
@@ -971,6 +1440,7 @@
     color: var(--color-text-primary);
     transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
     text-decoration: none;
+    min-height: 110px;
   }
 
   .modules .card:hover {
@@ -993,6 +1463,12 @@
 
   .modules h3 {
     margin: 0;
+  }
+
+  .ghost {
+    background: transparent;
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border);
   }
 
   .muted.small {
