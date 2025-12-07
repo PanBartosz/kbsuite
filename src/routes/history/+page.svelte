@@ -4,6 +4,7 @@
   import { buildTimeline } from '$lib/timer/lib/timeline'
   import { browser } from '$app/environment'
   import { buildWorkoutSummary } from '$lib/stats/workoutSummary'
+  import { rankSimilarWorkouts } from '$lib/stats/workoutSimilarity'
   import { buildAiPayloadBatch } from '$lib/stats/aiPayload'
   import { settings, openSettingsModal } from '$lib/stores/settings'
   import { getInsightsPrompt, defaultInsightsPrompt } from '$lib/ai/prompts'
@@ -31,6 +32,21 @@
     rpe?: number | null
     tags?: string[]
     sets: CompletedSet[]
+  }
+
+  type CompareTotals = {
+    totalReps: number
+    totalWorkSeconds: number
+    totalSets: number
+    tonnage: number
+    avgWeight: number | null
+  }
+
+  type CompareSuggestion = {
+    workout: CompletedWorkout
+    score: number
+    reasons: string[]
+    totals: CompareTotals
   }
 
   let items: CompletedWorkout[] = []
@@ -78,6 +94,16 @@
   let sharePreviewRows: CompletedSet[] = []
   let shareSelectableRows: { label: string; index: number }[] = []
   let shareRenderMode: 'detailed' | 'summary' = 'detailed'
+  let compareModalOpen = false
+  let compareSource: CompletedWorkout | null = null
+  let compareTarget: CompletedWorkout | null = null
+  let compareSourceTotals: CompareTotals | null = null
+  let compareTargetTotals: CompareTotals | null = null
+  let compareSuggestions: CompareSuggestion[] = []
+  let compareLoading = false
+  let compareError = ''
+  let compareSearch = ''
+  let compareManualOptions: CompletedWorkout[] = []
   let hrAttached: Record<string, boolean> = {}
   let hrRemoveTarget: string | null = null
   let hrRemoveSession: CompletedWorkout | null = null
@@ -571,6 +597,115 @@
     }
   }
 
+  const ensureCompareTotals = (item: CompletedWorkout, provided?: CompareTotals | null) => {
+    if (provided) return provided
+    const t = computeTotals(item)
+    return {
+      totalReps: t.totalReps,
+      totalWorkSeconds: t.totalWorkSeconds,
+      totalSets: t.totalSets,
+      tonnage: t.tonnage,
+      avgWeight: t.avgWeight ?? null
+    }
+  }
+
+  const loadCompareSuggestions = async (item: CompletedWorkout) => {
+    compareLoading = true
+    compareError = ''
+    compareSuggestions = []
+    try {
+      const res = await fetch(`/api/completed-workouts/${item.id}/similar?pool=320&limit=5`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? 'Failed to load comparisons')
+      compareSuggestions =
+        data?.suggestions?.map((s: any) => {
+          const workout: CompletedWorkout = {
+            ...(s.workout ?? {}),
+            tags: Array.isArray(s?.workout?.tags) ? s.workout.tags : [],
+            sets: Array.isArray(s?.workout?.sets) ? s.workout.sets : []
+          }
+          return {
+            workout,
+            score: Number(s.score ?? 0),
+            reasons: Array.isArray(s?.reasons) ? s.reasons : [],
+            totals: ensureCompareTotals(workout)
+          }
+        }) ?? []
+    } catch (err) {
+      compareError = (err as any)?.message ?? 'Failed to load comparisons'
+      try {
+        const ranked = rankSimilarWorkouts(item, items, { limit: 5 })
+        if (ranked.length) {
+          compareSuggestions = ranked.map((r) => ({
+            workout: r.workout as CompletedWorkout,
+            score: r.score,
+            reasons: r.reasons,
+            totals: r.fingerprint.totals
+          }))
+          compareError = `${compareError} (using visible sessions)`
+        }
+      } catch {
+        // ignore fallback errors
+      }
+    } finally {
+      compareLoading = false
+    }
+  }
+
+  const openCompareModal = (item: CompletedWorkout) => {
+    compareModalOpen = true
+    compareSource = item
+    compareTarget = null
+    compareSourceTotals = ensureCompareTotals(item)
+    compareTargetTotals = null
+    compareSuggestions = []
+    compareSearch = ''
+    loadCompareSuggestions(item)
+  }
+
+  const closeCompareModal = () => {
+    compareModalOpen = false
+    compareSource = null
+    compareTarget = null
+    compareSourceTotals = null
+    compareTargetTotals = null
+    compareSuggestions = []
+    compareError = ''
+    compareSearch = ''
+  }
+
+  const chooseCompareTarget = (workout: CompletedWorkout, totals?: CompareTotals | null) => {
+    compareTarget = workout
+    compareTargetTotals = ensureCompareTotals(workout, totals)
+  }
+
+  const matchesCompareSearch = (item: CompletedWorkout, term: string) => {
+    const norm = term.toLowerCase().trim()
+    if (!norm) return true
+    const haystack: string[] = []
+    haystack.push(item.title ?? '')
+    ;(item.tags ?? []).forEach((t) => haystack.push(t))
+    ;(item.sets ?? []).forEach((s) => {
+      if (s.set_label) haystack.push(s.set_label)
+      if (s.round_label) haystack.push(s.round_label)
+    })
+    return haystack.some((v) => v?.toLowerCase?.().includes(norm))
+  }
+
+  const formatTonnage = (value?: number | null) => {
+    if (!Number.isFinite(value as number) || !value) return '-'
+    const rounded = Math.round(value as number)
+    return rounded.toLocaleString()
+  }
+
+  const formatDelta = (a?: number | null, b?: number | null) => {
+    if (!Number.isFinite(a as number) || !Number.isFinite(b as number)) return ''
+    const diff = (a as number) - (b as number)
+    if (diff === 0) return ''
+    const rounded = Math.round(diff)
+    return diff > 0 ? `+${rounded}` : String(rounded)
+  }
+
   $: visibleItems = (() => {
     const list = items
       .filter((item) => matchesFilters(item, searchTerm, dateFilter))
@@ -590,6 +725,15 @@
     // reference hrSummary/hrAttached so reactive responds to changes
     hrSummary && hrAttached
     return list
+  })()
+
+  $: compareManualOptions = (() => {
+    if (!compareSource) return []
+    const srcId = compareSource.id
+    return items
+      .filter((it) => it.id !== srcId)
+      .filter((it) => matchesCompareSearch(it, compareSearch))
+      .slice(0, 20)
   })()
 
   $: monthItems = visibleItems.filter((item) => {
@@ -943,13 +1087,33 @@
   }
 
   const computeTotals = (item: CompletedWorkout) => {
+    let tonnage = 0
+    let weightSum = 0
+    let weightCount = 0
     const totalReps = (item.sets ?? []).reduce((sum, s) => sum + (Number(s.reps) || 0), 0)
     const totalWorkSeconds = (item.sets ?? []).reduce(
       (sum, s) => sum + ((s.type && s.type !== 'work') ? 0 : Number(s.duration_s) || 0),
       0
     )
     const totalSets = (item.sets ?? []).filter((s) => !s.type || s.type === 'work').length
-    return { totalReps, totalWorkSeconds, totalSets }
+    ;(item.sets ?? []).forEach((s) => {
+      const isWork = !s.type || s.type === 'work'
+      if (!isWork) return
+      const reps = Number(s.reps) || 0
+      const weight = Number(s.weight) || 0
+      if (reps && weight) {
+        tonnage += reps * weight
+        weightSum += weight
+        weightCount += 1
+      }
+    })
+    return {
+      totalReps,
+      totalWorkSeconds,
+      totalSets,
+      tonnage,
+      avgWeight: weightCount ? weightSum / weightCount : null
+    }
   }
 
   const formatShort = (seconds?: number | null) => {
@@ -1782,6 +1946,7 @@
       !!shareItem ||
       templateModalOpen ||
       insightsModalOpen ||
+      compareModalOpen ||
       confirmDeleteSetIdx !== null
     document.body.classList.toggle('modal-open', anyModalOpen)
   }
@@ -2479,6 +2644,7 @@
                       >
                         Share
                       </button>
+                      <button class="ghost" on:click={() => openCompareModal(item)}>Compare</button>
                       <button class="text-button" on:click={() => duplicateLog(item)}>Log again</button>
                       <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
                       <button class="ghost" on:click={() => {
@@ -2652,6 +2818,7 @@
               >
                 Share
               </button>
+              <button class="ghost" on:click={() => openCompareModal(item)}>Compare</button>
               <button class="ghost secondary-action" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
               <button class="text-button" on:click={() => duplicateLog(item)}>Log again</button>
               <div class="export-group secondary-action">
@@ -2692,6 +2859,7 @@
                   {#if overflowOpen[item.id]}
                     <div class="overflow-menu">
                       <button on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
+                      <button on:click={() => openCompareModal(item)}>Compare</button>
                       <button on:click={() => copySummary(item)}>Copy</button>
                       <button on:click={() => copyCsv(item)}>CSV</button>
                       <button on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
@@ -3083,6 +3251,508 @@
       {/each}
       </div>
     {/if}
+  {/if}
+
+  {#if compareModalOpen && compareSource}
+    {@const srcTotals = compareSourceTotals ?? ensureCompareTotals(compareSource)}
+    {@const srcSummary = buildWorkoutSummary(compareSource.sets)}
+    <div class="modal-backdrop"></div>
+    <div class="compare-modal">
+      <header class="compare-head">
+        <div>
+          <p class="eyebrow">Compare workouts</p>
+          <h3>{compareSource.title || 'Workout'}</h3>
+          <p class="muted tiny">
+            {formatDate(compareSource.started_at || compareSource.created_at)}
+            {#if compareSource.duration_s} · {formatShort(compareSource.duration_s)}{/if}
+            {#if compareSource.rpe} · RPE {compareSource.rpe}{/if}
+            {#if hrSummary[compareSource.id]}
+              · HR {hrSummary[compareSource.id].avgHr ?? '-'} / {hrSummary[compareSource.id].maxHr ?? '-'}
+            {/if}
+          </p>
+        </div>
+        <div class="compare-head__actions">
+          <button class="ghost small" on:click={() => (compareSource && chooseCompareTarget(compareSource, srcTotals))}>
+            Use as baseline
+          </button>
+          <button class="ghost small" on:click={closeCompareModal}>✕</button>
+        </div>
+      </header>
+      <div class="compare-top">
+        <div class="compare-card">
+          <div class="summary-chips">
+            <span class="chip">{srcTotals.totalSets || '-'} sets</span>
+            <span class="chip">{srcTotals.totalReps || '-'} reps</span>
+            <span class="chip">{formatShort(srcTotals.totalWorkSeconds) || '-'} work</span>
+            {#if srcTotals.tonnage}<span class="chip">{formatTonnage(srcTotals.tonnage)} load</span>{/if}
+            {#if compareSource.rpe}<span class="chip">RPE {compareSource.rpe}</span>{/if}
+          </div>
+          {#if srcSummary.blocks.length}
+            <div class="compact-summary rich">
+              {#each srcSummary.blocks as block}
+                <div class="summary-block">
+                  <div class="summary-title">{block.title}</div>
+                  {#if block.items?.length}
+                    <div class="summary-items">
+                      {#each block.items as it}
+                        <span class="summary-chip fancy">
+                          {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                          {#if it.work}
+                            <span class="chip-pill">
+                              {#if it.count && it.count > 1}<span class="count">{it.count} ×</span>{/if}
+                              <span>{it.work}</span>
+                            </span>
+                          {:else if it.count && it.count > 1}
+                            <span class="chip-pill">
+                              <span class="count">{it.count} ×</span>
+                            </span>
+                          {/if}
+                          {#if it.on || it.off}
+                            <span class="chip-pill pill-rest">
+                              {#if it.on}<span class="on">{it.on}</span>{/if}
+                              {#if it.off}
+                                <span class="divider">/</span>
+                                <span class="off">{it.off}</span>
+                              {/if}
+                            </span>
+                          {/if}
+                          {#if !it.label && !it.work && !it.on && !it.off}
+                            {#if it.count && it.count > 1}<span class="chip-pill"><span class="count">{it.count} ×</span></span>{/if}
+                            <span>{it.baseRaw}</span>
+                          {/if}
+                        </span>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <div class="compare-suggestions">
+          <div class="compare-suggestions__head">
+            <div>
+              <p class="eyebrow">Similar sessions</p>
+              <p class="muted tiny">Ranked by labels, tags, load, and duration.</p>
+            </div>
+            {#if compareError}<span class="error tiny">{compareError}</span>{/if}
+          </div>
+          {#if compareLoading}
+            <p class="muted">Loading suggestions…</p>
+          {:else if compareSuggestions.length === 0}
+            <p class="muted small">No suggestions yet.</p>
+          {:else}
+            <div class="suggestion-list">
+              {#each compareSuggestions as suggestion}
+                {@const t = suggestion.totals ?? ensureCompareTotals(suggestion.workout)}
+                <article class="suggestion-card">
+                  <div class="suggestion-top">
+                    <div>
+                      <strong>{suggestion.workout.title || 'Workout'}</strong>
+                      <p class="muted tiny">
+                        {formatDate(suggestion.workout.started_at || suggestion.workout.created_at)}
+                      </p>
+                    </div>
+                    <span
+                      class="score-pill"
+                      title={suggestion.reasons?.length ? suggestion.reasons.join(' · ') : 'Similarity score'}
+                    >
+                      {suggestion.score.toFixed(2)}
+                    </span>
+                  </div>
+                  <div class="summary-chips">
+                    <span class="chip">{t.totalSets || '-'} sets</span>
+                    <span class="chip">{t.totalReps || '-'} reps</span>
+                    <span class="chip">{formatShort(t.totalWorkSeconds) || '-'} work</span>
+                    {#if t.tonnage}<span class="chip">{formatTonnage(t.tonnage)} load</span>{/if}
+                    {#if suggestion.workout.rpe}<span class="chip">RPE {suggestion.workout.rpe}</span>{/if}
+                  </div>
+                  <div class="mini-buttons">
+                    <button class="primary small" on:click={() => chooseCompareTarget(suggestion.workout, suggestion.totals)}>
+                      Compare this
+                    </button>
+                  </div>
+                </article>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+      <div class="manual-compare">
+        <div class="manual-head">
+          <p class="eyebrow">Pick any session</p>
+          <input
+            type="text"
+            placeholder="Search by title, tag, or label"
+            bind:value={compareSearch}
+          />
+        </div>
+        {#if compareManualOptions.length}
+          <div class="manual-list">
+            {#each compareManualOptions as it}
+              {@const t = ensureCompareTotals(it)}
+              <button class="manual-row" on:click={() => chooseCompareTarget(it, t)}>
+                <div class="manual-row__body">
+                  <strong>{it.title || 'Workout'}</strong>
+                  <p class="muted tiny">
+                    {formatDate(it.started_at || it.created_at)}
+                    {#if it.duration_s} · {formatShort(it.duration_s)}{/if}
+                  </p>
+                </div>
+                <div class="summary-chips">
+                  <span class="chip">{t.totalSets || '-'} sets</span>
+                  <span class="chip">{t.totalReps || '-'} reps</span>
+                  {#if t.totalWorkSeconds}<span class="chip">{formatShort(t.totalWorkSeconds)}</span>{/if}
+                </div>
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <p class="muted small">No matching sessions.</p>
+        {/if}
+      </div>
+      {#if compareTarget}
+        {@const tgtSummary = buildWorkoutSummary(compareTarget.sets)}
+        {@const tgtTotals = compareTargetTotals ?? ensureCompareTotals(compareTarget)}
+        {@const deltaSets = formatDelta(srcTotals.totalSets, tgtTotals.totalSets)}
+        {@const deltaReps = formatDelta(srcTotals.totalReps, tgtTotals.totalReps)}
+        {@const deltaWork = formatDelta(srcTotals.totalWorkSeconds, tgtTotals.totalWorkSeconds)}
+        {@const deltaLoad = formatDelta(srcTotals.tonnage, tgtTotals.tonnage)}
+        {@const deltaAvgWeight = formatDelta(srcTotals.avgWeight, tgtTotals.avgWeight)}
+        {@const deltaDuration = formatDelta(compareSource.duration_s, compareTarget.duration_s)}
+        {@const deltaRpe = formatDelta(compareSource.rpe, compareTarget.rpe)}
+        {@const srcHr = hrDetails[compareSource.id] ?? hrSummary[compareSource.id]}
+        {@const tgtHr = hrDetails[compareTarget.id] ?? hrSummary[compareTarget.id]}
+        {@const deltaAvgHr = formatDelta(srcHr?.avgHr, tgtHr?.avgHr)}
+        {@const deltaMaxHr = formatDelta(srcHr?.maxHr, tgtHr?.maxHr)}
+        <div class="compare-results">
+          <div class="compare-metrics">
+            <div class="metric-row">
+              <div class="metric-label">Sets</div>
+              <div class="metric-values">
+                <span>{srcTotals.totalSets ?? '-'}</span>
+                <span>{tgtTotals.totalSets ?? '-'}</span>
+                {#if deltaSets}
+                  <span class:up={Number(deltaSets) > 0} class:down={Number(deltaSets) < 0} class="delta">
+                    {deltaSets}
+                  </span>
+                {/if}
+              </div>
+            </div>
+            <div class="metric-row">
+              <div class="metric-label">Reps</div>
+              <div class="metric-values">
+                <span>{srcTotals.totalReps ?? '-'}</span>
+                <span>{tgtTotals.totalReps ?? '-'}</span>
+                {#if deltaReps}
+                  <span class:up={Number(deltaReps) > 0} class:down={Number(deltaReps) < 0} class="delta">
+                    {deltaReps}
+                  </span>
+                {/if}
+              </div>
+            </div>
+            <div class="metric-row">
+              <div class="metric-label">Work time</div>
+              <div class="metric-values">
+                <span>{formatShort(srcTotals.totalWorkSeconds) || '-'}</span>
+                <span>{formatShort(tgtTotals.totalWorkSeconds) || '-'}</span>
+                {#if deltaWork}
+                  <span class:up={Number(deltaWork) > 0} class:down={Number(deltaWork) < 0} class="delta">
+                    {deltaWork}
+                  </span>
+                {/if}
+              </div>
+            </div>
+            <div class="metric-row">
+              <div class="metric-label">Load</div>
+              <div class="metric-values">
+                <span>{formatTonnage(srcTotals.tonnage)}</span>
+                <span>{formatTonnage(tgtTotals.tonnage)}</span>
+                {#if deltaLoad}
+                  <span class:up={Number(deltaLoad) > 0} class:down={Number(deltaLoad) < 0} class="delta">
+                    {deltaLoad}
+                  </span>
+                {/if}
+              </div>
+            </div>
+            <div class="metric-row">
+              <div class="metric-label">Avg weight</div>
+              <div class="metric-values">
+                <span>{srcTotals.avgWeight ? srcTotals.avgWeight.toFixed(1) : '-'}</span>
+                <span>{tgtTotals.avgWeight ? tgtTotals.avgWeight.toFixed(1) : '-'}</span>
+                {#if deltaAvgWeight}
+                  <span class:up={Number(deltaAvgWeight) > 0} class:down={Number(deltaAvgWeight) < 0} class="delta">
+                    {deltaAvgWeight}
+                  </span>
+                {/if}
+              </div>
+            </div>
+            <div class="metric-row">
+              <div class="metric-label">Duration</div>
+              <div class="metric-values">
+                <span>{compareSource.duration_s ? formatDuration(compareSource.duration_s) : '-'}</span>
+                <span>{compareTarget.duration_s ? formatDuration(compareTarget.duration_s) : '-'}</span>
+                {#if deltaDuration}
+                  <span class:up={Number(deltaDuration) > 0} class:down={Number(deltaDuration) < 0} class="delta">
+                    {deltaDuration}
+                  </span>
+                {/if}
+              </div>
+            </div>
+            <div class="metric-row">
+              <div class="metric-label">RPE</div>
+              <div class="metric-values">
+                <span>{compareSource.rpe ?? '-'}</span>
+                <span>{compareTarget.rpe ?? '-'}</span>
+                {#if deltaRpe}
+                  <span class:up={Number(deltaRpe) > 0} class:down={Number(deltaRpe) < 0} class="delta">
+                    {deltaRpe}
+                  </span>
+                {/if}
+              </div>
+            </div>
+            {#if srcHr || tgtHr}
+              <div class="metric-row">
+                <div class="metric-label">Avg HR</div>
+                <div class="metric-values">
+                  <span>{srcHr?.avgHr ?? '-'}</span>
+                  <span>{tgtHr?.avgHr ?? '-'}</span>
+                  {#if deltaAvgHr}
+                    <span class:up={Number(deltaAvgHr) > 0} class:down={Number(deltaAvgHr) < 0} class="delta">
+                      {deltaAvgHr}
+                    </span>
+                  {/if}
+                </div>
+              </div>
+              <div class="metric-row">
+                <div class="metric-label">Max HR</div>
+                <div class="metric-values">
+                  <span>{srcHr?.maxHr ?? '-'}</span>
+                  <span>{tgtHr?.maxHr ?? '-'}</span>
+                  {#if deltaMaxHr}
+                    <span class:up={Number(deltaMaxHr) > 0} class:down={Number(deltaMaxHr) < 0} class="delta">
+                      {deltaMaxHr}
+                    </span>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          </div>
+          {#if (hrDetails[compareSource.id]?.samples?.length || hrDetails[compareTarget.id]?.samples?.length)}
+            <div class="compare-hr">
+              {#if hrDetails[compareSource.id]?.samples?.length}
+                {@const s = hrDetails[compareSource.id]?.samples ?? []}
+                {@const maxT = Math.max(...s.map((p) => p.t), 1)}
+                {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
+                {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
+                {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
+                {@const minHr = minHrRaw - padding}
+                {@const maxHr = maxHrRaw + padding}
+                {@const avgLine = hrDetails[compareSource.id]?.avgHr ?? null}
+                {@const maxPoint = s.reduce((acc, p) => (p.hr > acc.hr ? p : acc), s[0] ?? { t: 0, hr: 0 })}
+                <div class="hr-compare-card">
+                  <p class="eyebrow">Source HR</p>
+                  <svg
+                    class="hr-spark"
+                    viewBox="0 0 320 120"
+                    preserveAspectRatio="none"
+                    style:--hr-spark-bg={hrSparkColors.bg}
+                    style:--hr-spark-border={hrSparkColors.border}
+                    style:--hr-spark-line={hrSparkColors.line}
+                    style:--hr-spark-avg={hrSparkColors.avg}
+                    style:--hr-spark-max={hrSparkColors.max}
+                  >
+                    {#if avgLine}
+                      <line
+                        class="avg-line"
+                        x1="0"
+                        x2="320"
+                        y1={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                        y2={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                        stroke-dasharray="4 4"
+                        stroke-width="1.25"
+                      />
+                    {/if}
+                    <polyline
+                      class="hr-line"
+                      fill="none"
+                      stroke-width="2"
+                      points={s
+                        .map((p) => {
+                          const x = (p.t / maxT) * 320
+                          const y = 120 - ((p.hr - minHr) / Math.max(1, maxHr - minHr)) * 120
+                          return `${x},${y}`
+                        })
+                        .join(' ')}
+                    />
+                    {#if s.length}
+                      <circle
+                        class="hr-max"
+                        cx={(maxPoint.t / maxT) * 320}
+                        cy={120 - ((maxPoint.hr - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                        r="5"
+                      />
+                    {/if}
+                  </svg>
+                </div>
+              {/if}
+              {#if hrDetails[compareTarget.id]?.samples?.length}
+                {@const s = hrDetails[compareTarget.id]?.samples ?? []}
+                {@const maxT = Math.max(...s.map((p) => p.t), 1)}
+                {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
+                {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
+                {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
+                {@const minHr = minHrRaw - padding}
+                {@const maxHr = maxHrRaw + padding}
+                {@const avgLine = hrDetails[compareTarget.id]?.avgHr ?? null}
+                {@const maxPoint = s.reduce((acc, p) => (p.hr > acc.hr ? p : acc), s[0] ?? { t: 0, hr: 0 })}
+                <div class="hr-compare-card">
+                  <p class="eyebrow">Target HR</p>
+                  <svg
+                    class="hr-spark"
+                    viewBox="0 0 320 120"
+                    preserveAspectRatio="none"
+                    style:--hr-spark-bg={hrSparkColors.bg}
+                    style:--hr-spark-border={hrSparkColors.border}
+                    style:--hr-spark-line={hrSparkColors.line}
+                    style:--hr-spark-avg={hrSparkColors.avg}
+                    style:--hr-spark-max={hrSparkColors.max}
+                  >
+                    {#if avgLine}
+                      <line
+                        class="avg-line"
+                        x1="0"
+                        x2="320"
+                        y1={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                        y2={120 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                        stroke-dasharray="4 4"
+                        stroke-width="1.25"
+                      />
+                    {/if}
+                    <polyline
+                      class="hr-line"
+                      fill="none"
+                      stroke-width="2"
+                      points={s
+                        .map((p) => {
+                          const x = (p.t / maxT) * 320
+                          const y = 120 - ((p.hr - minHr) / Math.max(1, maxHr - minHr)) * 120
+                          return `${x},${y}`
+                        })
+                        .join(' ')}
+                    />
+                    {#if s.length}
+                      <circle
+                        class="hr-max"
+                        cx={(maxPoint.t / maxT) * 320}
+                        cy={120 - ((maxPoint.hr - minHr) / Math.max(1, maxHr - minHr)) * 120}
+                        r="5"
+                      />
+                    {/if}
+                  </svg>
+                </div>
+              {/if}
+            </div>
+          {/if}
+          <div class="compare-summaries">
+            <div class="summary-col">
+              <header>
+                <p class="eyebrow">Source</p>
+                <strong>{compareSource.title || 'Workout'}</strong>
+              </header>
+              {#if srcSummary.blocks.length}
+                <div class="compact-summary rich">
+                  {#each srcSummary.blocks as block}
+                    <div class="summary-block">
+                      <div class="summary-title">{block.title}</div>
+                      {#if block.items?.length}
+                        <div class="summary-items">
+                          {#each block.items as it}
+                            <span class="summary-chip fancy">
+                              {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                              {#if it.work}
+                                <span class="chip-pill">
+                                  {#if it.count && it.count > 1}<span class="count">{it.count} ×</span>{/if}
+                                  <span>{it.work}</span>
+                                </span>
+                              {:else if it.count && it.count > 1}
+                                <span class="chip-pill">
+                                  <span class="count">{it.count} ×</span>
+                                </span>
+                              {/if}
+                              {#if it.on || it.off}
+                                <span class="chip-pill pill-rest">
+                                  {#if it.on}<span class="on">{it.on}</span>{/if}
+                                  {#if it.off}
+                                    <span class="divider">/</span>
+                                    <span class="off">{it.off}</span>
+                                  {/if}
+                                </span>
+                              {/if}
+                              {#if !it.label && !it.work && !it.on && !it.off}
+                                {#if it.count && it.count > 1}<span class="chip-pill"><span class="count">{it.count} ×</span></span>{/if}
+                                <span>{it.baseRaw}</span>
+                              {/if}
+                            </span>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+            <div class="summary-col">
+              <header>
+                <p class="eyebrow">Target</p>
+                <strong>{compareTarget.title || 'Workout'}</strong>
+              </header>
+              {#if tgtSummary.blocks.length}
+                <div class="compact-summary rich">
+                  {#each tgtSummary.blocks as block}
+                    <div class="summary-block">
+                      <div class="summary-title">{block.title}</div>
+                      {#if block.items?.length}
+                        <div class="summary-items">
+                          {#each block.items as it}
+                            <span class="summary-chip fancy">
+                              {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                              {#if it.work}
+                                <span class="chip-pill">
+                                  {#if it.count && it.count > 1}<span class="count">{it.count} ×</span>{/if}
+                                  <span>{it.work}</span>
+                                </span>
+                              {:else if it.count && it.count > 1}
+                                <span class="chip-pill">
+                                  <span class="count">{it.count} ×</span>
+                                </span>
+                              {/if}
+                              {#if it.on || it.off}
+                                <span class="chip-pill pill-rest">
+                                  {#if it.on}<span class="on">{it.on}</span>{/if}
+                                  {#if it.off}
+                                    <span class="divider">/</span>
+                                    <span class="off">{it.off}</span>
+                                  {/if}
+                                </span>
+                              {/if}
+                              {#if !it.label && !it.work && !it.on && !it.off}
+                                {#if it.count && it.count > 1}<span class="chip-pill"><span class="count">{it.count} ×</span></span>{/if}
+                                <span>{it.baseRaw}</span>
+                              {/if}
+                            </span>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+        </div>
+      {/if}
+    </div>
   {/if}
 
   {#if hrRemoveTarget}
@@ -3502,6 +4172,192 @@
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+  .compare-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(1100px, 96vw);
+    max-height: 92vh;
+    overflow-y: auto;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    padding: 1rem;
+    z-index: 130;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  }
+  .compare-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+  .compare-head__actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+  .compare-top {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 0.75rem;
+    align-items: start;
+  }
+  .compare-card,
+  .compare-suggestions,
+  .manual-compare,
+  .compare-results {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 0.75rem;
+    background: color-mix(in srgb, var(--color-surface-1) 70%, transparent);
+  }
+  .compare-suggestions__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .suggestion-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .suggestion-card {
+    border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+    border-radius: 10px;
+    padding: 0.6rem 0.65rem;
+    background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .suggestion-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .score-pill {
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+    color: var(--color-accent);
+    font-weight: 700;
+  }
+  .manual-compare {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .manual-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .manual-head input {
+    flex: 1;
+    border-radius: 10px;
+    border: 1px solid var(--color-border);
+    padding: 0.45rem 0.6rem;
+    background: var(--color-surface-1);
+    color: var(--color-text-primary);
+  }
+  .manual-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .manual-row {
+    width: 100%;
+    border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+    border-radius: 10px;
+    padding: 0.5rem 0.6rem;
+    background: color-mix(in srgb, var(--color-surface-2) 50%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    text-align: left;
+  }
+  .manual-row__body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .compare-results {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .compare-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .metric-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+    padding: 0.45rem 0.5rem;
+    border-radius: 10px;
+  }
+  .metric-label {
+    color: var(--color-text-muted);
+    min-width: 110px;
+  }
+  .metric-values {
+    display: inline-flex;
+    gap: 0.55rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .delta {
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-border);
+    font-weight: 700;
+  }
+  .delta.up {
+    color: var(--color-accent);
+    border-color: color-mix(in srgb, var(--color-accent) 60%, var(--color-border));
+  }
+  .delta.down {
+    color: var(--color-danger);
+    border-color: color-mix(in srgb, var(--color-danger) 70%, var(--color-border));
+  }
+  .compare-summaries {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 0.75rem;
+  }
+  .summary-col header {
+    margin-bottom: 0.25rem;
+  }
+  .compare-hr {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 0.6rem;
+  }
+  .hr-compare-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  @media (max-width: 900px) {
+    .compare-top {
+      grid-template-columns: 1fr;
+    }
+    .compare-modal {
+      max-height: 90vh;
+    }
   }
   .eyebrow {
     text-transform: uppercase;
@@ -4540,6 +5396,18 @@
     background: var(--color-surface-1);
     color: var(--color-text-primary);
     cursor: pointer;
+  }
+  button.primary {
+    background: color-mix(in srgb, var(--color-accent) 75%, var(--color-surface-1));
+    color: var(--color-text-inverse);
+    border-color: color-mix(in srgb, var(--color-accent) 70%, var(--color-border));
+    font-weight: 700;
+  }
+  button.primary:hover {
+    background: color-mix(in srgb, var(--color-accent) 85%, var(--color-surface-1));
+  }
+  .mini-buttons button.primary {
+    flex: 1;
   }
   button.danger {
     border-color: var(--color-danger);
