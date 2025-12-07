@@ -212,12 +212,13 @@ import '$lib/timer/app.css'
   const loadSavedWorkoutsFromApi = async () => {
     try {
       const res = await fetch('/api/workouts')
-      if (!res.ok) return null
+      if (!res.ok) throw new Error('Failed to load workouts')
       const data = await res.json()
-      if (!Array.isArray(data?.workouts)) return null
+      if (!Array.isArray(data?.workouts)) throw new Error('Invalid workout data')
       return data.workouts.map(workoutFromApi)
     } catch (error) {
       console.warn('Failed to load workouts from API', error)
+      pushToast((error && error.message) || 'Failed to load workouts', 'error')
       return null
     }
   }
@@ -444,6 +445,7 @@ let plan =
   let confirmSavedDeleteId = null
   let savedDeleteError = ''
   let savedDeleteStatus = ''
+  let toasts = []
   let saveName = ''
   let selectedWorkoutId = null
   let fileInputEl
@@ -994,6 +996,10 @@ let plan =
     }
   }
 
+  $: if (typeof document !== 'undefined') {
+    document.body.classList.toggle('modal-open', !!confirmSavedDeleteId)
+  }
+
   onDestroy(() => {
     stopAllSpeech()
     ttsStatusMessage = ''
@@ -1014,6 +1020,7 @@ let plan =
       if (getFullscreenElement() === timerPanelEl) {
         exitFullscreen().catch(() => {})
       }
+      doc.body.classList.remove('modal-open')
     }
   })
 
@@ -2020,6 +2027,7 @@ Rules:
     savedWorkouts = [entry, ...others]
     persistSavedWorkouts(savedWorkouts)
     saveWorkoutToApi(entry, previewResult.plan)
+    pushToast('Workout saved.', 'success')
 
     selectedWorkoutId = id
     saveName = normalizedName
@@ -2038,6 +2046,7 @@ Rules:
     }
     selectedWorkoutId = workout.id
     saveName = workout.name
+    pushToast('Workout loaded.', 'success')
     if (!isTimerRunning) {
       timerStatusMessage = 'Timer idle'
       timerError = null
@@ -2061,12 +2070,25 @@ Rules:
       if (savedDeleteStatus === 'Deleted') savedDeleteStatus = ''
     }, 1500)
     confirmSavedDeleteId = null
+    pushToast('Deleted saved workout.', 'success')
   }
 
   const requestDeleteWorkout = (id) => {
     confirmSavedDeleteId = id
     savedDeleteError = ''
     savedDeleteStatus = ''
+  }
+
+  const pushToast = (message, type = 'info', duration = 2400) => {
+    const id =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random()}`
+    const toast = { id, message, type }
+    toasts = [...toasts, toast]
+    setTimeout(() => {
+      toasts = toasts.filter((t) => t.id !== id)
+    }, duration)
   }
 
   const loadPlannedWorkout = async (id) => {
@@ -2493,6 +2515,23 @@ Rules:
               {savedDeleteStatus || 'Delete'}
             </button>
           </div>
+        </div>
+      {/if}
+      {#if toasts.length}
+        <div class="toast-stack">
+          {#each toasts as toast (toast.id)}
+            <div class={`toast ${toast.type}`}>
+              <span>{toast.message}</span>
+              <button
+                class="ghost icon-btn"
+                aria-label="Dismiss"
+                type="button"
+                on:click={() => (toasts = toasts.filter((t) => t.id !== toast.id))}
+              >
+                ×
+              </button>
+            </div>
+          {/each}
         </div>
       {/if}
 
@@ -4165,6 +4204,36 @@ Rules:
   button.primary:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+  }
+  .toast-stack {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    z-index: 200;
+    pointer-events: none;
+  }
+  .toast {
+    min-width: 240px;
+    padding: 0.65rem 0.85rem;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+    color: var(--color-text-inverse);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    pointer-events: auto;
+    animation: toast-in 220ms ease, toast-out 180ms ease 2.2s forwards;
+  }
+  .toast.error {
+    background: color-mix(in srgb, var(--color-danger) 85%, var(--color-surface-1) 15%);
+    border-color: var(--color-danger);
+    color: var(--color-text-inverse);
   }
 
   .modal-backdrop {

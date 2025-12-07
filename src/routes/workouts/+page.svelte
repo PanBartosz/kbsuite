@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
+  import { browser } from '$app/environment'
 
   type Workout = {
     id: string
@@ -14,7 +15,9 @@
   let workouts: Workout[] = []
   let loading = false
   let error = ''
-  let status = ''
+  type Toast = { id: string; message: string; type: 'info' | 'success' | 'error' }
+  let toasts: Toast[] = []
+  let confirmDeleteName = ''
   let confirmDeleteId: string | null = null
   let deleteError = ''
   let deleteStatus = ''
@@ -30,6 +33,7 @@
     } catch (err) {
       const message = (err as any)?.message ?? 'Failed to load workouts'
       error = message
+      pushToast(message, 'error')
     } finally {
       loading = false
     }
@@ -39,16 +43,16 @@
     if (!yaml) return
     try {
       await navigator.clipboard.writeText(yaml)
-      status = 'Copied workout YAML'
-      setTimeout(() => (status = ''), 2000)
+      pushToast('Copied workout YAML', 'success')
     } catch (err) {
-      status = 'Copy failed'
-      setTimeout(() => (status = ''), 2000)
+      pushToast('Copy failed', 'error')
     }
   }
 
   const requestDeleteWorkout = (id: string, isTemplate?: boolean) => {
     if (isTemplate) return
+    const target = workouts.find((w) => w.id === id)
+    confirmDeleteName = target?.name || ''
     confirmDeleteId = id
     deleteError = ''
     deleteStatus = ''
@@ -65,11 +69,22 @@
       workouts = workouts.filter((w) => w.id !== id)
       confirmDeleteId = null
       deleteStatus = 'Deleted'
+      pushToast('Workout deleted.', 'success')
       setTimeout(() => (deleteStatus = ''), 1500)
     } catch (err) {
       deleteStatus = ''
       deleteError = (err as any)?.message ?? 'Delete failed'
+      pushToast(deleteError, 'error')
     }
+  }
+
+  const pushToast = (message: string, type: Toast['type'] = 'info', duration = 2400) => {
+    const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+    const toast = { id, message, type }
+    toasts = [...toasts, toast]
+    setTimeout(() => {
+      toasts = toasts.filter((t) => t.id !== id)
+    }, duration)
   }
 
   const startInTimer = (id: string) => {
@@ -83,6 +98,14 @@
   }
 
   onMount(loadWorkouts)
+
+  $: if (browser) {
+    document.body.classList.toggle('modal-open', !!confirmDeleteId)
+  }
+
+  onDestroy(() => {
+    if (browser) document.body.classList.remove('modal-open')
+  })
 </script>
 
 <main class="page">
@@ -119,7 +142,7 @@
             <button class="ghost" on:click={() => startInBigPicture(workout.id)}>Start (Big Picture)</button>
             <button class="ghost" on:click={() => copyYaml(workout.yaml_source)}>Copy YAML</button>
             <button
-              class="danger"
+              class="danger destructive"
               disabled={workout.is_template}
               on:click={() => requestDeleteWorkout(workout.id, workout.is_template)}
             >
@@ -131,14 +154,11 @@
     </div>
   {/if}
 
-  {#if status}
-    <p class="status">{status}</p>
-  {/if}
-
   {#if confirmDeleteId}
     <div class="modal-backdrop"></div>
     <div class="confirm-modal">
       <p>Delete this workout?</p>
+      {#if confirmDeleteName}<p class="muted small">{confirmDeleteName}</p>{/if}
       {#if deleteError}<p class="error small">{deleteError}</p>{/if}
       <div class="actions">
         <button
@@ -159,6 +179,17 @@
           {deleteStatus || 'Delete'}
         </button>
       </div>
+    </div>
+  {/if}
+
+  {#if toasts.length}
+    <div class="toast-stack">
+      {#each toasts as toast (toast.id)}
+        <div class={`toast ${toast.type}`}>
+          <span>{toast.message}</span>
+          <button class="ghost icon-btn" aria-label="Dismiss" on:click={() => (toasts = toasts.filter((t) => t.id !== toast.id))}>×</button>
+        </div>
+      {/each}
     </div>
   {/if}
 </main>
@@ -220,6 +251,9 @@
     flex-wrap: wrap;
     justify-content: flex-end;
   }
+  .actions .destructive {
+    margin-left: auto;
+  }
   button {
     padding: 0.45rem 0.8rem;
     border-radius: 10px;
@@ -251,8 +285,54 @@
   .error.small {
     font-size: 0.9rem;
   }
-  .status {
-    color: var(--color-text-muted);
+  .toast-stack {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    z-index: 200;
+    pointer-events: none;
+  }
+  .toast {
+    min-width: 240px;
+    padding: 0.65rem 0.85rem;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+    color: var(--color-text-inverse);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    pointer-events: auto;
+    animation: toast-in 220ms ease, toast-out 180ms ease 2.2s forwards;
+  }
+  .toast.error {
+    background: color-mix(in srgb, var(--color-danger) 85%, var(--color-surface-1) 15%);
+    border-color: var(--color-danger);
+    color: var(--color-text-inverse);
+  }
+  :global(body.modal-open) {
+    overflow: hidden;
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(-10px) translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) translateX(0);
+    }
+  }
+  @keyframes toast-out {
+    to {
+      opacity: 0;
+      transform: translateY(-6px) translateX(8px);
+    }
   }
   .modal-backdrop {
     position: fixed;

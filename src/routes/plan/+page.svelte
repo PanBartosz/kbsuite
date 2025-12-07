@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import YAML from 'yaml'
   import defaultPlanSource from '$lib/timer/config/default-plan.yaml?raw'
   import { buildTimeline } from '$lib/timer/lib/timeline.js'
@@ -20,6 +20,7 @@
   import SharePlanModal from '$lib/components/SharePlanModal.svelte'
   import { defaultAiSystemPrompt } from '$lib/ai/prompts'
   import { loadInvites, loadPendingCount, shares } from '$lib/stores/shares'
+  import { browser } from '$app/environment'
   import type { SummaryBlock, SummaryItem } from '$lib/stats/workoutSummary'
 
   type Planned = {
@@ -84,8 +85,11 @@
   let inviteStatus: Record<string, string> = {}
   let inviteError: Record<string, string> = {}
   let confirmDeleteId: string | null = null
+  let confirmDeletePlan: Planned | null = null
   let deleteStatus = ''
   let deleteError = ''
+  type Toast = { id: string; message: string; type: 'info' | 'success' | 'error' }
+  let toasts: Toast[] = []
 
   const dayKey = (ts: number) => {
     const d = new Date(ts)
@@ -255,8 +259,10 @@
       await loadPlans()
       editOpen = false
       computeToday()
+      pushToast('Planned workout saved.', 'success')
     } catch (err) {
       error = (err as any)?.message ?? 'Failed to save plan'
+      pushToast(error, 'error')
     }
   }
 
@@ -291,8 +297,10 @@
       calendarMonth = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
       await loadPlans()
       computeToday()
+      pushToast('Workout duplicated.', 'success')
     } catch (err) {
       error = (err as any)?.message ?? 'Failed to duplicate plan'
+      pushToast(error, 'error')
     } finally {
       closeDuplicate()
     }
@@ -315,11 +323,13 @@
       await loadPlans()
       computeToday()
       deleteStatus = 'Deleted'
+      pushToast('Planned workout deleted.', 'success')
       setTimeout(() => (deleteStatus = ''), 1500)
       confirmDeleteId = null
     } catch (err) {
       deleteStatus = ''
       deleteError = (err as any)?.message ?? 'Failed to delete plan'
+      pushToast(deleteError, 'error')
     }
   }
 
@@ -349,12 +359,14 @@
       await loadInvites('incoming', 'pending')
       await loadPlans()
       inviteStatus = { ...inviteStatus, [id]: 'Added to planner.' }
+      pushToast('Invite added to planner.', 'success')
       setTimeout(() => {
         inviteStatus = { ...inviteStatus, [id]: '' }
       }, 2000)
     } catch (err) {
       inviteError = { ...inviteError, [id]: (err as any)?.message ?? 'Failed to accept' }
       inviteStatus = { ...inviteStatus, [id]: '' }
+      pushToast(inviteError[id] || 'Failed to accept invite', 'error')
     }
   }
 
@@ -372,12 +384,14 @@
       await loadPendingCount()
       await loadInvites('incoming', 'pending')
       inviteStatus = { ...inviteStatus, [id]: 'Rejected.' }
+      pushToast('Invite rejected.', 'success')
       setTimeout(() => {
         inviteStatus = { ...inviteStatus, [id]: '' }
       }, 1500)
     } catch (err) {
       inviteError = { ...inviteError, [id]: (err as any)?.message ?? 'Failed to reject' }
       inviteStatus = { ...inviteStatus, [id]: '' }
+      pushToast(inviteError[id] || 'Failed to reject invite', 'error')
     }
   }
 
@@ -393,6 +407,15 @@
   }
 
   const openSettings = () => openSettingsModal()
+
+  const pushToast = (message: string, type: Toast['type'] = 'info', duration = 2400) => {
+    const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+    const toast = { id, message, type }
+    toasts = [...toasts, toast]
+    setTimeout(() => {
+      toasts = toasts.filter((t) => t.id !== id)
+    }, duration)
+  }
 
   const coerceSeconds = (value: any) => {
     const numeric = Number(value)
@@ -820,10 +843,12 @@
       editTitle = previewResult.plan?.title ?? editTitle
       aiStatus = 'Workout generated. Review and adjust as needed.'
       aiError = ''
+      pushToast('Workout generated from AI.', 'success')
     } catch (error) {
       console.warn('OpenAI workout generation error', error)
       aiError = (error as any)?.message ?? 'Failed to generate workout.'
       aiStatus = ''
+      pushToast(aiError || 'Failed to generate workout.', 'error')
     } finally {
       isGenerating = false
     }
@@ -881,10 +906,12 @@
       applyYamlSource(yaml)
       aiEditStatus = 'Workout updated. Review and apply changes as needed.'
       aiEditError = ''
+      pushToast('Workout updated.', 'success')
     } catch (error) {
       console.warn('OpenAI workout edit error', error)
       aiEditError = (error as any)?.message ?? 'Failed to modify workout.'
       aiEditStatus = ''
+      pushToast(aiEditError || 'Failed to modify workout.', 'error')
     } finally {
       isAiEditing = false
     }
@@ -939,6 +966,26 @@
     loadPendingCount()
     loadInvites('incoming', 'pending')
   })
+
+  $: if (browser) {
+    const anyModalOpen =
+      duplicateOpen ||
+      !!confirmDeleteId ||
+      shareModalOpen ||
+      editOpen ||
+      showYamlHelp ||
+      planEditorOpen ||
+      roundEditorOpen ||
+      setEditorOpen ||
+      libraryModalOpen
+    document.body.classList.toggle('modal-open', anyModalOpen)
+  }
+
+  $: confirmDeletePlan = confirmDeleteId ? plans.find((p) => p.id === confirmDeleteId) ?? null : null
+
+  onDestroy(() => {
+    if (browser) document.body.classList.remove('modal-open')
+  })
 </script>
 
 <main class="page">
@@ -974,10 +1021,10 @@
           <div class="today-actions">
             <button class="primary" on:click={() => openTimer(todayPlan!, 'timer')}>Start in Timer</button>
             <button class="ghost" on:click={() => openTimer(todayPlan!, 'big')}>Start in Big Picture</button>
-            <button class="ghost" on:click={() => openShare(todayPlan!)}>Share</button>
             <button class="ghost" on:click={() => openEdit(todayPlan!)}>Edit</button>
+            <button class="ghost" on:click={() => openShare(todayPlan!)}>Share</button>
             <button class="text-button" on:click={() => openDuplicate(todayPlan!)}>Duplicate</button>
-            <button class="ghost danger" on:click={() => requestDeletePlan(todayPlan!.id)}>Delete</button>
+            <button class="ghost danger destructive" on:click={() => requestDeletePlan(todayPlan!.id)}>Delete</button>
           </div>
         </div>
       {:else}
@@ -1237,9 +1284,9 @@
                   <button class="primary" on:click={() => openTimer(item, 'timer')}>Timer</button>
                   <button class="ghost" on:click={() => openTimer(item, 'big')}>Big Picture</button>
                   <button class="ghost" on:click={() => openEdit(item)}>Edit</button>
-                  <button class="text-button" on:click={() => openDuplicate(item)}>Duplicate</button>
                   <button class="ghost" on:click={() => openShare(item)}>Share</button>
-                  <button class="ghost danger" on:click={() => requestDeletePlan(item.id)}>Delete</button>
+                  <button class="text-button" on:click={() => openDuplicate(item)}>Duplicate</button>
+                  <button class="ghost danger destructive" on:click={() => requestDeletePlan(item.id)}>Delete</button>
                 </div>
               </div>
               {#if timelineForYaml(item.yaml_source).length}
@@ -1329,6 +1376,7 @@
   <div class="modal-backdrop"></div>
   <div class="confirm-modal">
     <p>Delete this planned workout?</p>
+    <p class="muted small">{confirmDeletePlan?.title || 'Planned workout'}</p>
     {#if deleteError}<p class="error small">{deleteError}</p>{/if}
     <div class="actions">
       <button
@@ -1361,8 +1409,10 @@
     on:shared={() => {
       loadPendingCount()
       loadInvites('incoming', 'pending')
+      pushToast('Workout shared.', 'success')
       closeShare()
     }}
+    on:error={(e) => pushToast(e.detail?.message || 'Failed to share workout', 'error')}
     on:close={closeShare}
   />
 {/if}
@@ -1459,7 +1509,18 @@
         <button class="ghost" on:click={() => (editOpen = false)}>Cancel</button>
       </div>
   </div>
-  {/if}
+{/if}
+
+{#if toasts.length}
+  <div class="toast-stack">
+    {#each toasts as toast (toast.id)}
+      <div class={`toast ${toast.type}`}>
+        <span>{toast.message}</span>
+        <button class="ghost icon-btn" aria-label="Dismiss" on:click={() => (toasts = toasts.filter((t) => t.id !== toast.id))}>×</button>
+      </div>
+    {/each}
+  </div>
+{/if}
 
 <YamlHelpModal open={showYamlHelp} on:close={() => (showYamlHelp = false)} />
 <PlanEditorModal
@@ -1523,10 +1584,13 @@
   }
   .today-actions {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.35rem;
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
+  }
+  .today-actions .destructive {
+    margin-left: auto;
   }
   .calendar-shell {
     display: flex;
@@ -1569,7 +1633,12 @@
   }
   .day.active {
     border-color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-2));
+    background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface-2));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 20%, transparent);
+  }
+  .day:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
   }
   .day-top {
     display: flex;
@@ -1678,6 +1747,9 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
+  }
+  .actions .destructive {
+    margin-left: auto;
   }
   .confirm-modal {
     position: fixed;
@@ -1937,6 +2009,55 @@
   .chip-pill.pill-count {
     font-weight: 700;
     background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+  }
+  .toast-stack {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    z-index: 200;
+    pointer-events: none;
+  }
+  .toast {
+    min-width: 240px;
+    padding: 0.65rem 0.85rem;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+    color: var(--color-text-inverse);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    pointer-events: auto;
+    animation: toast-in 220ms ease, toast-out 180ms ease 2.2s forwards;
+  }
+  .toast.error {
+    background: color-mix(in srgb, var(--color-danger) 85%, var(--color-surface-1) 15%);
+    border-color: var(--color-danger);
+    color: var(--color-text-inverse);
+  }
+  :global(body.modal-open) {
+    overflow: hidden;
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(-10px) translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) translateX(0);
+    }
+  }
+  @keyframes toast-out {
+    to {
+      opacity: 0;
+      transform: translateY(-6px) translateX(8px);
+    }
   }
   @media (max-width: 720px) {
     .today-head {

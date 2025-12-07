@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import YAML from 'yaml'
   import { buildTimeline } from '$lib/timer/lib/timeline'
   import { browser } from '$app/environment'
@@ -36,7 +36,6 @@
   let items: CompletedWorkout[] = []
   let loading = false
   let error = ''
-  let status = ''
   let editingId: string | null = null
   let editSets: CompletedSet[] = []
   let editTitle = ''
@@ -48,7 +47,8 @@
   let editTags: string[] = []
   let newTagInput = ''
   let confirmDeleteSetIdx: number | null = null
-  let newWorkoutStatus = ''
+  type Toast = { id: string; message: string; type: 'info' | 'success' | 'error' }
+  let toasts: Toast[] = []
   let searchTerm = ''
   let dateFilter: 'all' | '7' | '30' = 'all'
   let visibleItems: CompletedWorkout[] = []
@@ -80,6 +80,8 @@
   let shareRenderMode: 'detailed' | 'summary' = 'detailed'
   let hrAttached: Record<string, boolean> = {}
   let hrRemoveTarget: string | null = null
+  let hrRemoveSession: CompletedWorkout | null = null
+  let confirmDeleteSession: CompletedWorkout | null = null
   let hrRemoveError = ''
   let hrRemoveStatus = ''
   let uploadTargetId: string | null = null
@@ -187,10 +189,12 @@
       uploadStatus = { ...uploadStatus, [id]: 'Removed' }
       hrRemoveStatus = 'Removed'
       hrRemoveTarget = null
+      pushToast('HR file removed.', 'success')
     } catch (err) {
       uploadStatus = { ...uploadStatus, [id]: (err as any)?.message ?? 'Remove failed' }
       hrRemoveStatus = ''
       hrRemoveError = (err as any)?.message ?? 'Remove failed'
+      pushToast(hrRemoveError, 'error')
     } finally {
       setTimeout(() => {
         uploadStatus = { ...uploadStatus, [id]: '' }
@@ -199,6 +203,15 @@
         if (hrRemoveStatus === 'Removed') hrRemoveStatus = ''
       }, 2000)
     }
+  }
+
+  const pushToast = (message: string, type: Toast['type'] = 'info', duration = 2400) => {
+    const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+    const toast = { id, message, type }
+    toasts = [...toasts, toast]
+    setTimeout(() => {
+      toasts = toasts.filter((t) => t.id !== id)
+    }, duration)
   }
 
   const requestRemoveHrFile = (id: string) => {
@@ -645,11 +658,9 @@
   const copySummary = async (item: CompletedWorkout) => {
     try {
       await navigator.clipboard.writeText(formatSummary(item))
-      status = 'Copied summary'
-      setTimeout(() => (status = ''), 2000)
+      pushToast('Copied summary', 'success')
     } catch (err) {
-      status = 'Copy failed'
-      setTimeout(() => (status = ''), 2000)
+      pushToast('Copy failed', 'error')
     }
   }
 
@@ -657,11 +668,9 @@
     try {
       const { text } = buildWorkoutSummary(item.sets)
       await navigator.clipboard.writeText(text || '')
-      status = 'Copied compact summary'
-      setTimeout(() => (status = ''), 2000)
+      pushToast('Copied compact summary', 'success')
     } catch (err) {
-      status = 'Copy failed'
-      setTimeout(() => (status = ''), 2000)
+      pushToast('Copy failed', 'error')
     }
   }
 
@@ -703,11 +712,9 @@
       if (data?.item) {
         items = [data.item, ...items]
       }
-      status = 'Duplicated'
+      pushToast('Log duplicated.', 'success')
     } catch (err) {
-      status = (err as any)?.message ?? 'Duplicate failed'
-    } finally {
-      setTimeout(() => (status = ''), 2000)
+      pushToast((err as any)?.message ?? 'Duplicate failed', 'error')
     }
   }
 
@@ -732,11 +739,9 @@
       if (data?.item) {
         items = [data.item, ...items]
       }
-      newWorkoutStatus = 'Created empty session log.'
+      pushToast('Created empty session log.', 'success')
     } catch (err) {
-      newWorkoutStatus = (err as any)?.message ?? 'Create failed'
-    } finally {
-      setTimeout(() => (newWorkoutStatus = ''), 2500)
+      pushToast((err as any)?.message ?? 'Create failed', 'error')
     }
   }
 
@@ -837,11 +842,9 @@
       if (result?.item) {
         items = [result.item, ...items]
       }
-      newWorkoutStatus = 'Logged from template.'
+      pushToast('Logged from template.', 'success')
     } catch (err) {
-      newWorkoutStatus = (err as any)?.message ?? 'Copy failed'
-    } finally {
-      setTimeout(() => (newWorkoutStatus = ''), 2500)
+      pushToast((err as any)?.message ?? 'Copy failed', 'error')
     }
   }
 
@@ -968,11 +971,9 @@
       .join('\n')
     try {
       await navigator.clipboard.writeText(csv)
-      status = 'Copied CSV'
+      pushToast('Copied CSV', 'success')
     } catch {
-      status = 'Copy failed'
-    } finally {
-      setTimeout(() => (status = ''), 2000)
+      pushToast('Copy failed', 'error')
     }
   }
 
@@ -1720,12 +1721,10 @@
             }
           : it
       )
-      status = 'Saved'
-      setTimeout(() => (status = ''), 2000)
+      pushToast('Session updated.', 'success')
       cancelEdit()
     } catch (err) {
-      status = (err as any)?.message ?? 'Save failed'
-      setTimeout(() => (status = ''), 2000)
+      pushToast((err as any)?.message ?? 'Save failed', 'error')
     }
   }
 
@@ -1766,6 +1765,24 @@
     const observer = new MutationObserver(() => computeHrSparkColors())
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
     return () => observer.disconnect()
+  })
+
+  $: if (browser) {
+    const anyModalOpen =
+      !!hrRemoveTarget ||
+      !!confirmDeleteId ||
+      !!shareItem ||
+      templateModalOpen ||
+      insightsModalOpen ||
+      confirmDeleteSetIdx !== null
+    document.body.classList.toggle('modal-open', anyModalOpen)
+  }
+
+  $: hrRemoveSession = hrRemoveTarget ? items.find((i) => i.id === hrRemoveTarget) ?? null : null
+  $: confirmDeleteSession = confirmDeleteId ? items.find((i) => i.id === confirmDeleteId) ?? null : null
+
+  onDestroy(() => {
+    if (browser) document.body.classList.remove('modal-open')
   })
 
   const refreshSharePreview = async () => {
@@ -1885,9 +1902,6 @@
           </button>
         </div>
       </div>
-      {#if newWorkoutStatus}
-        <span class="status">{newWorkoutStatus}</span>
-      {/if}
     </div>
 
     {#if viewMode === 'calendar'}
@@ -2448,15 +2462,6 @@
                     </div>
                     <div class="actions">
                       <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
-                      <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
-                      <button class="ghost" on:click={() => {
-                        uploadTargetId = item.id
-                        if (fileInputEl) fileInputEl.click()
-                      }}>
-                        {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
-                      </button>
-                      <button class="ghost" on:click={() => copySummary(item)}>Copy</button>
-                      <button class="ghost" on:click={() => copyCsv(item)}>CSV</button>
                       <button
                         class="ghost"
                         on:click={() => {
@@ -2468,13 +2473,23 @@
                       >
                         Share
                       </button>
+                      <button class="text-button" on:click={() => duplicateLog(item)}>Log again</button>
+                      <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
+                      <button class="ghost" on:click={() => {
+                        uploadTargetId = item.id
+                        if (fileInputEl) fileInputEl.click()
+                      }}>
+                        {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
+                        {#if hrAttached[item.id]}<span class="hr-badge">Attached</span>{/if}
+                      </button>
+                      <button class="ghost" on:click={() => copySummary(item)}>Copy</button>
+                      <button class="ghost" on:click={() => copyCsv(item)}>CSV</button>
                       <button class="ghost" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
                       <button class="ghost" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
-                      <button class="ghost" on:click={() => duplicateLog(item)}>Log again</button>
                       {#if hrAttached[item.id] || hrSummary[item.id]}
                         <button class="ghost danger" on:click={() => requestRemoveHrFile(item.id)}>Remove HR file</button>
                       {/if}
-                      <button class="danger" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
+                      <button class="danger destructive" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
                     </div>
                     {#if uploadStatus[item.id]}
                       <p class="muted small">{uploadStatus[item.id]}</p>
@@ -2933,34 +2948,35 @@
               </div>
                     <div class="actions">
                       <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
+                      <button
+                        class="ghost"
+                        on:click={() => {
+                          shareItem = item
+                          shareShowReps = true
+                          shareShowWork = true
+                          shareShowSets = true
+                        }}
+                      >
+                        Share
+                      </button>
+                      <button class="text-button" on:click={() => duplicateLog(item)}>Log again</button>
                       <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
-                      <button class="ghost" on:click={() => copyCompactSummary(item)}>Copy summary</button>
                       <button class="ghost" on:click={() => {
                         uploadTargetId = item.id
                         if (fileInputEl) fileInputEl.click()
                       }}>
-                  {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
-                </button>
-                <button class="ghost" on:click={() => copySummary(item)}>Copy</button>
-                <button class="ghost" on:click={() => copyCsv(item)}>CSV</button>
-                <button
-                  class="ghost"
-                  on:click={() => {
-                    shareItem = item
-                    shareShowReps = true
-                    shareShowWork = true
-                    shareShowSets = true
-                  }}
-                >
-                  Share
-                </button>
-                <button class="ghost" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
-                <button class="ghost" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
-                <button class="ghost" on:click={() => duplicateLog(item)}>Log again</button>
-                {#if hrAttached[item.id] || hrSummary[item.id]}
-                  <button class="ghost danger" on:click={() => requestRemoveHrFile(item.id)}>Remove HR file</button>
-                {/if}
-                <button class="danger" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
+                        {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
+                        {#if hrAttached[item.id]}<span class="hr-badge">Attached</span>{/if}
+                      </button>
+                      <button class="ghost" on:click={() => copySummary(item)}>Copy</button>
+                      <button class="ghost" on:click={() => copyCompactSummary(item)}>Copy summary</button>
+                      <button class="ghost" on:click={() => copyCsv(item)}>CSV</button>
+                      <button class="ghost" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
+                      <button class="ghost" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
+                      {#if hrAttached[item.id] || hrSummary[item.id]}
+                        <button class="ghost danger" on:click={() => requestRemoveHrFile(item.id)}>Remove HR file</button>
+                      {/if}
+                      <button class="danger destructive" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
               </div>
               {#if uploadStatus[item.id]}
                 <p class="muted small">{uploadStatus[item.id]}</p>
@@ -2975,13 +2991,15 @@
     {/if}
   {/if}
 
-  {#if status}
-    <p class="status">{status}</p>
-  {/if}
   {#if hrRemoveTarget}
     <div class="modal-backdrop"></div>
     <div class="confirm-modal">
       <p>Remove HR file from this session?</p>
+      {#if hrRemoveSession}
+        <p class="muted small">
+          {hrRemoveSession.title || 'Workout'} · {formatDate(hrRemoveSession.started_at || hrRemoveSession.created_at)}
+        </p>
+      {/if}
       {#if hrRemoveError}<p class="error small">{hrRemoveError}</p>{/if}
       <div class="actions">
         <button
@@ -3026,10 +3044,15 @@
     <div class="modal-backdrop"></div>
     <div class="confirm-modal">
       <p>Delete this session?</p>
+      {#if confirmDeleteSession}
+        <p class="muted small">
+          {confirmDeleteSession.title || 'Workout'} · {formatDate(confirmDeleteSession.started_at || confirmDeleteSession.created_at)}
+        </p>
+      {/if}
       <div class="actions">
         <button class="ghost" on:click={() => (confirmDeleteId = null)}>Cancel</button>
         <button
-          class="danger"
+          class="danger destructive"
           on:click={() => {
             if (confirmDeleteId) deleteItem(confirmDeleteId)
             confirmDeleteId = null
@@ -3038,6 +3061,17 @@
           Delete
         </button>
       </div>
+    </div>
+  {/if}
+
+  {#if toasts.length}
+    <div class="toast-stack">
+      {#each toasts as toast (toast.id)}
+        <div class={`toast ${toast.type}`}>
+          <span>{toast.message}</span>
+          <button class="ghost icon-btn" aria-label="Dismiss" on:click={() => (toasts = toasts.filter((t) => t.id !== toast.id))}>×</button>
+        </div>
+      {/each}
     </div>
   {/if}
 
@@ -3788,6 +3822,81 @@
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+  .text-button {
+    background: transparent;
+    border: none;
+    color: var(--color-accent);
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0.2rem 0.35rem;
+  }
+  .text-button:hover {
+    color: var(--color-accent-hover);
+    text-decoration: underline;
+  }
+  .actions .destructive {
+    margin-left: auto;
+  }
+  .hr-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+    color: var(--color-accent);
+    margin-left: 0.35rem;
+    font-size: 0.8rem;
+  }
+  .toast-stack {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    z-index: 220;
+    pointer-events: none;
+  }
+  .toast {
+    min-width: 240px;
+    padding: 0.65rem 0.85rem;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+    color: var(--color-text-inverse);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    pointer-events: auto;
+    animation: toast-in 220ms ease, toast-out 180ms ease 2.2s forwards;
+  }
+  .toast.error {
+    background: color-mix(in srgb, var(--color-danger) 85%, var(--color-surface-1) 15%);
+    border-color: var(--color-danger);
+    color: var(--color-text-inverse);
+  }
+  :global(body.modal-open) {
+    overflow: hidden;
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(-10px) translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) translateX(0);
+    }
+  }
+  @keyframes toast-out {
+    to {
+      opacity: 0;
+      transform: translateY(-6px) translateX(8px);
+    }
   }
   .summary-actions {
     display: flex;
