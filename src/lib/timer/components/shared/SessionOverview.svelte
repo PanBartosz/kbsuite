@@ -1,6 +1,7 @@
 <script lang="ts">
   export let totals: { work: number; rest: number; total: number } = { work: 0, rest: 0, total: 0 }
   export let roundCount = 0
+  export let variant: 'default' | 'mini' = 'default'
 
   const formatDuration = (seconds?: number | null) => {
     const safe = Number(seconds)
@@ -12,7 +13,7 @@
   }
 </script>
 
-<section class="overview">
+<section class={`overview ${variant === 'mini' ? 'mini' : ''}`}>
   <h3>Session overview</h3>
   <div class="overview__grid">
     <div class="overview__item">
@@ -40,14 +41,24 @@
     flex-direction: column;
     gap: 0.5rem;
   }
+  .overview.mini {
+    gap: 0.35rem;
+  }
   .overview h3 {
     margin: 0;
     font-size: 1rem;
+  }
+  .overview.mini h3 {
+    font-size: 0.95rem;
+    opacity: 0.9;
   }
   .overview__grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 0.65rem;
+  }
+  .overview.mini .overview__grid {
+    gap: 0.45rem;
   }
   .overview__item {
     border: 1px solid var(--color-border, #1f2a40);
@@ -55,12 +66,23 @@
     padding: 0.65rem 0.75rem;
     background: color-mix(in srgb, var(--color-surface-1, #0d1628) 60%, transparent);
   }
+  .overview.mini .overview__item {
+    padding: 0.5rem 0.65rem;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-surface-1, #0d1628) 45%, transparent);
+  }
   .overview__item span {
     color: var(--color-text-muted, #94a3b8);
     font-size: 0.9rem;
   }
+  .overview.mini .overview__item span {
+    font-size: 0.85rem;
+  }
   .overview__item strong {
     display: block;
     font-size: 1.2rem;
+  }
+  .overview.mini .overview__item strong {
+    font-size: 1.05rem;
   }
 </style>

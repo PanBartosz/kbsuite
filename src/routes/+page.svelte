@@ -1207,7 +1207,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
                   {/each}
                 </div>
               {:else if nextPlanTotals}
-                <SessionOverview totals={nextPlanTotals} roundCount={0} class="mini" />
+                <SessionOverview totals={nextPlanTotals} roundCount={0} variant="mini" />
               {/if}
             </div>
           {/if}
