@@ -1789,9 +1789,10 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   .compact-summary.mini {
     font-size: 0.85rem;
     padding: 0.5rem 0.65rem;
-    background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
-    border-color: color-mix(in srgb, var(--color-border) 80%, transparent);
+    background: color-mix(in srgb, var(--color-surface-2) 45%, transparent);
+    border-color: color-mix(in srgb, var(--color-border) 65%, transparent);
     gap: 0.25rem;
+    color: var(--color-text-muted);
   }
   .summary-block {
     display: flex;
@@ -1863,12 +1864,15 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     font-size: 0.82rem;
     padding: 0.18rem 0.4rem;
     gap: 0.25rem;
-    background: color-mix(in srgb, var(--color-surface-1) 45%, transparent);
+    background: color-mix(in srgb, var(--color-surface-1) 35%, transparent);
+    border-color: color-mix(in srgb, var(--color-border) 60%, transparent);
   }
   .compact-summary.mini .chip-pill {
     padding: 0.12rem 0.35rem;
     gap: 0.2rem;
-    background: color-mix(in srgb, var(--color-surface-2) 65%, transparent);
+    background: color-mix(in srgb, var(--color-surface-2) 50%, transparent);
+    border-color: color-mix(in srgb, var(--color-border) 55%, transparent);
+    color: color-mix(in srgb, var(--color-text-muted) 90%, var(--color-text-primary) 10%);
   }
   .compact-summary.mini .summary-title {
     gap: 0.25rem;
