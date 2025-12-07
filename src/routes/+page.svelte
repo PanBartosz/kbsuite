@@ -59,10 +59,13 @@
   let todayPlan: Planned | null = null
   let nextPlan: Planned | null = null
   let planTotals: Totals | null = null
-let todayPlanParsed: any | null = null
-let todaySummary: PlannedSummaryBlock[] = []
-let planLoading = false
-let planError = ''
+  let todayPlanParsed: any | null = null
+  let todaySummary: PlannedSummaryBlock[] = []
+  let nextPlanParsed: any | null = null
+  let nextSummary: PlannedSummaryBlock[] = []
+  let nextPlanTotals: Totals | null = null
+  let planLoading = false
+  let planError = ''
 
   type WindowRange = 7 | 30
 
@@ -513,33 +516,38 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   const buildTrendSeries = (values: number[], range: WindowRange) => {
     if (!values.length) return []
     if (range === 7) {
-      // Short window: use exponential smoothing to soften rest-day dips while still showing direction.
-      return emaSmooth(values, 0.35)
+      // Short window: use gentler exponential smoothing to soften rest-day dips without overreacting.
+      return emaSmooth(values, 0.10)
     }
     return rollingAverage(values, 7)
   }
 
   const computeRecentView = (items: CompletedWorkout[], range: WindowRange) => {
+    const smoothWindow = 3
+    const trendPadding = range === 7 ? smoothWindow - 1 : 0
+    const lookbackDays = range + trendPadding
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    const cutoff = new Date(today)
-    cutoff.setDate(today.getDate() - (range - 1))
+    const cutoffDisplay = new Date(today)
+    cutoffDisplay.setDate(today.getDate() - (range - 1))
+    const cutoffTrend = new Date(today)
+    cutoffTrend.setDate(today.getDate() - (lookbackDays - 1))
     const perDay: Record<string, number> = {}
-    for (let i = range - 1; i >= 0; i--) {
+    for (let i = lookbackDays - 1; i >= 0; i--) {
       const d = new Date(today)
       d.setDate(today.getDate() - i)
       perDay[dayKey(d.getTime())] = 0
     }
 
-    const itemsInRange = items.filter((item) => {
+    const itemsInRangeForTrend = items.filter((item) => {
       const ts = Number(item.finished_at ?? item.started_at ?? item.created_at ?? 0)
       if (!Number.isFinite(ts)) return false
       const normalized = new Date(ts)
       normalized.setHours(0, 0, 0, 0)
-      return normalized.getTime() >= cutoff.getTime() && normalized.getTime() <= today.getTime()
+      return normalized.getTime() >= cutoffTrend.getTime() && normalized.getTime() <= today.getTime()
     })
 
-    itemsInRange.forEach((item) => {
+    itemsInRangeForTrend.forEach((item) => {
       const ts = Number(item.finished_at ?? item.started_at ?? item.created_at ?? 0)
       if (!Number.isFinite(ts)) return
       const key = dayKey(ts)
@@ -547,7 +555,15 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
       perDay[key] = (perDay[key] ?? 0) + (Number.isFinite(minutes) ? Math.max(minutes, 0) : 0)
     })
 
-    const rpeValues = itemsInRange
+    const itemsInRangeForDisplay = items.filter((item) => {
+      const ts = Number(item.finished_at ?? item.started_at ?? item.created_at ?? 0)
+      if (!Number.isFinite(ts)) return false
+      const normalized = new Date(ts)
+      normalized.setHours(0, 0, 0, 0)
+      return normalized.getTime() >= cutoffDisplay.getTime() && normalized.getTime() <= today.getTime()
+    })
+
+    const rpeValues = itemsInRangeForDisplay
       .map((it) => Number(it.rpe))
       .filter((v) => Number.isFinite(v) && v > 0) as number[]
     const avgRpe =
@@ -555,13 +571,14 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
         ? Math.round((rpeValues.reduce((acc, v) => acc + v, 0) / rpeValues.length) * 10) / 10
         : null
 
-    const series = Object.entries(perDay)
+    const seriesAll = Object.entries(perDay)
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([key, minutes]) => ({
         key,
         label: key.slice(5).replace('-', '/'),
         minutes: Math.round(minutes)
       }))
+    const series = seriesAll.slice(Math.max(0, seriesAll.length - range))
 
     const streak = (() => {
       let count = 0
@@ -586,16 +603,17 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     })()
 
     recentSummary = {
-      sessions: itemsInRange.length,
+      sessions: itemsInRangeForDisplay.length,
       totalMinutes: Math.round(series.reduce((acc, cur) => acc + cur.minutes, 0)),
       avgRpe,
       streak
     }
-    recentItems = itemsInRange
+    recentItems = itemsInRangeForDisplay
     recentSeries = series
     hrAvgSeries = new Array(series.length).fill(null)
     hrMaxSeries = new Array(series.length).fill(null)
-    minutesTrend = series.length ? buildTrendSeries(series.map((s) => s.minutes), range) : []
+    const smoothed = seriesAll.length ? buildTrendSeries(seriesAll.map((s) => s.minutes), range) : []
+    minutesTrend = smoothed.slice(Math.max(0, smoothed.length - range))
   }
 
   const updateMovementBalance = (items: CompletedWorkout[], range: WindowRange) => {
@@ -889,9 +907,12 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     planTotals = null
     todayPlanParsed = null
     todaySummary = []
+    nextPlanParsed = null
+    nextSummary = []
+    nextPlanTotals = null
     try {
       const res = await fetch('/api/planned-workouts')
-    if (!res.ok) throw new Error('Failed to load plans')
+      if (!res.ok) throw new Error('Failed to load plans')
       const data = await res.json().catch(() => ({}))
       const items: Planned[] = data?.items ?? []
       const key = dayKey(Date.now())
@@ -907,11 +928,16 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
         planTotals = todayPlanParsed ? computePlanTotals(todayPlanParsed) : safeTotalsFromYaml(todayPlan.yaml_source)
         todaySummary = todayPlanParsed ? buildPlannedSummary(todayPlanParsed) : []
       }
-  } catch (err) {
-    planError = (err as any)?.message ?? 'Failed to load plans'
-  } finally {
-    planLoading = false
-  }
+      if (!todayPlan && nextPlan?.yaml_source) {
+        nextPlanParsed = parsePlanFromYaml(nextPlan.yaml_source)
+        nextPlanTotals = nextPlanParsed ? computePlanTotals(nextPlanParsed) : safeTotalsFromYaml(nextPlan.yaml_source)
+        nextSummary = nextPlanParsed ? buildPlannedSummary(nextPlanParsed) : []
+      }
+    } catch (err) {
+      planError = (err as any)?.message ?? 'Failed to load plans'
+    } finally {
+      planLoading = false
+    }
   }
 
   const loadHistory = async () => {
@@ -1140,6 +1166,49 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
               <p class="label muted small">Next planned</p>
               <p class="next-title">{nextPlan.title}</p>
               <p class="muted small">{formatDate(nextPlan.planned_for)}</p>
+              {#if nextSummary.length}
+                <div class="compact-summary rich planner-summary mini">
+                  {#each nextSummary as block}
+                    <div class="summary-block">
+                      <div class="summary-title">
+                        {#if block.count && block.count > 1}
+                          <span class="chip-pill pill-count">{block.count} ×</span>
+                        {/if}
+                        {block.title}
+                      </div>
+                      {#if block.items?.length}
+                        <div class="summary-items">
+                          {#each block.items as it}
+                            <span class="summary-chip fancy">
+                              {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                              <span class="chip-pill pill-count">{it.count ?? 1} ×</span>
+                              {#if it.work}
+                                <span class="chip-pill">
+                                  <span>{it.work}</span>
+                                </span>
+                              {/if}
+                              {#if it.on || it.off}
+                                <span class="chip-pill pill-rest">
+                                  {#if it.on}<span class="on">{it.on}</span>{/if}
+                                  {#if it.off}
+                                    <span class="divider">/</span>
+                                    <span class="off">{it.off}</span>
+                                  {/if}
+                                </span>
+                              {/if}
+                              {#if !it.label && !it.work && !it.on && !it.off}
+                                <span>{it.baseRaw}</span>
+                              {/if}
+                            </span>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {:else if nextPlanTotals}
+                <SessionOverview totals={nextPlanTotals} roundCount={0} class="mini" />
+              {/if}
             </div>
           {/if}
           <div class="actions">
@@ -1717,6 +1786,13 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   .compact-summary.rich {
     gap: 0.4rem;
   }
+  .compact-summary.mini {
+    font-size: 0.85rem;
+    padding: 0.5rem 0.65rem;
+    background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+    border-color: color-mix(in srgb, var(--color-border) 80%, transparent);
+    gap: 0.25rem;
+  }
   .summary-block {
     display: flex;
     flex-direction: column;
@@ -1782,6 +1858,20 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   .chip-pill.pill-count {
     font-weight: 700;
     background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+  }
+  .compact-summary.mini .summary-chip {
+    font-size: 0.82rem;
+    padding: 0.18rem 0.4rem;
+    gap: 0.25rem;
+    background: color-mix(in srgb, var(--color-surface-1) 45%, transparent);
+  }
+  .compact-summary.mini .chip-pill {
+    padding: 0.12rem 0.35rem;
+    gap: 0.2rem;
+    background: color-mix(in srgb, var(--color-surface-2) 65%, transparent);
+  }
+  .compact-summary.mini .summary-title {
+    gap: 0.25rem;
   }
 
   .lower-grid {
