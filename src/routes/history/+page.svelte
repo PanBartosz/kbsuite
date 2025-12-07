@@ -87,6 +87,7 @@
   let uploadTargetId: string | null = null
   let uploadStatus: Record<string, string> = {}
   let fileInputEl: HTMLInputElement | null = null
+  let overflowOpen: Record<string, boolean> = {}
   let sharePreviewUrl = ''
   let hrDetails: Record<string, { avgHr: number | null; maxHr: number | null; samples?: { t: number; hr: number }[] }> = {}
   let hrSummary: Record<string, { avgHr: number | null; maxHr: number | null }> = {}
@@ -212,6 +213,13 @@
     setTimeout(() => {
       toasts = toasts.filter((t) => t.id !== id)
     }, duration)
+  }
+
+  const toggleOverflow = (id: string) => {
+    const next: Record<string, boolean> = {}
+    Object.keys(overflowOpen).forEach((key) => (next[key] = false))
+    next[id] = !overflowOpen[id]
+    overflowOpen = next
   }
 
   const requestRemoveHrFile = (id: string) => {
@@ -2403,34 +2411,32 @@
                   <div class="actions">
                     <button class="primary" on:click={() => saveEdit(item.id)}>Save</button>
                     <button class="ghost" on:click={cancelEdit}>Cancel</button>
-                  </div>
-                {:else}
-                  <div class="actions">
-                    <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
-                    <button class="ghost small" on:click={() => copyCompactSummary(item)}>Copy summary</button>
-                    <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
                     <button
-                      class="ghost small"
+                      class="ghost"
                       on:click={() => {
-                        shareItem = item
-                        shareShowReps = true
-                        shareShowWork = true
-                        shareShowSets = true
+                        uploadTargetId = item.id
+                        if (fileInputEl) fileInputEl.click()
                       }}
                     >
-                      Share
+                      {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
+                      {#if hrAttached[item.id]}<span class="hr-badge">Attached</span>{/if}
                     </button>
-                    <button class="ghost small" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
-                    <button class="ghost small" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
-                    <button class="ghost small" on:click={() => duplicateLog(item)}>Log again</button>
-                    <button class="ghost small" on:click={() => toggleExpanded(item.id, !isExpanded)}>
-                      {isExpanded ? 'Collapse' : 'Expand'}
+                    {#if hrAttached[item.id] || hrSummary[item.id]}
+                      <button class="ghost danger" on:click={() => requestRemoveHrFile(item.id)}>Remove HR file</button>
+                    {/if}
+                    <button
+                      class="danger destructive"
+                      aria-label="Delete session"
+                      on:click={() => (confirmDeleteId = item.id)}
+                    >
+                      <i class="ri-delete-bin-6-line"></i>
                     </button>
                   </div>
-                  {#if isExpanded}
-                    {#if item.notes}
-                      <p class="muted small">Notes: {item.notes}</p>
-                    {/if}
+                {:else}
+            {#if isExpanded}
+              {#if item.notes}
+                <p class="muted small">Notes: {item.notes}</p>
+              {/if}
                     <div class="sets">
                       {#each item.sets as set, idx}
                         {@const isRest = set.type && set.type !== 'work'}
@@ -2489,7 +2495,13 @@
                       {#if hrAttached[item.id] || hrSummary[item.id]}
                         <button class="ghost danger" on:click={() => requestRemoveHrFile(item.id)}>Remove HR file</button>
                       {/if}
-                      <button class="danger destructive" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
+                      <button
+                        class="danger destructive"
+                        aria-label="Delete session"
+                        on:click={() => (confirmDeleteId = item.id)}
+                      >
+                        <i class="ri-delete-bin-6-line"></i>
+                      </button>
                     </div>
                     {#if uploadStatus[item.id]}
                       <p class="muted small">{uploadStatus[item.id]}</p>
@@ -2619,6 +2631,84 @@
               {/if}
             </div>
           </div>
+          {#if editingId !== item.id}
+            <div class="card-actions-row">
+              <button
+                class="ghost icon-btn toggle-btn"
+                aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
+                on:click={() => toggleExpanded(item.id, !isExpanded)}
+              >
+                {#if isExpanded}▲{:else}▼{/if}
+              </button>
+              <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
+              <button
+                class="ghost"
+                on:click={() => {
+                  shareItem = item
+                  shareShowReps = true
+                  shareShowWork = true
+                  shareShowSets = true
+                }}
+              >
+                Share
+              </button>
+              <button class="ghost secondary-action" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
+              <button class="text-button" on:click={() => duplicateLog(item)}>Log again</button>
+              <div class="export-group secondary-action">
+                <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
+                <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
+              </div>
+              <button class="ghost" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
+              <button class="ghost mobile-hidden secondary-action" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
+              <button
+                class="ghost mobile-hidden"
+                on:click={() => {
+                  uploadTargetId = item.id
+                  if (fileInputEl) fileInputEl.click()
+                }}
+              >
+                {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
+                {#if hrAttached[item.id]}<span class="hr-badge">Attached</span>{/if}
+              </button>
+              {#if hrAttached[item.id] || hrSummary[item.id]}
+                <button class="ghost danger mobile-hidden secondary-action" on:click={() => requestRemoveHrFile(item.id)}>Remove HR file</button>
+              {/if}
+              <div class="sticky-end">
+                <button
+                  class="danger destructive"
+                  aria-label="Delete session"
+                  on:click={() => (confirmDeleteId = item.id)}
+                >
+                  <i class="ri-delete-bin-6-line"></i>
+                </button>
+                <div class="overflow-wrapper">
+                  <button
+                    class="ghost icon-btn mobile-overflow"
+                    aria-label="More actions"
+                    on:click={() => toggleOverflow(item.id)}
+                  >
+                    ⋯
+                  </button>
+                  {#if overflowOpen[item.id]}
+                    <div class="overflow-menu">
+                      <button on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
+                      <button on:click={() => copySummary(item)}>Copy</button>
+                      <button on:click={() => copyCsv(item)}>CSV</button>
+                      <button on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
+                      <button
+                        on:click={() => {
+                          uploadTargetId = item.id
+                          if (fileInputEl) fileInputEl.click()
+                        }}
+                      >
+                        {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
+                      </button>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            </div>
+          {/if}
             {#if !isExpanded}
               {#if summary.blocks.length}
                 <div class="compact-summary rich">
@@ -2684,56 +2774,56 @@
                   type="number"
                   min="0"
                   step="1"
-                bind:value={editDurationMinutes}
-                placeholder="auto"
-              />
-            </label>
-            <label>
-              <span class="muted small">Session RPE</span>
-              <input
-                type="number"
-                min="1"
-                max="10"
-                step="1"
-                bind:value={editRpe}
-                placeholder="1-10"
-              />
-            </label>
-          <label class="notes-field">
-            <span class="muted small">Notes</span>
-            <input
-              type="text"
-              bind:value={editNotes}
-              placeholder='e.g., "jerks felt heavy"'
-            />
-          </label>
-          <label class="tags-field">
-            <span class="muted small">Tags</span>
-            <div class="tag-editor">
-              {#each editTags as tag}
-                <span class="tag-chip selected">
-                  {tag}
-                  <button class="ghost icon-btn" aria-label="Remove tag" on:click={() => removeTag(tag)}>
-                    ×
-                  </button>
-                </span>
-              {/each}
-              <div class="tag-input-wrap">
+                  bind:value={editDurationMinutes}
+                  placeholder="auto"
+                />
+              </label>
+              <label>
+                <span class="muted small">Session RPE</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  step="1"
+                  bind:value={editRpe}
+                  placeholder="1-10"
+                />
+              </label>
+              <label class="notes-field">
+                <span class="muted small">Notes</span>
                 <input
                   type="text"
-                  placeholder="Add tag"
-                  bind:value={newTagInput}
-                  on:keydown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      addTag()
-                    }
-                  }}
+                  bind:value={editNotes}
+                  placeholder='e.g., "jerks felt heavy"'
                 />
-                <button class="ghost small" type="button" on:click={addTag}>Add</button>
-              </div>
-            </div>
-          </label>
+              </label>
+              <label class="tags-field">
+                <span class="muted small">Tags</span>
+                <div class="tag-editor">
+                  {#each editTags as tag}
+                    <span class="tag-chip selected">
+                      {tag}
+                      <button class="ghost icon-btn" aria-label="Remove tag" on:click={() => removeTag(tag)}>
+                        ×
+                      </button>
+                    </span>
+                  {/each}
+                  <div class="tag-input-wrap">
+                    <input
+                      type="text"
+                      placeholder="Add tag"
+                      bind:value={newTagInput}
+                      on:keydown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          addTag()
+                        }
+                      }}
+                    />
+                    <button class="ghost small" type="button" on:click={addTag}>Add</button>
+                  </div>
+                </div>
+              </label>
             </div>
           {:else}
             {#if item.notes}
@@ -2889,30 +2979,28 @@
             <div class="actions">
               <button class="primary" on:click={() => saveEdit(item.id)}>Save</button>
               <button class="ghost" on:click={cancelEdit}>Cancel</button>
-            </div>
-          {:else}
-                  <div class="actions">
-                    <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
-                    <button class="ghost small" on:click={() => copyCompactSummary(item)}>Copy summary</button>
-                    <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
-                    <button
-                      class="ghost small"
-                      on:click={() => {
-                        shareItem = item
-                  shareShowReps = true
-                  shareShowWork = true
-                  shareShowSets = true
+              <button
+                class="ghost"
+                on:click={() => {
+                  uploadTargetId = item.id
+                  if (fileInputEl) fileInputEl.click()
                 }}
               >
-                Share
+                {hrAttached[item.id] ? 'Replace HR file' : 'Attach HR file'}
+                {#if hrAttached[item.id]}<span class="hr-badge">Attached</span>{/if}
               </button>
-              <button class="ghost small" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
-              <button class="ghost small" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
-              <button class="ghost small" on:click={() => duplicateLog(item)}>Log again</button>
-              <button class="ghost small" on:click={() => toggleExpanded(item.id, !isExpanded)}>
-                {isExpanded ? 'Collapse' : 'Expand'}
-              </button>
+              {#if hrAttached[item.id] || hrSummary[item.id]}
+                <button class="ghost danger" on:click={() => requestRemoveHrFile(item.id)}>Remove HR file</button>
+              {/if}
+                        <button
+                          class="danger destructive"
+                          aria-label="Delete session"
+                          on:click={() => (confirmDeleteId = item.id)}
+                        >
+                          <i class="ri-delete-bin-6-line"></i>
+                        </button>
             </div>
+          {:else}
             {#if isExpanded}
               {#if item.notes}
                 <p class="muted small">Notes: {item.notes}</p>
@@ -2976,7 +3064,13 @@
                       {#if hrAttached[item.id] || hrSummary[item.id]}
                         <button class="ghost danger" on:click={() => requestRemoveHrFile(item.id)}>Remove HR file</button>
                       {/if}
-                      <button class="danger destructive" on:click={() => (confirmDeleteId = item.id)}>Delete</button>
+                <button
+                  class="danger destructive"
+                  aria-label="Delete session"
+                  on:click={() => (confirmDeleteId = item.id)}
+                >
+                  <i class="ri-delete-bin-6-line"></i>
+                </button>
               </div>
               {#if uploadStatus[item.id]}
                 <p class="muted small">{uploadStatus[item.id]}</p>
@@ -3578,13 +3672,6 @@
     min-width: 320px;
     justify-content: center;
   }
-  .hr-card.placeholder {
-    opacity: 0;
-    pointer-events: none;
-  }
-  .hr-card.placeholder .hr-spark {
-    min-height: 120px;
-  }
   .hr-card-top {
     display: flex;
     justify-content: space-between;
@@ -3823,6 +3910,91 @@
     gap: 0.5rem;
     flex-wrap: wrap;
   }
+  .card-actions-row .destructive {
+    margin-left: auto;
+  }
+  .toggle-btn {
+    border-radius: 10px;
+    width: 36px;
+    height: 36px;
+  }
+  .export-group {
+    display: inline-flex;
+    gap: 0.25rem;
+  }
+  .card-actions-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0.35rem 0 0.15rem;
+    position: relative;
+  }
+  .card-actions-row button {
+    height: 34px;
+  }
+  .mobile-hidden {
+    display: inline-flex;
+  }
+  .overflow-wrapper {
+    position: relative;
+    display: inline-flex;
+  }
+  .sticky-end {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-left: auto;
+  }
+  .mobile-overflow {
+    display: none;
+  }
+  .overflow-menu {
+    position: absolute;
+    right: 0;
+    left: auto;
+    top: calc(100% + 6px);
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    padding: 0.4rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    z-index: 25;
+    min-width: 160px;
+    max-width: min(260px, 80vw);
+    width: max-content;
+  }
+  .overflow-menu button {
+    text-align: left;
+    justify-content: flex-start;
+    width: 100%;
+  }
+  @media (max-width: 720px) {
+    .card-actions-row {
+      gap: 0.25rem;
+    }
+    .card-actions-row .secondary-action {
+      display: none;
+    }
+    .mobile-hidden {
+      display: none;
+    }
+    .mobile-overflow {
+      display: inline-flex;
+    }
+    .sticky-end {
+      flex-basis: 100%;
+      justify-content: flex-end;
+      margin-left: 0;
+    }
+    .overflow-menu {
+      right: 0;
+      left: auto;
+    }
+  }
   .text-button {
     background: transparent;
     border: none;
@@ -3898,21 +4070,6 @@
       transform: translateY(-6px) translateX(8px);
     }
   }
-  .summary-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    align-items: center;
-    margin-top: 0.35rem;
-  }
-  .summary-actions button.small {
-    padding: 0.35rem 0.6rem;
-    font-size: 0.9rem;
-  }
-  .summary-actions button {
-    white-space: nowrap;
-  }
-
   @media (max-width: 720px) {
     .meta-edit {
       grid-template-columns: 1fr;
@@ -3973,9 +4130,6 @@
       width: 100%;
       align-items: flex-start;
     }
-    .summary-actions {
-      justify-content: flex-start;
-    }
     .summary-chips {
       justify-content: flex-start;
     }
@@ -3991,27 +4145,6 @@
       width: 100%;
     }
   }
-  .summary-actions + .sets {
-    margin-top: 0.25rem;
-  }
-  .summary-actions + p.muted {
-    margin-top: 0.2rem;
-  }
-  .summary-actions + .sets + .actions {
-    margin-top: 0.35rem;
-  }
-  .summary-actions + .sets + .actions + p {
-    margin-top: 0.15rem;
-  }
-  .summary-actions button:hover:not(:disabled) {
-    border-color: var(--color-border-hover);
-  }
-.summary-actions .ghost.small {
-  background: transparent;
-}
-.summary-actions .ghost.small:disabled {
-  opacity: 0.5;
-}
 .view-toggle {
   display: inline-flex;
   gap: 0.25rem;
