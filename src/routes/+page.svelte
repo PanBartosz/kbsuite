@@ -100,6 +100,7 @@ let insightsHtml = ''
 let insightsLoading = false
 let insightsModalOpen = false
 let currentTheme = ''
+let movementInfoOpen = false
 
 $: openAiKey = $settings.openAiKey ?? ''
 $: insightsPrompt = getInsightsPrompt($settings.aiInsightsPrompt)
@@ -973,8 +974,14 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
         </div>
         <div class="balance">
           <div class="balance-head">
-            <p class="label">Movement mix (last 30d, name heuristic)</p>
-            <span class="hint">Based on sets; shared color = multi-category sets. Total sets: {movementSetCount}</span>
+            <div class="balance-title">
+              <p class="label">Movement mix</p>
+              <span class="muted small">Last 30d, name heuristic</span>
+            </div>
+            <div class="balance-actions">
+              <span class="muted small">Total sets: {movementSetCount}</span>
+              <button class="ghost info-btn" type="button" on:click={() => (movementInfoOpen = true)}>?</button>
+            </div>
           </div>
           {#if !movementBalance.length}
             <p class="muted small">No recent sets to categorize.</p>
@@ -1042,6 +1049,47 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
             {@html insightsHtml || insightsAnswer}
           </div>
         {/if}
+      </div>
+    </div>
+  {/if}
+
+  {#if movementInfoOpen}
+    <div class="insights-modal">
+      <div class="insights-panel">
+        <div class="insights-head">
+          <div>
+            <p class="eyebrow">How we tally</p>
+            <h3>Movement mix</h3>
+          </div>
+          <button class="ghost" type="button" on:click={() => (movementInfoOpen = false)}>✕</button>
+        </div>
+        <div class="insights-body">
+          <ul>
+            <li>Scope: completed sets from the last 30 days.</li>
+            <li>Skip labels that look like warmup, cooldown, transition, prep, rest.</li>
+            <li>Categorize using set + round name; a set can hit multiple buckets.</li>
+            <li>Each set starts as weight = 1. If it hits N buckets, each gets 1/N (shared shown in yellow).</li>
+            <li>Total sets shown = number of categorized sets (before splitting).</li>
+            <li>Snatch = Hinge; Jerks = Push + Squat; Long cycle = Hinge + Pull + Push + Squat; Bumps = Squat.</li>
+          </ul>
+          <div class="movement-table">
+            <p class="muted small">Patterns → buckets (examples from your data)</p>
+            <ul>
+              <li><strong>“swing”, “hinge”, “dead”</strong> → Hinge (e.g., KB Swing · Left/Right, OA Swing EMOM)</li>
+              <li><strong>“clean”</strong> → Hinge + Pull (e.g., OA Clean · Left/Right, One-Arm Cleans with Gloves)</li>
+              <li><strong>“press”, “push press”, “strict”, “dip”</strong> → Push (e.g., Press EMOM)</li>
+              <li><strong>“jerk”</strong> → Push + Squat (e.g., KB Jerk · Left/Right, Jerks)</li>
+              <li><strong>“bump”</strong> → Squat (e.g., Rack Bumps, Double KB Bumps)</li>
+              <li><strong>“snatch”, “half snatch”</strong> → Hinge</li>
+              <li><strong>“long cycle”, “clean and jerk”</strong> → Hinge + Pull + Push + Squat</li>
+              <li><strong>Core keywords</strong> (“ab”, “roller”, “plank”, “get-up”/“tgu”, “windmill”, “sit up”) → Core</li>
+              <li><strong>Squat keywords</strong> (“squat”, “lunge”, “split squat”, “step up”, “pistol”) → Squat</li>
+              <li><strong>Carry keywords</strong> (“carry”, “walk”, “farmer”, “suitcase”, “rack walk”, “march”) → Carry</li>
+              <li><strong>Pull keywords</strong> (“row”, “pull”, “chin”, “upright”) → Pull</li>
+              <li><strong>Skipped</strong>: warmup/cooldown/transition/prep/rest labels.</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
   {/if}
@@ -1191,11 +1239,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
-  }
-
-  .balance .hint {
-    font-size: 0.9rem;
-    color: var(--color-text-muted);
+    justify-content: space-between;
   }
 
   .movement-legend {
@@ -1238,6 +1282,29 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   }
   .movement-label {
     color: var(--color-text-primary);
+  }
+
+  .balance-title {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .balance-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .info-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-weight: 700;
   }
 
   .insights-modal {
@@ -1292,6 +1359,13 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     background: color-mix(in srgb, var(--color-surface-1) 75%, transparent);
     max-height: 300px;
     overflow: auto;
+  }
+
+  .movement-table {
+    margin-top: 0.35rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
   }
 
   .invites-card .invite-list {
