@@ -530,6 +530,13 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     const lookbackDays = range + trendPadding
     const today = new Date()
     today.setHours(0, 0, 0, 0)
+    const todayKey = dayKey(today.getTime())
+    const hasTodaySession =
+      items.find((item) => {
+        const ts = Number(item.finished_at ?? item.started_at ?? item.created_at ?? 0)
+        if (!Number.isFinite(ts)) return false
+        return dayKey(ts) === todayKey
+      }) !== undefined
     const cutoffDisplay = new Date(today)
     cutoffDisplay.setDate(today.getDate() - (range - 1))
     const cutoffTrend = new Date(today)
@@ -538,7 +545,9 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     for (let i = lookbackDays - 1; i >= 0; i--) {
       const d = new Date(today)
       d.setDate(today.getDate() - i)
-      perDay[dayKey(d.getTime())] = 0
+      const key = dayKey(d.getTime())
+      if (!hasTodaySession && key === todayKey) continue
+      perDay[key] = 0
     }
 
     const itemsInRangeForTrend = items.filter((item) => {
@@ -585,7 +594,8 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     const streak = (() => {
       let count = 0
       const lookback = Math.max(30, range + 7)
-      for (let i = 0; i < lookback; i++) {
+      const startingOffset = hasTodaySession ? 0 : 1
+      for (let i = startingOffset; i < lookback; i++) {
         const d = new Date(today)
         d.setDate(today.getDate() - i)
         const key = dayKey(d.getTime())
