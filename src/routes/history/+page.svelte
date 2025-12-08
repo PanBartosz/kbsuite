@@ -48,6 +48,21 @@
     reasons: string[]
     totals: CompareTotals
   }
+  type ExerciseRollup = {
+    label: string
+    key: string
+    totalReps: number
+    totalWorkSeconds: number
+    tonnage: number
+  }
+  type ExerciseDiff = {
+    label: string
+    source: ExerciseRollup
+    target: ExerciseRollup
+    deltaReps: number
+    deltaWorkSeconds: number
+    deltaTonnage: number
+  }
 
   let items: CompletedWorkout[] = []
   let loading = false
@@ -104,6 +119,13 @@
   let compareError = ''
   let compareSearch = ''
   let compareManualOptions: CompletedWorkout[] = []
+  let compareExerciseDiffs: { matched: ExerciseDiff[]; onlySource: ExerciseRollup[]; onlyTarget: ExerciseRollup[] } = {
+    matched: [],
+    onlySource: [],
+    onlyTarget: []
+  }
+  let compareHrSharedScale = false
+  let compareResultsEl: HTMLDivElement | null = null
   let hrAttached: Record<string, boolean> = {}
   let hrRemoveTarget: string | null = null
   let hrRemoveSession: CompletedWorkout | null = null
@@ -679,6 +701,18 @@
     compareTargetTotals = ensureCompareTotals(workout, totals)
   }
 
+  const swapCompareSides = () => {
+    if (!compareSource || !compareTarget) return
+    const newSource = compareTarget
+    const newTarget = compareSource
+    const newSourceTotals = ensureCompareTotals(newSource, compareTargetTotals)
+    const newTargetTotals = ensureCompareTotals(newTarget, compareSourceTotals)
+    compareSource = newSource
+    compareTarget = newTarget
+    compareSourceTotals = newSourceTotals
+    compareTargetTotals = newTargetTotals
+  }
+
   const matchesCompareSearch = (item: CompletedWorkout, term: string) => {
     const norm = term.toLowerCase().trim()
     if (!norm) return true
@@ -705,6 +739,92 @@
     const rounded = Math.round(diff)
     return diff > 0 ? `+${rounded}` : String(rounded)
   }
+
+  const normalizeLabelKey = (value?: string | null) =>
+    (value ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+
+  const rollupExercises = (sets: CompletedSet[] = []): Map<string, ExerciseRollup> => {
+    const map = new Map<string, ExerciseRollup>()
+    sets.forEach((s) => {
+      const type = (s.type ?? 'work').toLowerCase()
+      if (type !== 'work') return
+      const rawLabel = (s.set_label ?? s.round_label ?? '').trim()
+      const key = normalizeLabelKey(rawLabel)
+      if (!key) return
+      const reps = Number(s.reps) || 0
+      const work = Number(s.duration_s) || 0
+      const weight = Number(s.weight) || 0
+      const tonnage = reps && weight ? reps * weight : 0
+      const prev = map.get(key)
+      if (prev) {
+        prev.totalReps += reps
+        prev.totalWorkSeconds += work
+        prev.tonnage += tonnage
+      } else {
+        map.set(key, {
+          label: rawLabel || 'Set',
+          key,
+          totalReps: reps,
+          totalWorkSeconds: work,
+          tonnage
+        })
+      }
+    })
+    return map
+  }
+
+  const computeExerciseDiffs = (sourceSets: CompletedSet[] = [], targetSets: CompletedSet[] = []) => {
+    const source = rollupExercises(sourceSets)
+    const target = rollupExercises(targetSets)
+    const matched: ExerciseDiff[] = []
+    const onlySource: ExerciseRollup[] = []
+    const onlyTarget: ExerciseRollup[] = []
+
+    source.forEach((val, key) => {
+      const other = target.get(key)
+      if (other) {
+        const deltaReps = val.totalReps - other.totalReps
+        const deltaWorkSeconds = val.totalWorkSeconds - other.totalWorkSeconds
+        const deltaTonnage = val.tonnage - other.tonnage
+        if (deltaReps || deltaWorkSeconds || deltaTonnage) {
+          matched.push({
+            label: val.label || other.label,
+            source: val,
+            target: other,
+            deltaReps,
+            deltaWorkSeconds,
+            deltaTonnage
+          })
+        }
+      } else {
+        onlySource.push(val)
+      }
+    })
+
+    target.forEach((val, key) => {
+      if (!source.has(key)) {
+        onlyTarget.push(val)
+      }
+    })
+
+    matched.sort((a, b) => a.label.localeCompare(b.label))
+    onlySource.sort((a, b) => a.label.localeCompare(b.label))
+    onlyTarget.sort((a, b) => a.label.localeCompare(b.label))
+
+    return { matched, onlySource, onlyTarget }
+  }
+
+  const exerciseDeltaParts = (diff: ExerciseDiff) => {
+    const parts: string[] = []
+    if (diff.deltaReps) parts.push(`Reps ${formatDelta(diff.source.totalReps, diff.target.totalReps)}`)
+    if (diff.deltaWorkSeconds) parts.push(`Work ${formatSignedSeconds(diff.deltaWorkSeconds)}`)
+    if (diff.deltaTonnage) parts.push(`Load ${formatSignedTonnage(diff.deltaTonnage)}`)
+    return parts
+  }
+
 
   $: visibleItems = (() => {
     const list = items
@@ -735,6 +855,15 @@
       .filter((it) => matchesCompareSearch(it, compareSearch))
       .slice(0, 20)
   })()
+
+  $: compareExerciseDiffs = (() => {
+    if (!compareSource || !compareTarget) return { matched: [], onlySource: [], onlyTarget: [] }
+    return computeExerciseDiffs(compareSource.sets ?? [], compareTarget.sets ?? [])
+  })()
+
+  $: if (browser && compareModalOpen && compareTarget && compareResultsEl) {
+    compareResultsEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   $: monthItems = visibleItems.filter((item) => {
     const ts = item.started_at ?? item.created_at
@@ -1121,6 +1250,33 @@
     const mins = Math.floor(seconds / 60)
     const secs = Math.round(seconds % 60)
     return `${mins}m ${secs}s`
+  }
+
+  const formatSignedSeconds = (value: number) => {
+    if (!value) return ''
+    const sign = value > 0 ? '+' : '-'
+    const abs = Math.abs(value)
+    return `${sign}${formatShort(abs)}`
+  }
+
+  const formatSignedTonnage = (value: number) => {
+    if (!value) return ''
+    const sign = value > 0 ? '+' : '-'
+    const abs = Math.round(Math.abs(value))
+    return `${sign}${abs.toLocaleString()}`
+  }
+
+  const computeHrSharedRange = (
+    srcSamples: { hr: number }[] = [],
+    tgtSamples: { hr: number }[] = []
+  ) => {
+    if (!srcSamples.length || !tgtSamples.length) return null
+    const vals = [...srcSamples, ...tgtSamples].map((p) => Number(p.hr)).filter((n) => Number.isFinite(n))
+    if (!vals.length) return null
+    const min = Math.min(...vals)
+    const max = Math.max(...vals)
+    const padding = Math.max(8, Math.round((max - min) * 0.15))
+    return { min: min - padding, max: max + padding }
   }
 
   const copyCsv = async (item: CompletedWorkout) => {
@@ -3272,8 +3428,8 @@
           </p>
         </div>
         <div class="compare-head__actions">
-          <button class="ghost small" on:click={() => (compareSource && chooseCompareTarget(compareSource, srcTotals))}>
-            Use as baseline
+          <button class="ghost small" on:click={swapCompareSides} disabled={!compareTarget}>
+            Swap sides
           </button>
           <button class="ghost small" on:click={closeCompareModal}>✕</button>
         </div>
@@ -3425,13 +3581,17 @@
         {@const tgtHr = hrDetails[compareTarget.id] ?? hrSummary[compareTarget.id]}
         {@const deltaAvgHr = formatDelta(srcHr?.avgHr, tgtHr?.avgHr)}
         {@const deltaMaxHr = formatDelta(srcHr?.maxHr, tgtHr?.maxHr)}
-        <div class="compare-results">
+        {@const sharedHrRange = compareHrSharedScale
+          ? computeHrSharedRange(hrDetails[compareSource.id]?.samples, hrDetails[compareTarget.id]?.samples)
+          : null}
+        <div class="compare-results" bind:this={compareResultsEl}>
           <div class="compare-metrics">
             <div class="metric-row">
               <div class="metric-label">Sets</div>
               <div class="metric-values">
-                <span>{srcTotals.totalSets ?? '-'}</span>
-                <span>{tgtTotals.totalSets ?? '-'}</span>
+                <span class="metric-target">{tgtTotals.totalSets ?? '-'}</span>
+                <span class:up={Number(deltaSets) > 0} class:down={Number(deltaSets) < 0} class="metric-arrow">→</span>
+                <span class="metric-source">{srcTotals.totalSets ?? '-'}</span>
                 {#if deltaSets}
                   <span class:up={Number(deltaSets) > 0} class:down={Number(deltaSets) < 0} class="delta">
                     {deltaSets}
@@ -3442,8 +3602,9 @@
             <div class="metric-row">
               <div class="metric-label">Reps</div>
               <div class="metric-values">
-                <span>{srcTotals.totalReps ?? '-'}</span>
-                <span>{tgtTotals.totalReps ?? '-'}</span>
+                <span class="metric-target">{tgtTotals.totalReps ?? '-'}</span>
+                <span class:up={Number(deltaReps) > 0} class:down={Number(deltaReps) < 0} class="metric-arrow">→</span>
+                <span class="metric-source">{srcTotals.totalReps ?? '-'}</span>
                 {#if deltaReps}
                   <span class:up={Number(deltaReps) > 0} class:down={Number(deltaReps) < 0} class="delta">
                     {deltaReps}
@@ -3454,8 +3615,9 @@
             <div class="metric-row">
               <div class="metric-label">Work time</div>
               <div class="metric-values">
-                <span>{formatShort(srcTotals.totalWorkSeconds) || '-'}</span>
-                <span>{formatShort(tgtTotals.totalWorkSeconds) || '-'}</span>
+                <span class="metric-target">{formatShort(tgtTotals.totalWorkSeconds) || '-'}</span>
+                <span class:up={Number(deltaWork) > 0} class:down={Number(deltaWork) < 0} class="metric-arrow">→</span>
+                <span class="metric-source">{formatShort(srcTotals.totalWorkSeconds) || '-'}</span>
                 {#if deltaWork}
                   <span class:up={Number(deltaWork) > 0} class:down={Number(deltaWork) < 0} class="delta">
                     {deltaWork}
@@ -3466,8 +3628,9 @@
             <div class="metric-row">
               <div class="metric-label">Load</div>
               <div class="metric-values">
-                <span>{formatTonnage(srcTotals.tonnage)}</span>
-                <span>{formatTonnage(tgtTotals.tonnage)}</span>
+                <span class="metric-target">{formatTonnage(tgtTotals.tonnage)}</span>
+                <span class:up={Number(deltaLoad) > 0} class:down={Number(deltaLoad) < 0} class="metric-arrow">→</span>
+                <span class="metric-source">{formatTonnage(srcTotals.tonnage)}</span>
                 {#if deltaLoad}
                   <span class:up={Number(deltaLoad) > 0} class:down={Number(deltaLoad) < 0} class="delta">
                     {deltaLoad}
@@ -3478,8 +3641,9 @@
             <div class="metric-row">
               <div class="metric-label">Avg weight</div>
               <div class="metric-values">
-                <span>{srcTotals.avgWeight ? srcTotals.avgWeight.toFixed(1) : '-'}</span>
-                <span>{tgtTotals.avgWeight ? tgtTotals.avgWeight.toFixed(1) : '-'}</span>
+                <span class="metric-target">{tgtTotals.avgWeight ? tgtTotals.avgWeight.toFixed(1) : '-'}</span>
+                <span class:up={Number(deltaAvgWeight) > 0} class:down={Number(deltaAvgWeight) < 0} class="metric-arrow">→</span>
+                <span class="metric-source">{srcTotals.avgWeight ? srcTotals.avgWeight.toFixed(1) : '-'}</span>
                 {#if deltaAvgWeight}
                   <span class:up={Number(deltaAvgWeight) > 0} class:down={Number(deltaAvgWeight) < 0} class="delta">
                     {deltaAvgWeight}
@@ -3490,8 +3654,9 @@
             <div class="metric-row">
               <div class="metric-label">Duration</div>
               <div class="metric-values">
-                <span>{compareSource.duration_s ? formatDuration(compareSource.duration_s) : '-'}</span>
-                <span>{compareTarget.duration_s ? formatDuration(compareTarget.duration_s) : '-'}</span>
+                <span class="metric-target">{compareTarget.duration_s ? formatDuration(compareTarget.duration_s) : '-'}</span>
+                <span class:up={Number(deltaDuration) > 0} class:down={Number(deltaDuration) < 0} class="metric-arrow">→</span>
+                <span class="metric-source">{compareSource.duration_s ? formatDuration(compareSource.duration_s) : '-'}</span>
                 {#if deltaDuration}
                   <span class:up={Number(deltaDuration) > 0} class:down={Number(deltaDuration) < 0} class="delta">
                     {deltaDuration}
@@ -3502,8 +3667,9 @@
             <div class="metric-row">
               <div class="metric-label">RPE</div>
               <div class="metric-values">
-                <span>{compareSource.rpe ?? '-'}</span>
-                <span>{compareTarget.rpe ?? '-'}</span>
+                <span class="metric-target">{compareTarget.rpe ?? '-'}</span>
+                <span class:up={Number(deltaRpe) > 0} class:down={Number(deltaRpe) < 0} class="metric-arrow">→</span>
+                <span class="metric-source">{compareSource.rpe ?? '-'}</span>
                 {#if deltaRpe}
                   <span class:up={Number(deltaRpe) > 0} class:down={Number(deltaRpe) < 0} class="delta">
                     {deltaRpe}
@@ -3515,8 +3681,9 @@
               <div class="metric-row">
                 <div class="metric-label">Avg HR</div>
                 <div class="metric-values">
-                  <span>{srcHr?.avgHr ?? '-'}</span>
-                  <span>{tgtHr?.avgHr ?? '-'}</span>
+                  <span class="metric-target">{tgtHr?.avgHr ?? '-'}</span>
+                  <span class:up={Number(deltaAvgHr) > 0} class:down={Number(deltaAvgHr) < 0} class="metric-arrow">→</span>
+                  <span class="metric-source">{srcHr?.avgHr ?? '-'}</span>
                   {#if deltaAvgHr}
                     <span class:up={Number(deltaAvgHr) > 0} class:down={Number(deltaAvgHr) < 0} class="delta">
                       {deltaAvgHr}
@@ -3527,8 +3694,9 @@
               <div class="metric-row">
                 <div class="metric-label">Max HR</div>
                 <div class="metric-values">
-                  <span>{srcHr?.maxHr ?? '-'}</span>
-                  <span>{tgtHr?.maxHr ?? '-'}</span>
+                  <span class="metric-target">{tgtHr?.maxHr ?? '-'}</span>
+                  <span class:up={Number(deltaMaxHr) > 0} class:down={Number(deltaMaxHr) < 0} class="metric-arrow">→</span>
+                  <span class="metric-source">{srcHr?.maxHr ?? '-'}</span>
                   {#if deltaMaxHr}
                     <span class:up={Number(deltaMaxHr) > 0} class:down={Number(deltaMaxHr) < 0} class="delta">
                       {deltaMaxHr}
@@ -3538,7 +3706,70 @@
               </div>
             {/if}
           </div>
+          <div class="exercise-diffs">
+            <div class="diff-head">
+              <p class="eyebrow">Per-exercise differences</p>
+              <p class="muted tiny">Exact label matches only.</p>
+            </div>
+            {#if compareExerciseDiffs.matched.length === 0 && compareExerciseDiffs.onlySource.length === 0 && compareExerciseDiffs.onlyTarget.length === 0}
+              <p class="muted small">No comparable exercises.</p>
+            {/if}
+            {#if compareExerciseDiffs.matched.length}
+              <div class="diff-list">
+                {#each compareExerciseDiffs.matched as diff}
+                  <div class="diff-row">
+                    <div class="diff-label">{diff.label}</div>
+                    <div class="diff-deltas">
+                      {#if exerciseDeltaParts(diff).length}
+                        <span class:up={diff.deltaReps > 0 || diff.deltaWorkSeconds > 0 || diff.deltaTonnage > 0} class:down={diff.deltaReps < 0 || diff.deltaWorkSeconds < 0 || diff.deltaTonnage < 0} class="delta pill">
+                          {exerciseDeltaParts(diff).join(' · ')}
+                        </span>
+                      {/if}
+                    </div>
+                    <div class="diff-baseline">
+                      <span class="chip subtle baseline target">
+                        {diff.target.totalReps || 0} reps · {formatShort(diff.target.totalWorkSeconds) || '0s'}
+                      </span>
+                      <span class="chip subtle baseline source">
+                        {diff.source.totalReps || 0} reps · {formatShort(diff.source.totalWorkSeconds) || '0s'}
+                      </span>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            {#if compareExerciseDiffs.onlySource.length || compareExerciseDiffs.onlyTarget.length}
+              <div class="diff-unmatched">
+                {#if compareExerciseDiffs.onlySource.length}
+                  <div>
+                    <p class="eyebrow">Only in source</p>
+                    <div class="pill-list">
+                      {#each compareExerciseDiffs.onlySource as it}
+                        <span class="chip subtle">{it.label}</span>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+                {#if compareExerciseDiffs.onlyTarget.length}
+                  <div>
+                    <p class="eyebrow">Only in target</p>
+                    <div class="pill-list">
+                      {#each compareExerciseDiffs.onlyTarget as it}
+                        <span class="chip subtle">{it.label}</span>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
           {#if (hrDetails[compareSource.id]?.samples?.length || hrDetails[compareTarget.id]?.samples?.length)}
+            <div class="hr-shared-toggle">
+              <label>
+                <input type="checkbox" bind:checked={compareHrSharedScale} />
+                Shared HR scale {#if sharedHrRange}({Math.round(sharedHrRange.min)}–{Math.round(sharedHrRange.max)} bpm){/if}
+              </label>
+            </div>
             <div class="compare-hr">
               {#if hrDetails[compareSource.id]?.samples?.length}
                 {@const s = hrDetails[compareSource.id]?.samples ?? []}
@@ -3546,8 +3777,8 @@
                 {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
                 {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
                 {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
-                {@const minHr = minHrRaw - padding}
-                {@const maxHr = maxHrRaw + padding}
+                {@const minHr = sharedHrRange ? sharedHrRange.min : minHrRaw - padding}
+                {@const maxHr = sharedHrRange ? sharedHrRange.max : maxHrRaw + padding}
                 {@const avgLine = hrDetails[compareSource.id]?.avgHr ?? null}
                 {@const maxPoint = s.reduce((acc, p) => (p.hr > acc.hr ? p : acc), s[0] ?? { t: 0, hr: 0 })}
                 <div class="hr-compare-card">
@@ -3602,8 +3833,8 @@
                 {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
                 {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
                 {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
-                {@const minHr = minHrRaw - padding}
-                {@const maxHr = maxHrRaw + padding}
+                {@const minHr = sharedHrRange ? sharedHrRange.min : minHrRaw - padding}
+                {@const maxHr = sharedHrRange ? sharedHrRange.max : maxHrRaw + padding}
                 {@const avgLine = hrDetails[compareTarget.id]?.avgHr ?? null}
                 {@const maxPoint = s.reduce((acc, p) => (p.hr > acc.hr ? p : acc), s[0] ?? { t: 0, hr: 0 })}
                 <div class="hr-compare-card">
@@ -4296,34 +4527,35 @@
     gap: 0.75rem;
   }
   .compare-metrics {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 0.4rem;
   }
   .metric-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.35rem;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.4rem;
     border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
-    padding: 0.45rem 0.5rem;
+    padding: 0.35rem 0.4rem;
     border-radius: 10px;
   }
   .metric-label {
     color: var(--color-text-muted);
-    min-width: 110px;
   }
   .metric-values {
-    display: inline-flex;
-    gap: 0.55rem;
+    display: grid;
+    grid-template-columns: auto auto auto auto;
+    gap: 0.35rem;
     align-items: center;
-    flex-wrap: wrap;
+    justify-content: end;
   }
   .delta {
-    padding: 0.15rem 0.45rem;
+    padding: 0.1rem 0.35rem;
     border-radius: 999px;
     border: 1px solid var(--color-border);
     font-weight: 700;
+    font-size: 0.9rem;
   }
   .delta.up {
     color: var(--color-accent);
@@ -4346,10 +4578,103 @@
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 0.6rem;
   }
+  .hr-shared-toggle {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+  }
+  .hr-shared-toggle input {
+    margin-right: 0.35rem;
+  }
   .hr-compare-card {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
+  }
+  .exercise-diffs {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+    padding: 0.6rem;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--color-surface-1) 60%, transparent);
+  }
+  .diff-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+  }
+  .diff-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .diff-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.35rem 0.5rem;
+    align-items: center;
+    padding: 0.45rem 0.5rem;
+    border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--color-surface-2) 55%, transparent);
+  }
+  .diff-label {
+    font-weight: 700;
+  }
+  .diff-deltas {
+    display: inline-flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+  .diff-baseline {
+    display: inline-flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+  .diff-unmatched {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.4rem;
+  }
+  .pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .chip.subtle {
+    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
+    border-color: color-mix(in srgb, var(--color-border) 70%, transparent);
+  }
+  .baseline {
+    position: relative;
+    padding-left: 0.5rem;
+    font-size: 0.9rem;
+  }
+  .baseline.source {
+    border-color: color-mix(in srgb, var(--color-accent) 60%, var(--color-border));
+  }
+  .baseline.target {
+    border-color: color-mix(in srgb, var(--color-border) 70%, transparent);
+  }
+  .delta.pill {
+    background: color-mix(in srgb, var(--color-surface-2) 65%, transparent);
+    border-color: color-mix(in srgb, var(--color-border) 70%, transparent);
+    font-weight: 600;
+  }
+  .metric-arrow {
+    font-weight: 700;
+    color: var(--color-text-muted);
+  }
+  .metric-arrow.up {
+    color: var(--color-accent);
+  }
+  .metric-arrow.down {
+    color: var(--color-danger);
   }
   @media (max-width: 900px) {
     .compare-top {
