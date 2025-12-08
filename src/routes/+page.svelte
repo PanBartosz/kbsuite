@@ -116,6 +116,8 @@ let insightsModalOpen = false
 let currentTheme = ''
 let movementInfoOpen = false
 
+const OPENAI_CHAT_MODEL = 'gpt-5.1'
+
 $: openAiKey = $settings.openAiKey ?? ''
 $: insightsPrompt = getInsightsPrompt($settings.aiInsightsPrompt)
 $: currentTheme = $settings.theme ?? ''
@@ -444,10 +446,10 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
       insightsStatus = ''
       return
     }
-    const payload = buildAiPayloadBatch(items, {}, 25)
+    const payload = buildAiPayloadBatch(items, hrSummaryHome, 25)
     const question =
       insightsQuestion.trim() ||
-      'Find notable trends in volume, RPE, and suggest focus areas for the next week.'
+      'Find notable trends in volume, HR vs RPE, and suggest next-step focus areas.'
     insightsLoading = true
     insightsError = ''
     insightsStatus = 'Contacting OpenAI…'
@@ -459,7 +461,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
           Authorization: `Bearer ${key}`
         },
         body: JSON.stringify({
-          model: 'gpt-5.1',
+          model: OPENAI_CHAT_MODEL,
           temperature: 0.4,
           messages: [
             { role: 'system', content: insightsPrompt },
