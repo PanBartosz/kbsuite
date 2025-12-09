@@ -64,7 +64,8 @@
   let hoverPlan: Planned | null = null
   let hoverSummary: PlannedSummaryBlock[] = []
   let hoverTotals: { work: number; rest: number; total: number } | null = null
-  let hoverAlign: 'left' | 'right' = 'right'
+  let hoverAlignX: 'left' | 'right' = 'right'
+  let hoverAlignY: 'above' | 'below' = 'below'
   let hoverLeft = 8
   let hoverTop = 8
   let calendarShellEl: HTMLElement | null = null
@@ -918,7 +919,7 @@
 
   const setHoverPlan = (
     plan: Planned | null,
-    align: 'left' | 'right' = 'right',
+    alignX: 'left' | 'right' = 'right',
     anchorEl?: HTMLElement | null
   ) => {
     if (!plan) {
@@ -927,20 +928,34 @@
       hoverTotals = null
       return
     }
-    hoverAlign = align
+    hoverAlignX = alignX
     if (anchorEl && calendarShellEl) {
       const shellRect = calendarShellEl.getBoundingClientRect()
       const rect = anchorEl.getBoundingClientRect()
       const cardWidth = 360
-      const gutter = 8
+      const cardHeight = 260
+      const gutter = 12
       const maxLeft = Math.max(gutter, shellRect.width - cardWidth - gutter)
+      const spaceRight = shellRect.right - rect.right
+      const spaceLeft = rect.left - shellRect.left
+      const placeRight = spaceRight >= spaceLeft
+      hoverAlignX = placeRight ? 'right' : 'left'
       const desiredLeft =
-        align === 'right'
+        hoverAlignX === 'right'
           ? rect.right - shellRect.left + gutter
           : rect.left - shellRect.left - cardWidth - gutter
       hoverLeft = Math.min(Math.max(desiredLeft, gutter), maxLeft)
-      const desiredTop = rect.top - shellRect.top
-      hoverTop = Math.max(gutter, desiredTop)
+
+      const spaceBelow = shellRect.bottom - rect.bottom
+      const spaceAbove = rect.top - shellRect.top
+      const placeBelow = spaceBelow >= cardHeight || spaceBelow >= spaceAbove
+      hoverAlignY = placeBelow ? 'below' : 'above'
+      const desiredTop =
+        hoverAlignY === 'below'
+          ? rect.bottom - shellRect.top + gutter
+          : rect.top - shellRect.top - cardHeight - gutter
+      const maxTop = Math.max(gutter, shellRect.height - cardHeight - gutter)
+      hoverTop = Math.min(Math.max(desiredTop, gutter), maxTop)
     }
     hoverPlan = plan
     const parsed = planFromYaml(plan.yaml_source)
@@ -1078,11 +1093,7 @@
             class:active={selectedDateKey === key}
             on:click={() => (selectedDateKey = key)}
             on:mouseenter={(event) =>
-              setHoverPlan(
-                itemsForDay[0] ?? null,
-                colIndex >= 4 ? 'right' : 'left',
-                event.currentTarget as HTMLElement
-              )
+              setHoverPlan(itemsForDay[0] ?? null, colIndex >= 4 ? 'right' : 'left', event.currentTarget as HTMLElement)
             }
             aria-pressed={selectedDateKey === key}
           >
@@ -1121,8 +1132,10 @@
         <div
           class="hover-card"
           class:visible={!!hoverPlan}
-          class:left={hoverAlign === 'left'}
-          class:right={hoverAlign === 'right'}
+          class:left={hoverAlignX === 'left'}
+          class:right={hoverAlignX === 'right'}
+          class:above={hoverAlignY === 'above'}
+          class:below={hoverAlignY === 'below'}
           style={`left:${hoverLeft}px; top:${hoverTop}px;`}
         >
           <div class="hover-head">
@@ -1721,6 +1734,12 @@
     }
     .hover-card.right {
       left: auto;
+    }
+    .hover-card.above {
+      transform-origin: bottom right;
+    }
+    .hover-card.below {
+      transform-origin: top right;
     }
     .hover-card.visible {
       opacity: 1;
