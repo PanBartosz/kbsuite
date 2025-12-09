@@ -2462,6 +2462,61 @@
                       <span>Max {hrSummary[hoverWorkout.id].maxHr ?? '–'} bpm</span>
                     </div>
                   </div>
+                  {#if hrDetails[hoverWorkout.id]?.samples?.length}
+                    {#key hrDetails[hoverWorkout.id]?.samples}
+                      {@const s = hrDetails[hoverWorkout.id]?.samples ?? []}
+                      {@const maxT = Math.max(...s.map((p) => p.t), 1)}
+                      {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
+                      {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
+                      {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
+                      {@const minHr = minHrRaw - padding}
+                      {@const maxHr = maxHrRaw + padding}
+                      {@const avgLine = hrSummary[hoverWorkout.id].avgHr ?? null}
+                      {@const maxPoint = s.reduce((acc, p) => (p.hr > acc.hr ? p : acc), s[0] ?? { t: 0, hr: 0 })}
+                      <svg
+                        class="hr-spark hover-spark"
+                        viewBox="0 0 260 90"
+                        preserveAspectRatio="none"
+                        style:--hr-spark-bg={hrSparkColors.bg}
+                        style:--hr-spark-border={hrSparkColors.border}
+                        style:--hr-spark-line={hrSparkColors.line}
+                        style:--hr-spark-avg={hrSparkColors.avg}
+                        style:--hr-spark-max={hrSparkColors.max}
+                      >
+                        {#if avgLine}
+                          <line
+                            class="avg-line"
+                            x1="0"
+                            x2="260"
+                            y1={90 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 90}
+                            y2={90 - ((avgLine - minHr) / Math.max(1, maxHr - minHr)) * 90}
+                            stroke-dasharray="4 4"
+                            stroke-width="1.1"
+                          />
+                        {/if}
+                        <polyline
+                          class="hr-line"
+                          fill="none"
+                          stroke-width="2"
+                          points={s
+                            .map((p) => {
+                              const x = (p.t / maxT) * 260
+                              const y = 90 - ((p.hr - minHr) / Math.max(1, maxHr - minHr)) * 90
+                              return `${x},${y}`
+                            })
+                            .join(' ')}
+                        />
+                        {#if s.length}
+                          <circle
+                            class="hr-max"
+                            cx={(maxPoint.t / maxT) * 260}
+                            cy={90 - ((maxPoint.hr - minHr) / Math.max(1, maxHr - minHr)) * 90}
+                            r="4.5"
+                          />
+                        {/if}
+                      </svg>
+                    {/key}
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -5635,6 +5690,11 @@
     justify-content: flex-start;
     font-size: 0.9rem;
     gap: 0.35rem;
+  }
+  .hover-card .hover-hr .hover-spark {
+    width: 100%;
+    max-width: 100%;
+    height: 90px;
   }
 }
 .day-top {
