@@ -61,6 +61,9 @@
   let planEditorOpen = false
   let dayDetailEl: HTMLElement | null = null
   let lastScrolledDay: string | null = null
+  let hoverPlan: Planned | null = null
+  let hoverSummary: PlannedSummaryBlock[] = []
+  let hoverTotals: { work: number; rest: number; total: number } | null = null
   let roundEditorOpen = false
   let roundEditorData: any = null
   let roundEditorIndex: number | null = null
@@ -909,6 +912,19 @@
     )
   }
 
+  const setHoverPlan = (plan: Planned | null) => {
+    if (!plan) {
+      hoverPlan = null
+      hoverSummary = []
+      hoverTotals = null
+      return
+    }
+    hoverPlan = plan
+    const parsed = planFromYaml(plan.yaml_source)
+    hoverTotals = parsed ? computeTotals(parsed) : totalsForYaml(plan.yaml_source)
+    hoverSummary = parsed ? buildPlannedSummary(parsed) : []
+  }
+
   onDestroy(() => {
     if (browser) document.body.classList.remove('modal-open')
   })
@@ -958,7 +974,7 @@
       {/if}
     </section>
 
-    <section class="calendar-shell">
+    <section class="calendar-shell" on:mouseleave={() => setHoverPlan(null)}>
       <div class="week-head mobile-only">
         <div class="month-nav">
           <button class="ghost" on:click={() => shiftWeek(-1)}>←</button>
@@ -979,6 +995,7 @@
             class="week-row"
             class:active={selectedDateKey === dayInfo.key}
             on:click={() => (selectedDateKey = dayInfo.key)}
+            on:mouseenter={() => setHoverPlan(itemsForDay[0] ?? null)}
           >
             <div class="week-row__label">
               <span class="week-row__day">{dayInfo.label}</span>
@@ -1036,6 +1053,7 @@
             class="day"
             class:active={selectedDateKey === key}
             on:click={() => (selectedDateKey = key)}
+            on:mouseenter={() => setHoverPlan(itemsForDay[0] ?? null)}
             aria-pressed={selectedDateKey === key}
           >
             <div class="day-top">
@@ -1048,7 +1066,11 @@
               <div class="day-list">
                 {#each itemsForDay as it}
                   {@const hrTag = it.tags?.includes('hr') || false}
-                  <div class="day-row" title={`${it.title || 'Workout'}`}>
+                  <div
+                    class="day-row"
+                    title={`${it.title || 'Workout'}`}
+                    on:mouseenter={() => setHoverPlan(it)}
+                  >
                     <span class="dot"></span>
                     <div class="day-row-body">
                       <span class="day-row-title">{it.title || 'Workout'}</span>
@@ -1063,6 +1085,79 @@
           </button>
         {/each}
       </div>
+      {#if hoverPlan}
+        <div class="hover-card" class:visible={!!hoverPlan}>
+          <div class="hover-head">
+            <div>
+              <p class="eyebrow">Preview</p>
+              <h4>{hoverPlan.title || 'Workout'}</h4>
+              <p class="muted tiny">
+                {new Date(hoverPlan.planned_for).toLocaleDateString()}
+                {#if hoverTotals}
+                  · {formatDuration(hoverTotals.total)}
+                {/if}
+              </p>
+              {#if hoverPlan.tags?.length}
+                <div class="tag-row">
+                  {#each hoverPlan.tags.slice(0, 3) as tag}
+                    <span class="tag-chip">{tag}</span>
+                  {/each}
+                  {#if hoverPlan.tags.length > 3}
+                    <span class="tag-chip muted">+{hoverPlan.tags.length - 3}</span>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          </div>
+          {#if hoverSummary.length}
+            <div class="compact-summary rich planner-summary hover-summary">
+              {#each hoverSummary.slice(0, 3) as block}
+                <div class="summary-block">
+                  <div class="summary-title">
+                    {#if block.count && block.count > 1}
+                      <span class="chip-pill pill-count">{block.count} ×</span>
+                    {/if}
+                    {block.title}
+                  </div>
+                  {#if block.items?.length}
+                    <div class="summary-items">
+                      {#each block.items.slice(0, 3) as it}
+                        <span class="summary-chip fancy">
+                          {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                          {#if it.count && it.count > 1}
+                            <span class="chip-pill pill-count">{it.count} ×</span>
+                          {/if}
+                          {#if it.work}
+                            <span class="chip-pill">
+                              <span>{it.work}</span>
+                            </span>
+                          {/if}
+                          {#if it.on || it.off}
+                            <span class="chip-pill pill-rest">
+                              {#if it.on}<span class="on">{it.on}</span>{/if}
+                              {#if it.off}
+                                <span class="divider">/</span>
+                                <span class="off">{it.off}</span>
+                              {/if}
+                            </span>
+                          {/if}
+                          {#if !it.label && !it.work && !it.on && !it.off}
+                            <span>{it.baseRaw}</span>
+                          {/if}
+                        </span>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {:else if hoverTotals}
+            <p class="muted tiny">
+              Total {formatDuration(hoverTotals.total)} · Work {formatDuration(hoverTotals.work)} · Rest {formatDuration(hoverTotals.rest)}
+            </p>
+          {/if}
+        </div>
+      {/if}
     </section>
 
     <section class="shares-block">
@@ -1521,6 +1616,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    position: relative;
   }
   .calendar-grid {
     display: grid;
@@ -1560,6 +1656,41 @@
     border-color: var(--color-accent);
     background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface-2));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 20%, transparent);
+  }
+  .hover-card {
+    display: none;
+  }
+  @media (hover: hover) and (min-width: 960px) {
+    .hover-card {
+      display: block;
+      position: absolute;
+      top: 0.5rem;
+      right: -0.5rem;
+      width: min(360px, 42vw);
+      background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      padding: 0.75rem;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+      transform: translateY(6px);
+      z-index: 5;
+    }
+    .hover-card.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .hover-card .hover-head h4 {
+      margin: 0 0 0.15rem;
+    }
+    .hover-card .tag-row {
+      margin-top: 0.25rem;
+    }
+    .hover-card .hover-summary {
+      margin-top: 0.35rem;
+    }
   }
   .day:focus-visible {
     outline: 2px solid var(--color-accent);
