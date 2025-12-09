@@ -2453,6 +2453,17 @@
                   {/if}
                 </div>
               {/if}
+              {#if hrSummary[hoverWorkout.id]}
+                <div class="hr-card hover-hr">
+                  <div class="hr-card-top">
+                    <span class="muted tiny">HR</span>
+                    <div class="hr-stats">
+                      <span>Avg {hrSummary[hoverWorkout.id].avgHr ?? '–'} bpm</span>
+                      <span>Max {hrSummary[hoverWorkout.id].maxHr ?? '–'} bpm</span>
+                    </div>
+                  </div>
+                </div>
+              {/if}
             </div>
           </div>
           {#if hoverSummary.length}
@@ -5614,6 +5625,16 @@
   }
   .hover-card .hover-summary {
     margin-top: 0.35rem;
+  }
+  .hover-card .hover-hr {
+    width: 100%;
+    min-width: 0;
+    align-items: flex-start;
+  }
+  .hover-card .hover-hr .hr-stats {
+    justify-content: flex-start;
+    font-size: 0.9rem;
+    gap: 0.35rem;
   }
 }
 .day-top {
