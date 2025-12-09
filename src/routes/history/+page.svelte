@@ -4841,6 +4841,15 @@
   .summary-chip.fancy .chip-pill .divider {
     opacity: 0.5;
   }
+  @media (max-width: 520px) {
+    .summary-chip {
+      font-size: 0.84rem;
+      gap: 0.3rem;
+    }
+    .summary-chip.fancy .chip-pill {
+      padding: 0.12rem 0.4rem;
+    }
+  }
   .hr-card {
     display: flex;
     flex-direction: column;

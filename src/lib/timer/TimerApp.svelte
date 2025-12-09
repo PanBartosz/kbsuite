@@ -501,6 +501,11 @@ let plan =
   let sessionStartMs = null
   let pendingInitialWorkoutId = ''
   let pendingInitialPlannedId = ''
+  const getSummaryTitle = () => {
+    const fromSave = (saveName ?? '').trim()
+    const fromPlan = (plan?.title ?? '').trim()
+    return fromSave || fromPlan || 'Workout'
+  }
   $: openAiKey = $settings.openAiKey ?? ''
   $: if ($settings.timer.audioEnabled !== audioEnabled) audioEnabled = audioSupported && $settings.timer.audioEnabled
   $: if ($settings.timer.notificationsEnabled !== notificationsEnabled) notificationsEnabled = $settings.timer.notificationsEnabled
@@ -1521,7 +1526,7 @@ let plan =
     lastFinalizedPhaseIndex = -1
     sessionStartMs = Date.now()
     setSummaryMetadata({
-      title: plan.title,
+      title: getSummaryTitle(),
       workoutId: selectedWorkoutId,
       startedAt: sessionStartMs,
       durationSeconds: timelineDuration
@@ -1540,7 +1545,7 @@ let plan =
     timerWorker.postMessage({ type: 'stop', payload: { reason: 'manual-stop' } })
     emitState()
     setSummaryMetadata({
-      title: plan.title,
+      title: getSummaryTitle(),
       workoutId: selectedWorkoutId,
       startedAt: sessionStartMs,
       finishedAt: Date.now(),
@@ -1560,7 +1565,7 @@ let plan =
     timerWorker.postMessage({ type: 'pause' })
     emitState()
     setSummaryMetadata({
-      title: plan.title,
+      title: getSummaryTitle(),
       workoutId: selectedWorkoutId,
       startedAt: sessionStartMs,
       finishedAt: Date.now(),
@@ -1622,7 +1627,7 @@ let plan =
     summaryPlanKeyValue = key
     setSummaryEntries(mergeSummaryEntries(buildSummaryEntries()), key)
     setSummaryMetadata({
-      title: plan.title,
+      title: getSummaryTitle(),
       workoutId: selectedWorkoutId,
       startedAt: sessionStartMs,
       finishedAt: Date.now(),
@@ -2103,6 +2108,7 @@ Rules:
       lastAppliedSource = source
       if (!parsed.error && parsed.plan) {
         plan = parsed.plan
+        plan.title = item.title ?? plan.title ?? 'Planned workout'
         summaryNeedsFullRebuild = true
       }
       selectedWorkoutId = null
