@@ -92,6 +92,8 @@
   let calendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()
   let selectedDateKey = ''
   let mobileWeekStart = new Date().getTime()
+  let dayDetailEl: HTMLElement | null = null
+  let lastScrolledDay: string | null = null
   let shareItem: CompletedWorkout | null = null
   let shareRoundCol = 120
   let shareShowReps = true
@@ -864,6 +866,13 @@
     if (!compareSource || !compareTarget) return { matched: [], onlySource: [], onlyTarget: [] }
     return computeExerciseDiffs(compareSource.sets ?? [], compareTarget.sets ?? [])
   })()
+
+  $: if (browser && selectedDateKey && dayDetailEl && selectedDateKey !== lastScrolledDay) {
+    lastScrolledDay = selectedDateKey
+    requestAnimationFrame(() =>
+      dayDetailEl?.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' })
+    )
+  }
 
   $: if (browser && compareModalOpen && compareTarget && compareResultsEl) {
     compareResultsEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -2345,7 +2354,7 @@
           {/each}
         </div>
       </section>
-      <div class="calendar-detail">
+      <div class="calendar-detail" bind:this={dayDetailEl}>
         {#if selectedDayItems.length === 0}
           <p class="muted small">Select a day to view sessions.</p>
         {:else}
