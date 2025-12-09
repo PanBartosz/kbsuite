@@ -65,6 +65,9 @@
   let hoverSummary: PlannedSummaryBlock[] = []
   let hoverTotals: { work: number; rest: number; total: number } | null = null
   let hoverAlign: 'left' | 'right' = 'right'
+  let hoverLeft = 8
+  let hoverTop = 8
+  let calendarShellEl: HTMLElement | null = null
   let roundEditorOpen = false
   let roundEditorData: any = null
   let roundEditorIndex: number | null = null
@@ -913,7 +916,11 @@
     )
   }
 
-  const setHoverPlan = (plan: Planned | null, align: 'left' | 'right' = 'right') => {
+  const setHoverPlan = (
+    plan: Planned | null,
+    align: 'left' | 'right' = 'right',
+    anchorEl?: HTMLElement | null
+  ) => {
     if (!plan) {
       hoverPlan = null
       hoverSummary = []
@@ -921,6 +928,20 @@
       return
     }
     hoverAlign = align
+    if (anchorEl && calendarShellEl) {
+      const shellRect = calendarShellEl.getBoundingClientRect()
+      const rect = anchorEl.getBoundingClientRect()
+      const cardWidth = 360
+      const gutter = 8
+      const maxLeft = Math.max(gutter, shellRect.width - cardWidth - gutter)
+      const desiredLeft =
+        align === 'right'
+          ? rect.right - shellRect.left + gutter
+          : rect.left - shellRect.left - cardWidth - gutter
+      hoverLeft = Math.min(Math.max(desiredLeft, gutter), maxLeft)
+      const desiredTop = rect.top - shellRect.top
+      hoverTop = Math.max(gutter, desiredTop)
+    }
     hoverPlan = plan
     const parsed = planFromYaml(plan.yaml_source)
     hoverTotals = parsed ? computeTotals(parsed) : totalsForYaml(plan.yaml_source)
@@ -976,7 +997,7 @@
       {/if}
     </section>
 
-    <section class="calendar-shell" on:mouseleave={() => setHoverPlan(null)}>
+    <section class="calendar-shell" bind:this={calendarShellEl} on:mouseleave={() => setHoverPlan(null)}>
       <div class="week-head mobile-only">
         <div class="month-nav">
           <button class="ghost" on:click={() => shiftWeek(-1)}>←</button>
@@ -1056,8 +1077,12 @@
             class="day"
             class:active={selectedDateKey === key}
             on:click={() => (selectedDateKey = key)}
-            on:mouseenter={() =>
-              setHoverPlan(itemsForDay[0] ?? null, colIndex >= 4 ? 'right' : 'left')
+            on:mouseenter={(event) =>
+              setHoverPlan(
+                itemsForDay[0] ?? null,
+                colIndex >= 4 ? 'right' : 'left',
+                event.currentTarget as HTMLElement
+              )
             }
             aria-pressed={selectedDateKey === key}
           >
@@ -1074,7 +1099,9 @@
                   <div
                     class="day-row"
                     title={`${it.title || 'Workout'}`}
-                    on:mouseenter={() => setHoverPlan(it, colIndex >= 4 ? 'right' : 'left')}
+                    on:mouseenter={(event) =>
+                      setHoverPlan(it, colIndex >= 4 ? 'right' : 'left', event.currentTarget as HTMLElement)
+                    }
                   >
                     <span class="dot"></span>
                     <div class="day-row-body">
@@ -1091,7 +1118,13 @@
         {/each}
       </div>
       {#if hoverPlan}
-        <div class="hover-card" class:visible={!!hoverPlan} class:left={hoverAlign === 'left'} class:right={hoverAlign === 'right'}>
+        <div
+          class="hover-card"
+          class:visible={!!hoverPlan}
+          class:left={hoverAlign === 'left'}
+          class:right={hoverAlign === 'right'}
+          style={`left:${hoverLeft}px; top:${hoverTop}px;`}
+        >
           <div class="hover-head">
             <div>
               <p class="eyebrow">Preview</p>
@@ -1684,11 +1717,9 @@
       z-index: 5;
     }
     .hover-card.left {
-      left: 0.5rem;
       right: auto;
     }
     .hover-card.right {
-      right: 0.5rem;
       left: auto;
     }
     .hover-card.visible {
