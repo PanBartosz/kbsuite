@@ -1025,7 +1025,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   }
 </script>
 
-<main class="page home">
+<div class="home">
   <section class="panel invites-card">
     <div class="panel-head">
       <div>
@@ -1431,13 +1431,17 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
       </div>
     </div>
   {/if}
-</main>
+</div>
 
 <style>
   .home {
+    display: flex;
+    flex-direction: column;
     gap: 1rem;
     max-width: 1420px;
     width: 100%;
+    margin: 0 auto;
+    overflow-x: hidden;
   }
 
   .page-head {
@@ -1449,7 +1453,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
 
   .split {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 1rem;
   }
 
@@ -1595,6 +1599,12 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
 
   .chart-shell {
     height: 220px;
+    width: 100%;
+  }
+  .chart-shell canvas,
+  .movement-chart canvas {
+    width: 100% !important;
+    max-width: 100%;
   }
 
   .insights-row {

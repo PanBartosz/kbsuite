@@ -2171,7 +2171,7 @@
   }
 </script>
 
-<main class="page">
+<div class="history-page">
   <header>
     <h1>History</h1>
   </header>
@@ -4333,14 +4333,10 @@
         })
     }}
   />
-</main>
+</div>
 
 <style>
-  .page {
-    max-width: 1300px;
-    width: min(1300px, calc(100vw - 2rem));
-    margin: 0 auto;
-    padding: 2rem 1.5rem 3rem;
+  .history-page {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;

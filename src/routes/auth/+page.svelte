@@ -47,7 +47,7 @@
   onMount(fetchSession)
 </script>
 
-<main class="page">
+<div class="auth-page">
   <header>
     <h1>Account</h1>
     <p>Register or log in with username/password.</p>
@@ -81,13 +81,13 @@
       </p>
     {/if}
   </div>
-</main>
+</div>
 
 <style>
-  .page {
+  .auth-page {
     max-width: 520px;
+    width: min(520px, 100%);
     margin: 0 auto;
-    padding: 1.5rem 1rem 2.5rem;
     display: flex;
     flex-direction: column;
     gap: 1rem;

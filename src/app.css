@@ -349,6 +349,28 @@ body {
   color: var(--color-text-primary);
 }
 
+/* Theme-aware scrollbars (WebKit + Firefox) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-hover) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--color-surface-1) 70%, transparent);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-border-hover) 80%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-accent) 35%, var(--color-border-hover));
+}
+
 a {
   color: var(--color-accent);
   text-decoration: none;

@@ -108,7 +108,7 @@
   })
 </script>
 
-<main class="page">
+<div class="workouts-page">
   <header>
     <h1>Workouts</h1>
   </header>
@@ -192,13 +192,13 @@
       {/each}
     </div>
   {/if}
-</main>
+</div>
 
 <style>
-  .page {
+  .workouts-page {
     max-width: 900px;
+    width: min(900px, 100%);
     margin: 0 auto;
-    padding: 1.5rem 1rem 2.5rem;
     display: flex;
     flex-direction: column;
     gap: 1rem;

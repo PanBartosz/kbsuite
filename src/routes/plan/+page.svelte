@@ -905,7 +905,7 @@
   })
 </script>
 
-<main class="page">
+<div class="planner-page">
   <header>
     <h1>Planner</h1>
   </header>
@@ -1464,14 +1464,13 @@
   on:close={closeSetEditor}
   on:save={handleSetSave}
 />
-</main>
+</div>
 
 <style>
-  .page {
+  .planner-page {
     max-width: 1300px;
-    width: min(1300px, calc(100vw - 2rem));
+    width: min(1300px, 100%);
     margin: 0 auto;
-    padding: 1.5rem 1rem 2.5rem;
     display: flex;
     flex-direction: column;
     gap: 1rem;

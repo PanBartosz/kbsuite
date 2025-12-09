@@ -1,11 +1,11 @@
 {
-  "name": "GS AI Timer",
-  "short_name": "AI Timer",
+  "name": "KB Suite",
+  "short_name": "KB Suite",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#2563eb",
-  "description": "Configurable workout timer with YAML-driven sessions and precise scheduling.",
+  "description": "KB Suite: planner, timer, counter, history, and AI insights for training.",
   "icons": [
     {
       "src": "/icons/icon-192.png",
