@@ -59,6 +59,8 @@
   let duplicateCopyMeta = true
   let mobileWeekStart = Date.now()
   let planEditorOpen = false
+  let dayDetailEl: HTMLElement | null = null
+  let lastScrolledDay: string | null = null
   let roundEditorOpen = false
   let roundEditorData: any = null
   let roundEditorIndex: number | null = null
@@ -900,6 +902,13 @@
 
   $: confirmDeletePlan = confirmDeleteId ? plans.find((p) => p.id === confirmDeleteId) ?? null : null
 
+  $: if (browser && selectedDateKey && dayDetailEl && selectedDateKey !== lastScrolledDay) {
+    lastScrolledDay = selectedDateKey
+    requestAnimationFrame(() =>
+      dayDetailEl?.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' })
+    )
+  }
+
   onDestroy(() => {
     if (browser) document.body.classList.remove('modal-open')
   })
@@ -1164,7 +1173,7 @@
       {/if}
     </section>
 
-    <section class="day-detail">
+    <section class="day-detail" bind:this={dayDetailEl}>
       <div class="day-head">
         <h3>{selectedDateKey || 'Select a day'}</h3>
         {#if selectedDateKey}
@@ -1528,7 +1537,7 @@
     color: var(--color-text-muted);
   }
   .day {
-    min-height: 110px;
+    min-height: 90px;
     border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
     border-radius: 10px;
     padding: 0.55rem 0.55rem 0.45rem;
@@ -1607,6 +1616,7 @@
     white-space: nowrap;
     color: var(--color-text-primary);
     font-size: 0.62rem;
+    text-align: left;
   }
   .day-row-meta {
     display: flex;

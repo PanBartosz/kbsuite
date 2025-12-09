@@ -5384,7 +5384,7 @@
   color: var(--color-text-muted);
 }
 .day {
-  min-height: 110px;
+  min-height: 90px;
   min-width: 0;
   width: 100%;
   max-width: 100%;
@@ -5463,6 +5463,7 @@
   white-space: nowrap;
   color: var(--color-text-primary);
   font-size: 0.62rem;
+  text-align: left;
 }
 .day-row-meta {
   display: flex;
