@@ -1665,8 +1665,9 @@
       display: block;
       position: absolute;
       top: 0.5rem;
-      right: -0.5rem;
-      width: min(360px, 42vw);
+      left: 0.5rem;
+      right: 0.5rem;
+      width: min(360px, calc(100% - 1rem));
       background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
       border: 1px solid var(--color-border);
       border-radius: 12px;
