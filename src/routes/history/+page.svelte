@@ -350,18 +350,22 @@
     if (anchorEl && calendarShellEl) {
       const shellRect = calendarShellEl.getBoundingClientRect()
       const rect = anchorEl.getBoundingClientRect()
-      const cardWidth = 360
-      const cardHeight = 260
+      const scrollLeft = calendarShellEl.scrollLeft || 0
+      const scrollTop = calendarShellEl.scrollTop || 0
+      const innerWidth = calendarShellEl.clientWidth
+      const innerHeight = calendarShellEl.clientHeight
+      const cardWidth = Math.min(360, innerWidth * 0.45)
+      const cardHeight = Math.min(300, innerHeight * 0.65)
       const gutter = 12
-      const maxLeft = Math.max(gutter, shellRect.width - cardWidth - gutter)
+      const maxLeft = Math.max(gutter, innerWidth - cardWidth - gutter)
       const spaceRight = shellRect.right - rect.right
       const spaceLeft = rect.left - shellRect.left
       const placeRight = spaceRight >= spaceLeft
       hoverAlignX = placeRight ? 'right' : 'left'
       const desiredLeft =
         hoverAlignX === 'right'
-          ? rect.right - shellRect.left + gutter
-          : rect.left - shellRect.left - cardWidth - gutter
+          ? rect.right - shellRect.left + scrollLeft + gutter
+          : rect.left - shellRect.left + scrollLeft - cardWidth - gutter
       hoverLeft = Math.min(Math.max(desiredLeft, gutter), maxLeft)
 
       const spaceBelow = shellRect.bottom - rect.bottom
@@ -370,9 +374,9 @@
       hoverAlignY = placeBelow ? 'below' : 'above'
       const desiredTop =
         hoverAlignY === 'below'
-          ? rect.bottom - shellRect.top + gutter
-          : rect.top - shellRect.top - cardHeight - gutter
-      const maxTop = Math.max(gutter, shellRect.height - cardHeight - gutter)
+          ? rect.bottom - shellRect.top + scrollTop + gutter
+          : rect.top - shellRect.top + scrollTop - cardHeight - gutter
+      const maxTop = Math.max(gutter, innerHeight - cardHeight - gutter)
       hoverTop = Math.min(Math.max(desiredTop, gutter), maxTop)
     }
     hoverWorkout = workout
