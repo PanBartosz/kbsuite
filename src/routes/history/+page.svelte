@@ -360,22 +360,20 @@
       const maxLeft = Math.max(gutter, innerWidth - cardWidth - gutter)
       const spaceRight = shellRect.right - rect.right
       const spaceLeft = rect.left - shellRect.left
-      const placeRight = spaceRight >= spaceLeft
-      hoverAlignX = placeRight ? 'right' : 'left'
+      hoverAlignX = spaceRight >= spaceLeft ? 'right' : 'left'
       const desiredLeft =
         hoverAlignX === 'right'
-          ? rect.right - shellRect.left + scrollLeft + gutter
-          : rect.left - shellRect.left + scrollLeft - cardWidth - gutter
+          ? rect.width + (rect.left - shellRect.left) + scrollLeft + gutter
+          : (rect.left - shellRect.left) + scrollLeft - cardWidth - gutter
       hoverLeft = Math.min(Math.max(desiredLeft, gutter), maxLeft)
 
       const spaceBelow = shellRect.bottom - rect.bottom
       const spaceAbove = rect.top - shellRect.top
-      const placeBelow = spaceBelow >= cardHeight || spaceBelow >= spaceAbove
-      hoverAlignY = placeBelow ? 'below' : 'above'
+      hoverAlignY = spaceBelow >= spaceAbove ? 'below' : 'above'
       const desiredTop =
         hoverAlignY === 'below'
-          ? rect.bottom - shellRect.top + scrollTop + gutter
-          : rect.top - shellRect.top + scrollTop - cardHeight - gutter
+          ? (rect.top - shellRect.top) + scrollTop + rect.height + gutter
+          : (rect.top - shellRect.top) + scrollTop - cardHeight - gutter
       const maxTop = Math.max(gutter, innerHeight - cardHeight - gutter)
       hoverTop = Math.min(Math.max(desiredTop, gutter), maxTop)
     }
@@ -5535,6 +5533,9 @@
   border-radius: 12px;
   padding: 1rem;
   width: 100%;
+}
+.calendar-shell {
+  position: relative;
 }
 .dow {
   text-align: center;
