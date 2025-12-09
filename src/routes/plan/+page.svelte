@@ -64,6 +64,7 @@
   let hoverPlan: Planned | null = null
   let hoverSummary: PlannedSummaryBlock[] = []
   let hoverTotals: { work: number; rest: number; total: number } | null = null
+  let hoverAlign: 'left' | 'right' = 'right'
   let roundEditorOpen = false
   let roundEditorData: any = null
   let roundEditorIndex: number | null = null
@@ -912,13 +913,14 @@
     )
   }
 
-  const setHoverPlan = (plan: Planned | null) => {
+  const setHoverPlan = (plan: Planned | null, align: 'left' | 'right' = 'right') => {
     if (!plan) {
       hoverPlan = null
       hoverSummary = []
       hoverTotals = null
       return
     }
+    hoverAlign = align
     hoverPlan = plan
     const parsed = planFromYaml(plan.yaml_source)
     hoverTotals = parsed ? computeTotals(parsed) : totalsForYaml(plan.yaml_source)
@@ -1048,12 +1050,15 @@
         {#each Array(daysInMonth(calendarMonth)).fill(0).map((_, i) => i + 1) as day}
           {@const key = dayKey(new Date(new Date(calendarMonth).getFullYear(), new Date(calendarMonth).getMonth(), day).getTime())}
           {@const itemsForDay = dayPlans(key)}
+          {@const colIndex = (startOfMonthWeekday(calendarMonth) + day - 1) % 7}
           <button
             type="button"
             class="day"
             class:active={selectedDateKey === key}
             on:click={() => (selectedDateKey = key)}
-            on:mouseenter={() => setHoverPlan(itemsForDay[0] ?? null)}
+            on:mouseenter={() =>
+              setHoverPlan(itemsForDay[0] ?? null, colIndex >= 4 ? 'right' : 'left')
+            }
             aria-pressed={selectedDateKey === key}
           >
             <div class="day-top">
@@ -1069,7 +1074,7 @@
                   <div
                     class="day-row"
                     title={`${it.title || 'Workout'}`}
-                    on:mouseenter={() => setHoverPlan(it)}
+                    on:mouseenter={() => setHoverPlan(it, colIndex >= 4 ? 'right' : 'left')}
                   >
                     <span class="dot"></span>
                     <div class="day-row-body">
@@ -1086,7 +1091,7 @@
         {/each}
       </div>
       {#if hoverPlan}
-        <div class="hover-card" class:visible={!!hoverPlan}>
+        <div class="hover-card" class:visible={!!hoverPlan} class:left={hoverAlign === 'left'} class:right={hoverAlign === 'right'}>
           <div class="hover-head">
             <div>
               <p class="eyebrow">Preview</p>
@@ -1665,9 +1670,8 @@
       display: block;
       position: absolute;
       top: 0.5rem;
-      left: 0.5rem;
-      right: 0.5rem;
-      width: min(360px, calc(100% - 1rem));
+      width: min(360px, 42vw);
+      max-width: 440px;
       background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
       border: 1px solid var(--color-border);
       border-radius: 12px;
@@ -1678,6 +1682,14 @@
       transition: opacity 160ms ease, transform 160ms ease;
       transform: translateY(6px);
       z-index: 5;
+    }
+    .hover-card.left {
+      left: 0.5rem;
+      right: auto;
+    }
+    .hover-card.right {
+      right: 0.5rem;
+      left: auto;
     }
     .hover-card.visible {
       opacity: 1;
