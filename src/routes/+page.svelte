@@ -1496,6 +1496,16 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     background: color-mix(in srgb, var(--color-accent) 20%, transparent);
     color: var(--color-text-primary);
   }
+  @media (max-width: 640px) {
+    .range-toggle {
+      gap: 0.1rem;
+      padding: 0.05rem 0.15rem;
+    }
+    .range-toggle .toggle {
+      padding: 0.18rem 0.55rem;
+      font-size: 0.95rem;
+    }
+  }
 
   .panel .pill {
     font-size: 0.9rem;
@@ -1588,6 +1598,27 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 0.55rem;
   }
+  @media (max-width: 640px) {
+    .week-card .week-stats {
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 0.4rem;
+    }
+    .week-card .panel-head {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.35rem;
+    }
+    .week-card .panel-actions {
+      width: 100%;
+      justify-content: space-between;
+    }
+    .week-card .panel-actions .range-toggle {
+      order: 1;
+    }
+    .week-card .panel-actions a {
+      font-size: 0.95rem;
+    }
+  }
 
   .chart-card {
     margin-top: 0.85rem;
@@ -1596,10 +1627,23 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     border: 1px solid var(--color-border);
     background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
   }
+  @media (max-width: 640px) {
+    .chart-card {
+      padding: 0.6rem;
+    }
+  }
 
   .chart-shell {
     height: 220px;
     width: 100%;
+  }
+  @media (max-width: 640px) {
+    .chart-shell {
+      height: 190px;
+    }
+    .chart-shell canvas {
+      max-height: 190px;
+    }
   }
   .chart-shell canvas,
   .movement-chart canvas {
@@ -1610,12 +1654,23 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   .insights-row {
     margin-top: 0.35rem;
   }
+  @media (max-width: 640px) {
+    .insights-row {
+      margin-top: 0.15rem;
+    }
+  }
 
   .balance {
     margin-top: 0.75rem;
     display: flex;
     flex-direction: column;
     gap: 0.45rem;
+  }
+  @media (max-width: 640px) {
+    .balance {
+      margin-top: 0.5rem;
+      gap: 0.35rem;
+    }
   }
 
   .balance-head {
