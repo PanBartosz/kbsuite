@@ -38,6 +38,14 @@
 		// ensure session cookie exists
 		fetch('/api/session').catch(() => {});
 		loadPendingCount();
+
+		if ('serviceWorker' in navigator) {
+			navigator.serviceWorker
+				.register('/service-worker.js', { type: 'module' })
+				.catch((err) => {
+					console.warn('Service worker registration failed', err);
+				});
+		}
 	});
 
 	const saveCompleted = async (entries: any[]) => {
