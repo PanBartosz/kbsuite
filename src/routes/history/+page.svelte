@@ -595,8 +595,12 @@
       if (s.round_label) haystack.push(s.round_label)
       if (s.set_label) haystack.push(s.set_label)
     })
-    const hasTerm = haystack.some((v) => normalize(v).includes(term))
-    if (!hasTerm) return false
+    const tokens = term.split(/\s+/).filter(Boolean)
+    const normalizedHaystack = haystack.map((v) => normalize(v))
+    const allTokensMatch = tokens.every((token) =>
+      normalizedHaystack.some((text) => text.includes(token))
+    )
+    if (!allTokensMatch) return false
     if (selectedTags.length === 0) return true
     const tagsSet = new Set((item.tags ?? []).map((t) => normalize(t)))
     return selectedTags.every((t) => tagsSet.has(normalize(t)))
