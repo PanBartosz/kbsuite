@@ -94,6 +94,14 @@
   let mobileWeekStart = new Date().getTime()
   let dayDetailEl: HTMLElement | null = null
   let lastScrolledDay: string | null = null
+  let hoverWorkout: CompletedWorkout | null = null
+  let hoverSummary: ReturnType<typeof buildWorkoutSummary>['blocks'] = []
+  let hoverTotals: CompareTotals | null = null
+  let hoverAlignX: 'left' | 'right' = 'right'
+  let hoverAlignY: 'above' | 'below' = 'below'
+  let hoverLeft = 8
+  let hoverTop = 8
+  let calendarShellEl: HTMLElement | null = null
   let shareItem: CompletedWorkout | null = null
   let shareRoundCol = 120
   let shareShowReps = true
@@ -325,6 +333,51 @@
 
   const selectDate = (key: string) => {
     selectedDateKey = key
+  }
+
+  const setHoverWorkout = (
+    workout: CompletedWorkout | null,
+    alignX: 'left' | 'right' = 'right',
+    anchorEl?: HTMLElement | null
+  ) => {
+    if (!workout) {
+      hoverWorkout = null
+      hoverSummary = []
+      hoverTotals = null
+      return
+    }
+    hoverAlignX = alignX
+    if (anchorEl && calendarShellEl) {
+      const shellRect = calendarShellEl.getBoundingClientRect()
+      const rect = anchorEl.getBoundingClientRect()
+      const cardWidth = 360
+      const cardHeight = 260
+      const gutter = 12
+      const maxLeft = Math.max(gutter, shellRect.width - cardWidth - gutter)
+      const spaceRight = shellRect.right - rect.right
+      const spaceLeft = rect.left - shellRect.left
+      const placeRight = spaceRight >= spaceLeft
+      hoverAlignX = placeRight ? 'right' : 'left'
+      const desiredLeft =
+        hoverAlignX === 'right'
+          ? rect.right - shellRect.left + gutter
+          : rect.left - shellRect.left - cardWidth - gutter
+      hoverLeft = Math.min(Math.max(desiredLeft, gutter), maxLeft)
+
+      const spaceBelow = shellRect.bottom - rect.bottom
+      const spaceAbove = rect.top - shellRect.top
+      const placeBelow = spaceBelow >= cardHeight || spaceBelow >= spaceAbove
+      hoverAlignY = placeBelow ? 'below' : 'above'
+      const desiredTop =
+        hoverAlignY === 'below'
+          ? rect.bottom - shellRect.top + gutter
+          : rect.top - shellRect.top - cardHeight - gutter
+      const maxTop = Math.max(gutter, shellRect.height - cardHeight - gutter)
+      hoverTop = Math.min(Math.max(desiredTop, gutter), maxTop)
+    }
+    hoverWorkout = workout
+    hoverTotals = computeTotals(workout)
+    hoverSummary = buildWorkoutSummary(workout.sets ?? []).blocks
   }
 
   const startOfWeek = (ts: number) => {
@@ -2247,7 +2300,7 @@
     </div>
 
     {#if viewMode === 'calendar'}
-      <section class="calendar-shell">
+      <section class="calendar-shell" bind:this={calendarShellEl} role="presentation" on:mouseleave={() => setHoverWorkout(null)}>
         <div class="week-head mobile-only">
           <div class="month-nav">
             <button class="ghost" on:click={() => shiftWeek(-1)}>←</button>
@@ -2319,11 +2372,19 @@
           {#each Array(daysInMonth(calendarMonth)).fill(0).map((_, i) => i + 1) as day}
             {@const key = dayKey(new Date(new Date(calendarMonth).getFullYear(), new Date(calendarMonth).getMonth(), day).getTime())}
             {@const itemsForDay = dailyBuckets[key] ?? []}
+            {@const colIndex = (startOfMonthWeekday(calendarMonth) + day - 1) % 7}
             <button
               type="button"
               class="day"
               class:active={selectedDateKey === key}
               on:click={() => selectDate(key)}
+              on:mouseenter={(event) =>
+                setHoverWorkout(
+                  itemsForDay[0] ?? null,
+                  colIndex >= 4 ? 'right' : 'left',
+                  event.currentTarget as HTMLElement
+                )
+              }
               aria-pressed={selectedDateKey === key}
             >
               <div class="day-top">
@@ -2334,26 +2395,110 @@
               </div>
               {#if itemsForDay.length}
                 <div class="day-list">
-                  {#each itemsForDay as it}
-                    {@const dur = it.duration_s || 0}
-                    {@const hrTag = hrAttached[it.id] || hrSummary[it.id]}
-                    <div class="day-row" title={`${it.title || 'Workout'}${dur ? ` · ${formatShort(dur)}` : ''}${hrTag ? ' · HR attached' : ''}`}>
-                      <span class="dot" style={`opacity:${Math.min(1, dur / 3600 + 0.3)}`}></span>
-                      <div class="day-row-body">
-                        <span class="day-row-title">{it.title || 'Workout'}</span>
-                        <div class="day-row-meta">
-                          <span class="day-row-badge">{dur ? formatShort(dur) : '-'}</span>
-                          {#if hrTag}<span class="day-row-hr">HR</span>{/if}
-                        </div>
+                {#each itemsForDay as it}
+                  {@const dur = it.duration_s || 0}
+                  {@const hrTag = hrAttached[it.id] || hrSummary[it.id]}
+                  <div
+                    class="day-row"
+                    title={`${it.title || 'Workout'}${dur ? ` · ${formatShort(dur)}` : ''}${hrTag ? ' · HR attached' : ''}`}
+                    on:mouseenter={(event) =>
+                      setHoverWorkout(it, colIndex >= 4 ? 'right' : 'left', event.currentTarget as HTMLElement)
+                    }
+                    role="presentation"
+                  >
+                    <span class="dot" style={`opacity:${Math.min(1, dur / 3600 + 0.3)}`}></span>
+                    <div class="day-row-body">
+                      <span class="day-row-title">{it.title || 'Workout'}</span>
+                      <div class="day-row-meta">
+                        <span class="day-row-badge">{dur ? formatShort(dur) : '-'}</span>
+                        {#if hrTag}<span class="day-row-hr">HR</span>{/if}
                       </div>
                     </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </button>
+        {/each}
+      </div>
+      {#if hoverWorkout}
+        <div
+          class="hover-card"
+          class:visible={!!hoverWorkout}
+          class:left={hoverAlignX === 'left'}
+          class:right={hoverAlignX === 'right'}
+          class:above={hoverAlignY === 'above'}
+          class:below={hoverAlignY === 'below'}
+          style={`left:${hoverLeft}px; top:${hoverTop}px;`}
+        >
+          <div class="hover-head">
+            <div>
+              <p class="eyebrow">Preview</p>
+              <h4>{hoverWorkout.title || 'Workout'}</h4>
+              <p class="muted tiny">
+                {formatDate(hoverWorkout.started_at || hoverWorkout.created_at)}
+                {#if hoverTotals}
+                  · {formatShort(hoverTotals.totalWorkSeconds)}
+                {/if}
+              </p>
+              {#if hoverWorkout.tags?.length}
+                <div class="tag-row">
+                  {#each hoverWorkout.tags.slice(0, 3) as tag}
+                    <span class="tag-chip">{tag}</span>
                   {/each}
+                  {#if hoverWorkout.tags.length > 3}
+                    <span class="tag-chip muted">+{hoverWorkout.tags.length - 3}</span>
+                  {/if}
                 </div>
               {/if}
-            </button>
-          {/each}
+            </div>
+          </div>
+          {#if hoverSummary.length}
+            <div class="compact-summary rich planner-summary hover-summary">
+              {#each hoverSummary.slice(0, 3) as block}
+                <div class="summary-block">
+                  <div class="summary-title">
+                    {#if block.items?.length && block.items[0]?.count && block.items[0].count > 1}
+                      <span class="chip-pill pill-count">{block.items[0].count} ×</span>
+                    {/if}
+                    {block.title}
+                  </div>
+                  {#if block.items?.length}
+                    <div class="summary-items">
+                      {#each block.items.slice(0, 3) as it}
+                        <span class="summary-chip fancy">
+                          {#if it.label}<span class="chip-label">{it.label}</span>{/if}
+                          {#if it.count && it.count > 1}
+                            <span class="chip-pill pill-count">{it.count} ×</span>
+                          {/if}
+                          {#if it.work}
+                            <span class="chip-pill">
+                              <span>{it.work}</span>
+                            </span>
+                          {/if}
+                          {#if it.on || it.off}
+                            <span class="chip-pill pill-rest">
+                              {#if it.on}<span class="on">{it.on}</span>{/if}
+                              {#if it.off}
+                                <span class="divider">/</span>
+                                <span class="off">{it.off}</span>
+                              {/if}
+                            </span>
+                          {/if}
+                          {#if !it.label && !it.work && !it.on && !it.off}
+                            <span>{it.baseRaw}</span>
+                          {/if}
+                        </span>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
         </div>
-      </section>
+      {/if}
+    </section>
       <div class="calendar-detail" bind:this={dayDetailEl}>
         {#if selectedDayItems.length === 0}
           <p class="muted small">Select a day to view sessions.</p>
@@ -5418,6 +5563,53 @@
 .day.active {
   border-color: var(--color-accent);
   background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-2));
+}
+.hover-card {
+  display: none;
+}
+@media (hover: hover) and (min-width: 960px) {
+  .hover-card {
+    display: block;
+    position: absolute;
+    top: 0.5rem;
+    width: min(360px, 42vw);
+    max-width: 440px;
+    background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 0.75rem;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+    transform: translateY(6px);
+    z-index: 5;
+  }
+  .hover-card.left {
+    right: auto;
+  }
+  .hover-card.right {
+    left: auto;
+  }
+  .hover-card.above {
+    transform-origin: bottom right;
+  }
+  .hover-card.below {
+    transform-origin: top right;
+  }
+  .hover-card.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .hover-card .hover-head h4 {
+    margin: 0 0 0.15rem;
+  }
+  .hover-card .tag-row {
+    margin-top: 0.25rem;
+  }
+  .hover-card .hover-summary {
+    margin-top: 0.35rem;
+  }
 }
 .day-top {
   display: flex;
