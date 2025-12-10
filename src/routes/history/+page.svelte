@@ -355,7 +355,10 @@
       const innerWidth = calendarShellEl.clientWidth
       const innerHeight = calendarShellEl.clientHeight
       const cardWidth = Math.min(360, innerWidth * 0.45)
-      const cardHeight = Math.min(300, innerHeight * 0.65)
+      const cardHeight = Math.min(
+        Math.max(innerHeight * 0.6, 320),
+        Math.max(innerHeight * 0.85, 420)
+      )
       const gutter = 12
       const maxLeft = Math.max(gutter, innerWidth - cardWidth - gutter)
       const spaceRight = shellRect.right - rect.right
@@ -2523,7 +2526,7 @@
           </div>
           {#if hoverSummary.length}
             <div class="compact-summary rich planner-summary hover-summary">
-              {#each hoverSummary.slice(0, 3) as block}
+              {#each hoverSummary as block}
                 <div class="summary-block">
                   <div class="summary-title">
                     {#if block.items?.length && block.items[0]?.count && block.items[0].count > 1}
@@ -2533,7 +2536,7 @@
                   </div>
                   {#if block.items?.length}
                     <div class="summary-items">
-                      {#each block.items.slice(0, 3) as it}
+                      {#each block.items as it}
                         <span class="summary-chip fancy">
                           {#if it.label}<span class="chip-label">{it.label}</span>{/if}
                           {#if it.count && it.count > 1}
@@ -5645,6 +5648,8 @@
     top: 0.5rem;
     width: min(360px, 42vw);
     max-width: 440px;
+    max-height: min(70vh, 600px);
+    overflow: auto;
     background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
     border: 1px solid var(--color-border);
     border-radius: 12px;
