@@ -14,6 +14,14 @@
     weight?: number | null
   }
 
+  type CopyIntent = {
+    sourceId: string
+    targetIds: string[]
+    setLabel: string
+    copyReps: number | null
+    copyWeight: number | null
+  }
+
   const formatDuration = (seconds: number | undefined) => {
     if (!seconds || seconds <= 0) return '—'
     const mins = Math.floor(seconds / 60)
@@ -28,11 +36,31 @@
 
   let localEntries: SummaryEntry[] = []
   let copyStatus = ''
+  let pendingCopy: CopyIntent | null = null
+
+  const isRestEntry = (entry: SummaryEntry) =>
+    entry.type === 'rest' || entry.type === 'roundRest' || entry.type === 'roundTransition'
+
+  const normalizeLabel = (value?: string | null) => (value ?? '').toString().trim().toLowerCase()
+
+  const findMatchingTargets = (source: SummaryEntry) => {
+    const baseLabel = normalizeLabel(source.setLabel)
+    if (!baseLabel) return []
+    return localEntries.filter(
+      (row) =>
+        row.id !== source.id &&
+        !isRestEntry(row) &&
+        normalizeLabel(row.setLabel) === baseLabel
+    )
+  }
+
+  const countMatchingTargets = (entry: SummaryEntry) => findMatchingTargets(entry).length
 
   $: if (open) {
     // reset snapshot when opening
     localEntries = entries.map((e) => ({ ...e }))
     copyStatus = ''
+    pendingCopy = null
   }
 
   const updateEntry = (id: string, value: number | null) => {
@@ -46,6 +74,38 @@
   }
 
   const handleSave = () => dispatch('save', { entries: localEntries })
+
+  const openCopyConfirm = (entry: SummaryEntry) => {
+    pendingCopy = {
+      sourceId: entry.id,
+      targetIds: findMatchingTargets(entry).map((row) => row.id),
+      setLabel: entry.setLabel,
+      copyReps: entry.loggedReps ?? null,
+      copyWeight: entry.weight ?? null
+    }
+  }
+
+  const applyCopyToMatches = () => {
+    if (!pendingCopy) return
+    const { targetIds, copyReps, copyWeight } = pendingCopy
+    const targets = new Set(targetIds)
+    const hasReps = copyReps !== null && copyReps !== undefined
+    const hasWeight = copyWeight !== null && copyWeight !== undefined
+    if (!targets.size || (!hasReps && !hasWeight)) {
+      pendingCopy = null
+      return
+    }
+
+    localEntries = localEntries.map((row) => {
+      if (!targets.has(row.id)) return row
+      const next = { ...row, autoFilled: false }
+      if (hasReps) next.loggedReps = copyReps
+      if (hasWeight) next.weight = copyWeight
+      return next
+    })
+
+    pendingCopy = null
+  }
 
   const copyToClipboard = async () => {
     const roundOrder: string[] = []
@@ -131,6 +191,7 @@
         <span>Type</span>
         <span>Logged reps</span>
         <span>Weight</span>
+        <span>Copy</span>
       </div>
       {#each localEntries as entry (entry.id)}
         {@const isRest = entry.type === 'rest' || entry.type === 'roundRest' || entry.type === 'roundTransition'}
@@ -180,10 +241,53 @@
                 placeholder="kg / lb"
               />
             </div>
+            <div class="row-actions">
+              {#if !isRest}
+                {@const targetCount = countMatchingTargets(entry)}
+                {@const hasSourceData = entry.loggedReps !== null || entry.weight !== null}
+                <button
+                  class="ghost small copy-btn"
+                  type="button"
+                  disabled={!hasSourceData}
+                  on:click={() => openCopyConfirm(entry)}
+                  title={targetCount ? `Copy to ${targetCount} matching set(s)` : 'Copy to matching sets'}
+                >
+                  Copy to matching
+                </button>
+                <span class="muted tiny">
+                  {targetCount
+                    ? `Will target ${targetCount} set${targetCount === 1 ? '' : 's'}`
+                    : 'No other matches'}
+                </span>
+              {/if}
+            </div>
           </div>
         {/if}
       {/each}
     </section>
+
+    {#if pendingCopy}
+      <div class="copy-layer">
+        <div class="copy-modal">
+          <h3>Copy reps & weight?</h3>
+          <p>
+            Copy values from <strong>{pendingCopy.setLabel || 'this set'}</strong> to
+            {pendingCopy.targetIds.length} matching set{pendingCopy.targetIds.length === 1 ? '' : 's'}.
+          </p>
+          <div class="copy-summary">
+            <div><span class="label">Reps</span><span>{pendingCopy.copyReps ?? '—'}</span></div>
+            <div><span class="label">Weight</span><span>{pendingCopy.copyWeight ?? '—'}</span></div>
+          </div>
+          <p class="muted small">
+            Existing values in those sets will be overwritten where a value is provided above.
+          </p>
+          <div class="copy-actions">
+            <button class="ghost" type="button" on:click={() => (pendingCopy = null)}>Cancel</button>
+            <button class="primary" type="button" on:click={applyCopyToMatches}>Confirm copy</button>
+          </div>
+        </div>
+      </div>
+    {/if}
 
     <footer>
       <button class="ghost" type="button" on:click={() => dispatch('close')}>Close</button>
@@ -241,7 +345,7 @@
   }
   .row {
     display: grid;
-    grid-template-columns: 1.3fr 0.5fr 0.9fr 0.9fr;
+    grid-template-columns: 1.3fr 0.5fr 0.9fr 0.9fr 1fr;
     gap: 0.5rem;
     align-items: center;
     padding: 0.65rem;
@@ -283,6 +387,13 @@
     align-items: center;
     gap: 0.35rem;
   }
+  .row-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    align-items: flex-start;
+    justify-content: center;
+  }
   .rest-inline {
     display: inline-flex;
     align-items: center;
@@ -323,5 +434,51 @@
   .status {
     color: var(--color-text-muted);
     font-size: 0.9rem;
+  }
+  .copy-btn {
+    border: 1px dashed var(--color-border);
+  }
+  .tiny {
+    font-size: 0.85rem;
+  }
+  .copy-layer {
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 9, 20, 0.5);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 82;
+  }
+  .copy-modal {
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    padding: 1rem 1.25rem;
+    width: min(520px, 92vw);
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+  }
+  .copy-summary {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--color-surface-1) 80%, transparent);
+  }
+  .copy-summary .label {
+    display: block;
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+  }
+  .copy-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
   }
 </style>
