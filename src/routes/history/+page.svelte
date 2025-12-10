@@ -5648,7 +5648,7 @@
     top: 0.5rem;
     width: min(360px, 42vw);
     max-width: 440px;
-    max-height: min(70vh, 600px);
+    max-height: min(84vh, 720px);
     overflow: auto;
     background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
     border: 1px solid var(--color-border);
