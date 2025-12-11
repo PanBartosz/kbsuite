@@ -35,13 +35,13 @@
     voiceEnabled: false,
     debugOverlay: false,
     voiceSelected: 'alloy',
-    swingApexHeight: 1.29,
-    swingResetHeight: 0.6,
+    swingApexHeight: 0.4,
+    swingResetHeight: -0.1,
     swingHingeExit: 150,
     swingMinRepMs: 400,
-    lockoutLowBand: 0.28,
+    lockoutLowBand: 0.25,
     lockoutHeadThresh: 0.5,
-    lockoutHoldMs: 100,
+    lockoutHoldMs: 75,
     lockoutMinRepMs: 400
   }
 

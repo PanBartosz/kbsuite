@@ -55,7 +55,7 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   let countingEnabled = true
   let overlayMode: ExerciseId | 'disabled' = 'swing'
   const LOCKOUT_HEAD_THRESH = 0.5
-  const LOCKOUT_HOLD_MS = 100
+  const LOCKOUT_HOLD_MS = 75
 
   $: currentThresholds = $thresholds
   $: currentExercise = getExerciseOption($exercise)
