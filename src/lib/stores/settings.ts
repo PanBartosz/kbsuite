@@ -146,11 +146,16 @@ if (browser) {
     .then((res) => res.ok ? res.json() : null)
     .then((data) => {
       if (data?.settings) {
-        settings.update((current) => ({
-          ...current,
-          ...data.settings,
-          openAiKey: current.openAiKey // keep local only
-        }))
+        settings.update((current) => {
+          const server = data.settings ?? {}
+          return {
+            ...server,
+            ...current,
+            timer: { ...(server.timer ?? {}), ...(current.timer ?? {}) },
+            counter: { ...(server.counter ?? {}), ...(current.counter ?? {}) },
+            openAiKey: current.openAiKey // keep local only
+          }
+        })
       }
     })
     .catch(() => {})
