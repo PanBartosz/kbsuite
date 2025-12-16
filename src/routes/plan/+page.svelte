@@ -851,7 +851,7 @@
     const m = new Date(calendarMonth)
     return d.getFullYear() === m.getFullYear() && d.getMonth() === m.getMonth()
   })
-  $: selectedDayPlans = selectedDateKey ? dayPlans(selectedDateKey) : []
+  $: selectedDayPlans = selectedDateKey ? plans.filter((p) => dayKey(p.planned_for) === selectedDateKey) : []
   $: mobileWeekStart = selectedDateKey ? startOfWeek(Date.parse(selectedDateKey)) : mobileWeekStart
   $: mobileWeekDays = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(mobileWeekStart)
@@ -1317,7 +1317,7 @@
         <p class="muted small">No planned workouts for this day.</p>
       {:else}
         <div class="list">
-          {#each selectedDayPlans as item}
+          {#each selectedDayPlans as item (item.id)}
             <article class="card">
               <div class="card-header">
                 <div>

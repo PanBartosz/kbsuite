@@ -10,6 +10,7 @@
   import { pushToast } from '$lib/stores/toasts'
   import { getInsightsPrompt, defaultInsightsPrompt } from '$lib/ai/prompts'
   import { modal } from '$lib/actions/modal'
+  import { alignPhasesToHr, buildPhasesFromSets } from '$lib/hr/intervalAlignment.js'
 
   type CompletedSet = {
     phase_index?: number
@@ -49,6 +50,28 @@
     score: number
     reasons: string[]
     totals: CompareTotals
+  }
+
+  type HrIntervalAlignmentResult = {
+    method: 'shift' | 'warp'
+    hrSeconds: number
+    planSeconds: number
+    shiftSeconds?: number
+    insertedSeconds?: number
+    deletedSeconds?: number
+    avgMatchError?: number
+    phases: Array<
+      {
+        type: string
+        durationSeconds: number
+        roundLabel?: string
+        setLabel?: string
+        planStart: number
+        planEnd: number
+        hrStart: number
+        hrEnd: number
+      }
+    >
   }
   type ExerciseRollup = {
     label: string
@@ -151,7 +174,16 @@
   let fileInputEl: HTMLInputElement | null = null
   let overflowOpen: Record<string, boolean> = {}
   let sharePreviewUrl = ''
-  let hrDetails: Record<string, { avgHr: number | null; maxHr: number | null; samples?: { t: number; hr: number }[] }> = {}
+  let hrDetails: Record<
+    string,
+    {
+      avgHr: number | null
+      maxHr: number | null
+      startTime?: number | null
+      durationSeconds?: number | null
+      samples?: { t: number; hr: number }[]
+    }
+  > = {}
   let hrSummary: Record<string, { avgHr: number | null; maxHr: number | null }> = {}
   let filterHasHr = false
   let sortBy: 'dateDesc' | 'dateAsc' | 'durationDesc' | 'durationAsc' | 'hrDesc' | 'rpeDesc' = 'dateDesc'
@@ -178,6 +210,14 @@
   let insightsHtml = ''
   let insightsLoading = false
   let insightsModalOpen = false
+
+  let intervalsModalOpen = false
+  let intervalsItem: CompletedWorkout | null = null
+  let intervalsMethod: 'warp' | 'shift' = 'warp'
+  let intervalsResults: Partial<Record<'shift' | 'warp', HrIntervalAlignmentResult>> = {}
+  let intervalsSamples: { t: number; hr: number }[] = []
+  let intervalsStatus = ''
+  let intervalsError = ''
 
   const toRgba = (color: string, alpha = 1) => {
     const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)))
@@ -615,6 +655,8 @@
             [id]: {
               avgHr: data.summary.avgHr ?? null,
               maxHr: data.summary.maxHr ?? null,
+              startTime: data.summary.startTime ?? null,
+              durationSeconds: data.summary.durationSeconds ?? null,
               samples: data.summary.samples ?? []
             }
           }
@@ -642,13 +684,103 @@
           [id]: {
             avgHr: data.summary.avgHr ?? null,
             maxHr: data.summary.maxHr ?? null,
+            startTime: data.summary.startTime ?? null,
+            durationSeconds: data.summary.durationSeconds ?? null,
             samples: data.summary.samples ?? []
           }
         }
         hrAttached = { ...hrAttached, [id]: !!data.attached }
       }
+      return data?.summary ?? null
     } catch {
       // ignore
+    }
+    return null
+  }
+
+  const normalizeHrSamplesForIntervals = (
+    raw: { t: number; hr: number }[],
+    durationSeconds: number | null
+  ) => {
+    if (!Array.isArray(raw) || !raw.length) return []
+    const sorted = raw
+      .map((p) => ({ t: Number(p?.t), hr: Number(p?.hr) }))
+      .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.hr))
+      .map((p) => ({ t: Math.max(0, Math.round(p.t)), hr: p.hr }))
+      .sort((a, b) => a.t - b.t)
+    if (!sorted.length) return []
+    const deduped: { t: number; hr: number }[] = []
+    for (const p of sorted) {
+      const last = deduped[deduped.length - 1]
+      if (last && last.t === p.t) last.hr = p.hr
+      else deduped.push({ ...p })
+    }
+    const first = deduped[0]
+    if (first.t > 0) deduped.unshift({ t: 0, hr: first.hr })
+    const last = deduped[deduped.length - 1]
+    if (Number.isFinite(durationSeconds ?? NaN)) {
+      const endT = Math.max(0, Math.round(Number(durationSeconds)))
+      if (endT > last.t) {
+        deduped.push({ t: endT, hr: last.hr })
+      }
+    }
+    return deduped
+  }
+
+  const ensureHrDetailsForIntervals = async (id: string) => {
+    if (hrDetails[id]?.samples?.length) return hrDetails[id]
+    await loadHrDetails(id)
+    return hrDetails[id] ?? null
+  }
+
+  const closeIntervalsModal = () => {
+    intervalsModalOpen = false
+    intervalsItem = null
+    intervalsResults = {}
+    intervalsSamples = []
+    intervalsStatus = ''
+    intervalsError = ''
+  }
+
+  const openIntervalsModal = async (item: CompletedWorkout) => {
+    if (!browser || !item?.id) return
+    intervalsModalOpen = true
+    intervalsItem = item
+    intervalsMethod = 'warp'
+    intervalsResults = {}
+    intervalsSamples = []
+    intervalsStatus = 'Loading HR…'
+    intervalsError = ''
+    try {
+      await ensureHrDetailsForIntervals(item.id)
+      const details = hrDetails[item.id]
+      const raw = details?.samples ?? []
+      if (!raw.length) {
+        intervalsError = 'No HR samples available for this session.'
+        intervalsStatus = ''
+        return
+      }
+      const dur =
+        details?.durationSeconds !== undefined && details?.durationSeconds !== null
+          ? Number(details.durationSeconds)
+          : null
+      const samples = normalizeHrSamplesForIntervals(raw, Number.isFinite(dur ?? NaN) ? dur : null)
+      intervalsSamples = samples
+      const phases = buildPhasesFromSets(item.sets) as any
+      if (!phases?.length) {
+        intervalsError = 'No set/rest phases found to align.'
+        intervalsStatus = ''
+        return
+      }
+      intervalsStatus = 'Aligning…'
+      const shift = alignPhasesToHr(phases, samples, { method: 'shift' }) as HrIntervalAlignmentResult
+      const warp = alignPhasesToHr(phases, samples, { method: 'warp' }) as HrIntervalAlignmentResult
+      intervalsResults = { shift, warp }
+      intervalsStatus = ''
+    } catch (err) {
+      console.warn('Failed to compute HR intervals', err)
+      intervalsError = 'Failed to compute intervals.'
+      intervalsStatus = ''
     }
   }
 
@@ -2659,15 +2791,15 @@
                         </span>
                       {/if}
                     </div>
-                    {#if hrSummary[item.id]}
-                      <div class="hr-card">
-                        <div class="hr-card-top">
-                          <span class="muted small">HR</span>
-                          <div class="hr-stats">
-                            {#if hrSummary[item.id].avgHr}<span>Avg {hrSummary[item.id].avgHr} bpm</span>{/if}
-                            {#if hrSummary[item.id].maxHr}<span>Max {hrSummary[item.id].maxHr} bpm</span>{/if}
-                          </div>
-                        </div>
+	                    {#if hrSummary[item.id]}
+	                      <div class="hr-card">
+	                        <div class="hr-card-top">
+	                          <span class="muted small">HR</span>
+	                          <div class="hr-stats">
+	                            {#if hrSummary[item.id].avgHr}<span>Avg {hrSummary[item.id].avgHr} bpm</span>{/if}
+	                            {#if hrSummary[item.id].maxHr}<span>Max {hrSummary[item.id].maxHr} bpm</span>{/if}
+	                          </div>
+	                        </div>
                         {#if hrDetails[item.id]?.samples && hrDetails[item.id]?.samples?.length}
                           {#key hrDetails[item.id]?.samples}
                             {@const s = hrDetails[item.id]?.samples ?? []}
@@ -3071,12 +3203,15 @@
                         </div>
                       {/each}
                     </div>
-                    <div class="actions">
-                      <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
-                      <button
-                        class="ghost"
-                        on:click={() => {
-                          shareItem = item
+	                    <div class="actions">
+	                      <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
+	                      {#if hrSummary[item.id]}
+	                        <button class="ghost" type="button" on:click={() => openIntervalsModal(item)}>Intervals</button>
+	                      {/if}
+	                      <button
+	                        class="ghost"
+	                        on:click={() => {
+	                          shareItem = item
                           shareShowReps = true
                           shareShowWork = true
                           shareShowSets = true
@@ -3167,15 +3302,15 @@
                   </span>
                 {/if}
               </div>
-              {#if hrSummary[item.id]}
-                <div class="hr-card">
-                  <div class="hr-card-top">
-                    <span class="muted small">HR</span>
-                    <div class="hr-stats">
-                      {#if hrSummary[item.id].avgHr}<span>Avg {hrSummary[item.id].avgHr} bpm</span>{/if}
-                      {#if hrSummary[item.id].maxHr}<span>Max {hrSummary[item.id].maxHr} bpm</span>{/if}
-                    </div>
-                  </div>
+	              {#if hrSummary[item.id]}
+	                <div class="hr-card">
+	                  <div class="hr-card-top">
+	                    <span class="muted small">HR</span>
+	                    <div class="hr-stats">
+	                      {#if hrSummary[item.id].avgHr}<span>Avg {hrSummary[item.id].avgHr} bpm</span>{/if}
+	                      {#if hrSummary[item.id].maxHr}<span>Max {hrSummary[item.id].maxHr} bpm</span>{/if}
+	                    </div>
+	                  </div>
                   {#if hrDetails[item.id]?.samples && hrDetails[item.id]?.samples?.length}
                     {#key hrDetails[item.id]?.samples}
                       {@const s = hrDetails[item.id]?.samples ?? []}
@@ -3238,10 +3373,10 @@
             </div>
           </div>
           {#if editingId !== item.id}
-            <div class="card-actions-row">
-              <button
-                class="ghost icon-btn toggle-btn"
-                aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
+	            <div class="card-actions-row">
+	              <button
+	                class="ghost icon-btn toggle-btn"
+	                aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
                 on:click={() => toggleExpanded(item.id, !isExpanded)}
               >
                 {#if isExpanded}▲{:else}▼{/if}
@@ -3261,12 +3396,15 @@
               <button class="ghost" on:click={() => openCompareModal(item)}>Compare</button>
               <button class="ghost secondary-action" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
               <button class="text-button" on:click={() => duplicateLog(item)}>Log again</button>
-              <div class="export-group secondary-action">
-                <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
-                <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
-              </div>
-              <button class="ghost" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
-              <button class="ghost mobile-hidden secondary-action" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
+	              <div class="export-group secondary-action">
+	                <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
+	                <button class="ghost small" on:click={() => copyCsv(item)}>CSV</button>
+	              </div>
+	              {#if hrSummary[item.id]}
+	                <button class="ghost secondary-action" type="button" on:click={() => openIntervalsModal(item)}>Intervals</button>
+	              {/if}
+	              <button class="ghost" on:click={() => loadInTimer(item)} disabled={!item.workout_id}>Timer</button>
+	              <button class="ghost mobile-hidden secondary-action" on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
               <button
                 class="ghost mobile-hidden"
                 on:click={() => {
@@ -3299,12 +3437,15 @@
                   {#if overflowOpen[item.id]}
                     <div class="overflow-menu">
                       <button on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
-                      <button on:click={() => openCompareModal(item)}>Compare</button>
-                      <button on:click={() => copySummary(item)}>Copy</button>
-                      <button on:click={() => copyCsv(item)}>CSV</button>
-                      <button on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
-                      <button
-                        on:click={() => {
+	                      <button on:click={() => openCompareModal(item)}>Compare</button>
+	                      <button on:click={() => copySummary(item)}>Copy</button>
+	                      <button on:click={() => copyCsv(item)}>CSV</button>
+	                      {#if hrSummary[item.id]}
+	                        <button type="button" on:click={() => openIntervalsModal(item)}>Intervals</button>
+	                      {/if}
+	                      <button on:click={() => loadInBigPicture(item)} disabled={!item.workout_id}>Big Picture</button>
+	                      <button
+	                        on:click={() => {
                           uploadTargetId = item.id
                           if (fileInputEl) fileInputEl.click()
                         }}
@@ -4555,6 +4696,117 @@
     </div>
   {/if}
 
+  {#if intervalsModalOpen && intervalsItem}
+    {@const hr = hrSummary[intervalsItem.id]}
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close modal"
+      on:click={closeIntervalsModal}
+      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeIntervalsModal()}
+    ></div>
+    <div class="intervals-modal" use:modal={{ onClose: closeIntervalsModal }}>
+      <header class="intervals-head">
+        <div>
+          <p class="eyebrow">HR intervals (guess)</p>
+          <h3>{intervalsItem.title || 'Workout'}</h3>
+          <p class="muted tiny">
+            {formatDate(intervalsItem.started_at || intervalsItem.created_at)}
+            {#if hr} · Avg {hr.avgHr ?? '–'} / Max {hr.maxHr ?? '–'} bpm{/if}
+          </p>
+        </div>
+        <div class="intervals-head__actions">
+          <button class="ghost small" type="button" on:click={closeIntervalsModal} aria-label="Close">✕</button>
+        </div>
+      </header>
+
+      {#if intervalsStatus}
+        <p class="muted small">{intervalsStatus}</p>
+      {/if}
+      {#if intervalsError}
+        <p class="error small">{intervalsError}</p>
+      {/if}
+
+      {#if intervalsResults[intervalsMethod] && intervalsSamples.length}
+        {@const current = intervalsResults[intervalsMethod] as HrIntervalAlignmentResult}
+        <div class="intervals-controls">
+          <label class="intervals-select">
+            <span class="muted tiny">Method</span>
+            <select bind:value={intervalsMethod}>
+              <option value="warp">Smart (rest-warp)</option>
+              <option value="shift">Shift-only (baseline)</option>
+            </select>
+          </label>
+          <div class="intervals-metrics">
+            {#if intervalsMethod === 'shift'}
+              <span class="chip">Shift {current.shiftSeconds ?? 0}s</span>
+            {:else}
+              <span class="chip">Inserted {current.insertedSeconds ?? 0}s</span>
+              <span class="chip">Missing {current.deletedSeconds ?? 0}s</span>
+            {/if}
+            {#if current.avgMatchError !== undefined}
+              <span class="chip">Err {current.avgMatchError.toFixed(2)}</span>
+            {/if}
+          </div>
+        </div>
+
+        {@const s = intervalsSamples}
+        {@const maxT = Math.max(...s.map((p) => p.t), 1)}
+        {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
+        {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
+        {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
+        {@const minHr = minHrRaw - padding}
+        {@const maxHr = maxHrRaw + padding}
+
+        <svg class="intervals-plot" viewBox="0 0 900 280" preserveAspectRatio="none">
+          <rect class="intervals-bg" x="0" y="0" width="900" height="280" rx="14" ry="14" />
+
+          {#each current.phases as p (p.planStart)}
+            {@const t = (p.type ?? '').toString().toLowerCase()}
+            {@const x0 = (p.hrStart / maxT) * 900}
+            {@const x1 = (p.hrEnd / maxT) * 900}
+            {@const w = Math.max(0, x1 - x0)}
+            {#if t === 'work'}
+              <rect class="intervals-work" x={x0} y="0" width={w} height="280" />
+            {:else if t === 'transition' || t === 'roundtransition'}
+              <rect class="intervals-transition" x={x0} y="0" width={w} height="280" />
+            {:else if t === 'rest' || t === 'roundrest'}
+              <rect class="intervals-rest" x={x0} y="0" width={w} height="280" />
+            {/if}
+          {/each}
+
+          <polyline
+            class="intervals-hr-line"
+            fill="none"
+            stroke-width="2.5"
+            points={s
+              .map((p) => {
+                const x = (p.t / maxT) * 900
+                const y = 280 - ((p.hr - minHr) / Math.max(1, maxHr - minHr)) * 280
+                return `${x},${y}`
+              })
+              .join(' ')}
+          />
+
+          {#each current.phases as p (p.planStart)}
+            {@const t = (p.type ?? '').toString().toLowerCase()}
+            {#if t === 'work'}
+              {@const x = (p.hrStart / maxT) * 900}
+              <line class="intervals-boundary" x1={x} x2={x} y1="0" y2="280" />
+            {/if}
+          {/each}
+        </svg>
+
+        <div class="intervals-legend">
+          <span class="legend-item"><span class="swatch work"></span>Work</span>
+          <span class="legend-item"><span class="swatch rest"></span>Rest</span>
+          <span class="legend-item"><span class="swatch transition"></span>Transition</span>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   {#if templateModalOpen}
     <div
       class="modal-backdrop"
@@ -4731,6 +4983,121 @@
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+  .intervals-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(980px, 96vw);
+    max-height: 92vh;
+    overflow-y: auto;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    padding: 1rem;
+    z-index: 505;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  }
+  .intervals-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  .intervals-head__actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+  .intervals-controls {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+  .intervals-select {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 220px;
+  }
+  .intervals-select select {
+    width: 100%;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    padding: 0.45rem 0.6rem;
+    background: var(--color-surface-1);
+    color: var(--color-text-primary);
+  }
+  .intervals-metrics {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .intervals-plot {
+    width: 100%;
+    height: auto;
+    border: 1px solid color-mix(in srgb, var(--color-border) 65%, transparent);
+    border-radius: 14px;
+    background: var(--hr-spark-bg, color-mix(in srgb, var(--color-surface-1) 70%, transparent));
+  }
+  .intervals-bg {
+    fill: var(--hr-spark-bg, color-mix(in srgb, var(--color-surface-1) 70%, transparent));
+  }
+  .intervals-work {
+    fill: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  }
+  .intervals-rest {
+    fill: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+    opacity: 0.16;
+  }
+  .intervals-transition {
+    fill: color-mix(in srgb, var(--color-warning, #f7b955) 20%, transparent);
+    opacity: 0.22;
+  }
+  .intervals-hr-line {
+    stroke: var(--hr-spark-line, var(--color-text-primary));
+  }
+  .intervals-boundary {
+    stroke: color-mix(in srgb, var(--color-text-primary) 55%, transparent);
+    stroke-width: 1;
+    opacity: 0.65;
+  }
+  .intervals-legend {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+    color: var(--color-text-muted);
+    font-size: 0.95rem;
+  }
+  .intervals-legend .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .intervals-legend .swatch {
+    width: 14px;
+    height: 10px;
+    border-radius: 4px;
+    border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+    background: transparent;
+  }
+  .intervals-legend .swatch.work {
+    background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  }
+  .intervals-legend .swatch.rest {
+    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
+  }
+  .intervals-legend .swatch.transition {
+    background: color-mix(in srgb, var(--color-warning, #f7b955) 24%, transparent);
   }
   .compare-modal {
     position: fixed;
@@ -5196,10 +5563,10 @@
     align-items: center;
     width: 100%;
   }
-  .hr-stats {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
+	  .hr-stats {
+	    display: flex;
+	    gap: 0.5rem;
+	    flex-wrap: wrap;
     justify-content: flex-end;
     color: var(--color-text-muted);
     font-size: 0.95rem;
