@@ -213,8 +213,8 @@
 
   let intervalsModalOpen = false
   let intervalsItem: CompletedWorkout | null = null
-  let intervalsMethod: 'warp' | 'shift' = 'warp'
-  let intervalsResults: Partial<Record<'shift' | 'warp', HrIntervalAlignmentResult>> = {}
+  let intervalsMethod: 'warp_strict' | 'shift_strict' | 'warp_with_transitions' | 'shift_with_transitions' = 'warp_strict'
+  let intervalsResults: Partial<Record<string, HrIntervalAlignmentResult>> = {}
   let intervalsSamples: { t: number; hr: number }[] = []
   let intervalsStatus = ''
   let intervalsError = ''
@@ -746,7 +746,7 @@
     if (!browser || !item?.id) return
     intervalsModalOpen = true
     intervalsItem = item
-    intervalsMethod = 'warp'
+    intervalsMethod = 'warp_strict'
     intervalsResults = {}
     intervalsSamples = []
     intervalsStatus = 'Loading HR…'
@@ -766,16 +766,27 @@
           : null
       const samples = normalizeHrSamplesForIntervals(raw, Number.isFinite(dur ?? NaN) ? dur : null)
       intervalsSamples = samples
-      const phases = buildPhasesFromSets(item.sets) as any
-      if (!phases?.length) {
+      const phasesStrict = buildPhasesFromSets(item.sets) as any
+      const phasesWithTransitions = buildPhasesFromSets(item.sets, { includeTransitions: true }) as any
+      if (!phasesStrict?.length && !phasesWithTransitions?.length) {
         intervalsError = 'No set/rest phases found to align.'
         intervalsStatus = ''
         return
       }
       intervalsStatus = 'Aligning…'
-      const shift = alignPhasesToHr(phases, samples, { method: 'shift' }) as HrIntervalAlignmentResult
-      const warp = alignPhasesToHr(phases, samples, { method: 'warp' }) as HrIntervalAlignmentResult
-      intervalsResults = { shift, warp }
+      const results: Record<string, HrIntervalAlignmentResult> = {}
+      if (phasesStrict?.length) {
+        results.shift_strict = alignPhasesToHr(phasesStrict, samples, { method: 'shift' }) as HrIntervalAlignmentResult
+        results.warp_strict = alignPhasesToHr(phasesStrict, samples, { method: 'warp' }) as HrIntervalAlignmentResult
+      }
+      if (phasesWithTransitions?.length) {
+        results.shift_with_transitions = alignPhasesToHr(phasesWithTransitions, samples, { method: 'shift' }) as HrIntervalAlignmentResult
+        results.warp_with_transitions = alignPhasesToHr(phasesWithTransitions, samples, { method: 'warp' }) as HrIntervalAlignmentResult
+      }
+      intervalsResults = results
+      if (!intervalsResults[intervalsMethod]) {
+        intervalsMethod = (Object.keys(intervalsResults)[0] as any) ?? 'warp_strict'
+      }
       intervalsStatus = ''
     } catch (err) {
       console.warn('Failed to compute HR intervals', err)
@@ -4734,12 +4745,14 @@
           <label class="intervals-select">
             <span class="muted tiny">Method</span>
             <select bind:value={intervalsMethod}>
-              <option value="warp">Smart (rest-warp)</option>
-              <option value="shift">Shift-only (baseline)</option>
+              {#if intervalsResults.warp_strict}<option value="warp_strict">Smart (strict)</option>{/if}
+              {#if intervalsResults.shift_strict}<option value="shift_strict">Shift-only (strict)</option>{/if}
+              {#if intervalsResults.warp_with_transitions}<option value="warp_with_transitions">Smart (+ transitions)</option>{/if}
+              {#if intervalsResults.shift_with_transitions}<option value="shift_with_transitions">Shift-only (+ transitions)</option>{/if}
             </select>
           </label>
           <div class="intervals-metrics">
-            {#if intervalsMethod === 'shift'}
+            {#if current.method === 'shift'}
               <span class="chip">Shift {current.shiftSeconds ?? 0}s</span>
             {:else}
               <span class="chip">Inserted {current.insertedSeconds ?? 0}s</span>
