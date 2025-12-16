@@ -14,6 +14,7 @@ interface SettingsState {
     notificationsEnabled: boolean
     audioEnabled: boolean
     openAiVoice: string
+    autoOpenSummaryOnComplete: boolean
   }
   counter: {
     lowFpsMode: boolean
@@ -53,7 +54,7 @@ const defaultState = (): SettingsState => ({
   theme: 'dark',
   openAiKey: '',
   aiInsightsPrompt: defaultInsightsPrompt,
-  timer: { ttsEnabled: false, enableMetronome: false, notificationsEnabled: false, audioEnabled: true, openAiVoice: 'alloy' },
+  timer: { ttsEnabled: false, enableMetronome: false, notificationsEnabled: false, audioEnabled: true, openAiVoice: 'alloy', autoOpenSummaryOnComplete: true },
   counter: {
     lowFpsMode: false,
     voiceEnabled: false,
@@ -75,7 +76,12 @@ const loadSettings = (): SettingsState => {
   try {
     const storedTheme = window.localStorage.getItem(themeKey)
     const theme =
-      storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'vibrant'
+      storedTheme === 'light' ||
+      storedTheme === 'dark' ||
+      storedTheme === 'vibrant' ||
+      storedTheme === 'neon' ||
+      storedTheme === 'midnight' ||
+      storedTheme === 'sand'
         ? storedTheme
         : defaultTheme()
     const openAiKey = window.localStorage.getItem(apiKeyKey) ?? ''

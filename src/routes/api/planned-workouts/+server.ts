@@ -74,32 +74,59 @@ export const POST = async ({ request, cookies }) => {
   const db = getDb()
   const now = Date.now()
   const tagList = parseTags(tags)
-  const planId = id || crypto.randomUUID()
+  const requestedId = typeof id === 'string' && id.trim().length ? id.trim() : null
+  const planId = requestedId ?? crypto.randomUUID()
 
-  db.prepare(
-    `INSERT INTO planned_workouts (id, user_id, planned_for, title, yaml_source, plan_json, notes, tags, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       planned_for = excluded.planned_for,
-       title = excluded.title,
-       yaml_source = excluded.yaml_source,
-       plan_json = excluded.plan_json,
-       notes = excluded.notes,
-       tags = excluded.tags,
-       updated_at = excluded.updated_at`
-  ).run(
-    planId,
-    session.userId,
-    planned_for,
-    title ?? '',
-    yamlSource,
-    planJson ? JSON.stringify(planJson) : null,
-    notes ?? '',
-    JSON.stringify(tagList),
-    now,
-    now
-  )
+  const existing = db
+    .prepare('SELECT user_id FROM planned_workouts WHERE id = ?')
+    .get(planId) as { user_id: string } | undefined
+  if (existing && existing.user_id !== session.userId) {
+    return json({ error: 'Not found' }, { status: 404 })
+  }
 
-  const row = db.prepare('SELECT * FROM planned_workouts WHERE id = ?').get(planId)
+  if (existing) {
+    db.prepare(
+      `UPDATE planned_workouts
+       SET planned_for = ?,
+           title = ?,
+           yaml_source = ?,
+           plan_json = ?,
+           notes = ?,
+           tags = ?,
+           updated_at = ?
+       WHERE id = ? AND user_id = ?`
+    ).run(
+      planned_for,
+      title ?? '',
+      yamlSource,
+      planJson ? JSON.stringify(planJson) : null,
+      notes ?? '',
+      JSON.stringify(tagList),
+      now,
+      planId,
+      session.userId
+    )
+  } else {
+    db.prepare(
+      `INSERT INTO planned_workouts
+        (id, user_id, planned_for, title, yaml_source, plan_json, notes, tags, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      planId,
+      session.userId,
+      planned_for,
+      title ?? '',
+      yamlSource,
+      planJson ? JSON.stringify(planJson) : null,
+      notes ?? '',
+      JSON.stringify(tagList),
+      now,
+      now
+    )
+  }
+
+  const row = db
+    .prepare('SELECT * FROM planned_workouts WHERE id = ? AND user_id = ?')
+    .get(planId, session.userId)
   return json({ item: row ? serializePlanned(row) : null })
 }

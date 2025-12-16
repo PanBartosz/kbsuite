@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
-  import { browser } from '$app/environment'
+  import { onMount } from 'svelte'
+  import { pushToast } from '$lib/stores/toasts'
+  import { modal } from '$lib/actions/modal'
 
   type Workout = {
     id: string
@@ -15,12 +16,39 @@
   let workouts: Workout[] = []
   let loading = false
   let error = ''
-  type Toast = { id: string; message: string; type: 'info' | 'success' | 'error' }
-  let toasts: Toast[] = []
   let confirmDeleteName = ''
   let confirmDeleteId: string | null = null
   let deleteError = ''
   let deleteStatus = ''
+  let searchTerm = ''
+  let filterMode: 'all' | 'mine' | 'templates' = 'all'
+  let visibleWorkouts: Workout[] = []
+
+  const normalize = (value?: string | null) => (value ?? '').toString().toLowerCase().trim()
+
+  const matchesSearch = (workout: Workout, term: string) => {
+    const q = normalize(term)
+    if (!q) return true
+    const haystack = [workout.name, workout.description ?? ''].map(normalize).join(' ')
+    return q
+      .split(/\s+/)
+      .filter(Boolean)
+      .every((token) => haystack.includes(token))
+  }
+
+  $: visibleWorkouts = workouts
+    .filter((w) => matchesSearch(w, searchTerm))
+    .filter((w) => {
+      if (filterMode === 'templates') return !!w.is_template
+      if (filterMode === 'mine') return !w.is_template
+      return true
+    })
+    .sort((a, b) => {
+      const aTs = Number(a.updated_at) || 0
+      const bTs = Number(b.updated_at) || 0
+      if (aTs !== bTs) return bTs - aTs
+      return (a.name ?? '').localeCompare(b.name ?? '')
+    })
 
   const loadWorkouts = async () => {
     loading = true
@@ -58,6 +86,12 @@
     deleteStatus = ''
   }
 
+  const closeDeleteConfirm = () => {
+    confirmDeleteId = null
+    deleteError = ''
+    deleteStatus = ''
+  }
+
   const deleteWorkout = async (id: string, isTemplate?: boolean) => {
     if (isTemplate) return
     deleteStatus = 'Deleting…'
@@ -67,7 +101,7 @@
       const data = await res.json().catch(() => ({}))
       if (!res.ok || data?.error) throw new Error(data?.error ?? 'Delete failed')
       workouts = workouts.filter((w) => w.id !== id)
-      confirmDeleteId = null
+      closeDeleteConfirm()
       deleteStatus = 'Deleted'
       pushToast('Workout deleted.', 'success')
       setTimeout(() => (deleteStatus = ''), 1500)
@@ -76,15 +110,6 @@
       deleteError = (err as any)?.message ?? 'Delete failed'
       pushToast(deleteError, 'error')
     }
-  }
-
-  const pushToast = (message: string, type: Toast['type'] = 'info', duration = 2400) => {
-    const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
-    const toast = { id, message, type }
-    toasts = [...toasts, toast]
-    setTimeout(() => {
-      toasts = toasts.filter((t) => t.id !== id)
-    }, duration)
   }
 
   const startInTimer = (id: string) => {
@@ -98,14 +123,6 @@
   }
 
   onMount(loadWorkouts)
-
-  $: if (browser) {
-    document.body.classList.toggle('modal-open', !!confirmDeleteId)
-  }
-
-  onDestroy(() => {
-    if (browser) document.body.classList.remove('modal-open')
-  })
 </script>
 
 <div class="workouts-page">
@@ -120,8 +137,40 @@
   {:else if workouts.length === 0}
     <p>No workouts found yet.</p>
   {:else}
+    <div class="toolbar">
+      <input
+        type="search"
+        placeholder="Search workouts…"
+        bind:value={searchTerm}
+        autocomplete="off"
+      />
+      <div class="segmented" role="group" aria-label="Workout filters">
+        <button class:active={filterMode === 'all'} type="button" on:click={() => (filterMode = 'all')}>
+          All
+        </button>
+        <button
+          class:active={filterMode === 'mine'}
+          type="button"
+          on:click={() => (filterMode = 'mine')}
+        >
+          Mine
+        </button>
+        <button
+          class:active={filterMode === 'templates'}
+          type="button"
+          on:click={() => (filterMode = 'templates')}
+        >
+          Templates
+        </button>
+      </div>
+      <p class="muted small count">{visibleWorkouts.length} shown</p>
+    </div>
+
+    {#if visibleWorkouts.length === 0}
+      <p class="muted">No matching workouts.</p>
+    {:else}
     <div class="list">
-      {#each workouts as workout}
+      {#each visibleWorkouts as workout}
         <article class="card">
           <div class="meta">
             <div class="title-row">
@@ -152,22 +201,26 @@
         </article>
       {/each}
     </div>
+    {/if}
   {/if}
 
   {#if confirmDeleteId}
-    <div class="modal-backdrop"></div>
-    <div class="confirm-modal">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close modal"
+      on:click={closeDeleteConfirm}
+      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeDeleteConfirm()}
+    ></div>
+    <div class="confirm-modal" use:modal={{ onClose: closeDeleteConfirm }}>
       <p>Delete this workout?</p>
       {#if confirmDeleteName}<p class="muted small">{confirmDeleteName}</p>{/if}
       {#if deleteError}<p class="error small">{deleteError}</p>{/if}
       <div class="actions">
         <button
           class="ghost"
-          on:click={() => {
-            confirmDeleteId = null
-            deleteError = ''
-            deleteStatus = ''
-          }}
+          on:click={closeDeleteConfirm}
         >
           Cancel
         </button>
@@ -182,16 +235,6 @@
     </div>
   {/if}
 
-  {#if toasts.length}
-    <div class="toast-stack">
-      {#each toasts as toast (toast.id)}
-        <div class={`toast ${toast.type}`}>
-          <span>{toast.message}</span>
-          <button class="ghost icon-btn" aria-label="Dismiss" on:click={() => (toasts = toasts.filter((t) => t.id !== toast.id))}>×</button>
-        </div>
-      {/each}
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -202,6 +245,47 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+  .toolbar {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .toolbar input[type='search'] {
+    flex: 1;
+    min-width: min(280px, 100%);
+    border-radius: 12px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+    color: var(--color-text-primary);
+    padding: 0.7rem 0.85rem;
+    font-size: 1rem;
+  }
+  .segmented {
+    display: inline-flex;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--color-surface-2);
+  }
+  .segmented button {
+    border: none;
+    border-right: 1px solid var(--color-border);
+    background: transparent;
+    padding: 0.55rem 0.75rem;
+    cursor: pointer;
+    color: var(--color-text-primary);
+  }
+  .segmented button:last-child {
+    border-right: none;
+  }
+  .segmented button.active {
+    background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+    color: var(--color-text-primary);
+  }
+  .count {
+    margin: 0;
   }
   header h1 {
     margin: 0;
@@ -284,55 +368,6 @@
   }
   .error.small {
     font-size: 0.9rem;
-  }
-  .toast-stack {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    z-index: 200;
-    pointer-events: none;
-  }
-  .toast {
-    min-width: 240px;
-    padding: 0.65rem 0.85rem;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    pointer-events: auto;
-    animation: toast-in 220ms ease, toast-out 180ms ease 2.2s forwards;
-  }
-  .toast.error {
-    background: color-mix(in srgb, var(--color-danger) 85%, var(--color-surface-1) 15%);
-    border-color: var(--color-danger);
-    color: var(--color-text-inverse);
-  }
-  :global(body.modal-open) {
-    overflow: hidden;
-  }
-  @keyframes toast-in {
-    from {
-      opacity: 0;
-      transform: translateY(-10px) translateX(12px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) translateX(0);
-    }
-  }
-  @keyframes toast-out {
-    to {
-      opacity: 0;
-      transform: translateY(-6px) translateX(8px);
-    }
   }
   .modal-backdrop {
     position: fixed;

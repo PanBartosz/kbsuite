@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onMount } from 'svelte'
   import YAML from 'yaml'
   import defaultPlanSource from '$lib/timer/config/default-plan.yaml?raw'
   import { buildTimeline } from '$lib/timer/lib/timeline.js'
@@ -21,6 +21,8 @@
   import SharePlanModal from '$lib/components/SharePlanModal.svelte'
   import { defaultAiSystemPrompt } from '$lib/ai/prompts'
   import { loadInvites, loadPendingCount, shares } from '$lib/stores/shares'
+  import { pushToast } from '$lib/stores/toasts'
+  import { modal } from '$lib/actions/modal'
   import { browser } from '$app/environment'
 
   type Planned = {
@@ -98,8 +100,6 @@
   let confirmDeletePlan: Planned | null = null
   let deleteStatus = ''
   let deleteError = ''
-  type Toast = { id: string; message: string; type: 'info' | 'success' | 'error' }
-  let toasts: Toast[] = []
 
   const dayKey = (ts: number) => {
     const d = new Date(ts)
@@ -223,6 +223,16 @@
   const closeDuplicate = () => {
     duplicateOpen = false
     duplicateSource = null
+  }
+
+  const closeEdit = () => {
+    editOpen = false
+  }
+
+  const closeDeleteConfirm = () => {
+    confirmDeleteId = null
+    deleteError = ''
+    deleteStatus = ''
   }
 
   const openEdit = (plan: Planned) => {
@@ -417,15 +427,6 @@
   }
 
   const openSettings = () => openSettingsModal()
-
-  const pushToast = (message: string, type: Toast['type'] = 'info', duration = 2400) => {
-    const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
-    const toast = { id, message, type }
-    toasts = [...toasts, toast]
-    setTimeout(() => {
-      toasts = toasts.filter((t) => t.id !== id)
-    }, duration)
-  }
 
   const coerceSeconds = (value: any) => {
     const numeric = Number(value)
@@ -894,20 +895,6 @@
     loadInvites('incoming', 'pending')
   })
 
-  $: if (browser) {
-    const anyModalOpen =
-      duplicateOpen ||
-      !!confirmDeleteId ||
-      shareModalOpen ||
-      editOpen ||
-      showYamlHelp ||
-      planEditorOpen ||
-      roundEditorOpen ||
-      setEditorOpen ||
-      libraryModalOpen
-    document.body.classList.toggle('modal-open', anyModalOpen)
-  }
-
   $: confirmDeletePlan = confirmDeleteId ? plans.find((p) => p.id === confirmDeleteId) ?? null : null
 
   $: if (browser && selectedDateKey && dayDetailEl && selectedDateKey !== lastScrolledDay) {
@@ -965,9 +952,6 @@
     hoverSummary = parsed ? buildPlannedSummary(parsed) : []
   }
 
-  onDestroy(() => {
-    if (browser) document.body.classList.remove('modal-open')
-  })
 </script>
 
 <div class="planner-page">
@@ -1014,7 +998,7 @@
       {/if}
     </section>
 
-    <section class="calendar-shell" bind:this={calendarShellEl} on:mouseleave={() => setHoverPlan(null)}>
+    <section class="calendar-shell" bind:this={calendarShellEl} role="presentation" on:mouseleave={() => setHoverPlan(null)}>
       <div class="week-head mobile-only">
         <div class="month-nav">
           <button class="ghost" on:click={() => shiftWeek(-1)}>←</button>
@@ -1115,6 +1099,7 @@
                     on:mouseenter={(event) =>
                       setHoverPlan(it, colIndex >= 4 ? 'right' : 'left', event.currentTarget as HTMLElement)
                     }
+                    role="presentation"
                   >
                     <span class="dot"></span>
                     <div class="day-row-body">
@@ -1423,11 +1408,18 @@
   {/if}
 
 {#if duplicateOpen}
-  <div class="modal-backdrop"></div>
-  <div class="edit-modal">
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close modal"
+    on:click={closeDuplicate}
+    on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeDuplicate()}
+  ></div>
+  <div class="edit-modal" use:modal={{ onClose: closeDuplicate }}>
     <header>
       <h3>Duplicate workout</h3>
-      <button class="ghost" on:click={closeDuplicate}>✕</button>
+      <button class="ghost" on:click={closeDuplicate} aria-label="Close">✕</button>
     </header>
     <div class="form">
       <label>
@@ -1447,19 +1439,22 @@
 {/if}
 
 {#if confirmDeleteId}
-  <div class="modal-backdrop"></div>
-  <div class="confirm-modal">
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close modal"
+    on:click={closeDeleteConfirm}
+    on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeDeleteConfirm()}
+  ></div>
+  <div class="confirm-modal" use:modal={{ onClose: closeDeleteConfirm }}>
     <p>Delete this planned workout?</p>
     <p class="muted small">{confirmDeletePlan?.title || 'Planned workout'}</p>
     {#if deleteError}<p class="error small">{deleteError}</p>{/if}
     <div class="actions">
       <button
         class="ghost"
-        on:click={() => {
-          confirmDeleteId = null
-          deleteError = ''
-          deleteStatus = ''
-        }}
+        on:click={closeDeleteConfirm}
       >
         Cancel
       </button>
@@ -1492,11 +1487,18 @@
 {/if}
 
 {#if editOpen}
-  <div class="modal-backdrop"></div>
-  <div class="edit-modal">
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close modal"
+    on:click={closeEdit}
+    on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeEdit()}
+  ></div>
+  <div class="edit-modal" use:modal={{ onClose: closeEdit }}>
       <header>
         <h3>{editId ? 'Edit planned workout' : 'Add planned workout'}</h3>
-        <button class="ghost" on:click={() => (editOpen = false)}>✕</button>
+        <button class="ghost" on:click={closeEdit} aria-label="Close">✕</button>
       </header>
       <div class="form">
         <label>
@@ -1513,7 +1515,7 @@
             {#each editTags as tag}
               <span class="tag-chip">
                 {tag}
-                <button class="ghost icon-btn" on:click={() => (editTags = editTags.filter((t) => t !== tag))}>×</button>
+                <button class="ghost icon-btn" aria-label="Remove tag" on:click={() => (editTags = editTags.filter((t) => t !== tag))}>×</button>
               </span>
             {/each}
             <div class="tag-input-wrap">
@@ -1580,19 +1582,8 @@
       </div>
       <div class="actions">
         <button class="primary" on:click={savePlan}>Save</button>
-        <button class="ghost" on:click={() => (editOpen = false)}>Cancel</button>
+        <button class="ghost" on:click={closeEdit}>Cancel</button>
       </div>
-  </div>
-{/if}
-
-{#if toasts.length}
-  <div class="toast-stack">
-    {#each toasts as toast (toast.id)}
-      <div class={`toast ${toast.type}`}>
-        <span>{toast.message}</span>
-        <button class="ghost icon-btn" aria-label="Dismiss" on:click={() => (toasts = toasts.filter((t) => t.id !== toast.id))}>×</button>
-      </div>
-    {/each}
   </div>
 {/if}
 
@@ -2133,55 +2124,6 @@
   .chip-pill.pill-count {
     font-weight: 700;
     background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
-  }
-  .toast-stack {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    z-index: 200;
-    pointer-events: none;
-  }
-  .toast {
-    min-width: 240px;
-    padding: 0.65rem 0.85rem;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    pointer-events: auto;
-    animation: toast-in 220ms ease, toast-out 180ms ease 2.2s forwards;
-  }
-  .toast.error {
-    background: color-mix(in srgb, var(--color-danger) 85%, var(--color-surface-1) 15%);
-    border-color: var(--color-danger);
-    color: var(--color-text-inverse);
-  }
-  :global(body.modal-open) {
-    overflow: hidden;
-  }
-  @keyframes toast-in {
-    from {
-      opacity: 0;
-      transform: translateY(-10px) translateX(12px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) translateX(0);
-    }
-  }
-  @keyframes toast-out {
-    to {
-      opacity: 0;
-      transform: translateY(-6px) translateX(8px);
-    }
   }
   @media (max-width: 720px) {
     .today-head {

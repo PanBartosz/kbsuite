@@ -9,6 +9,7 @@
     settingsModalOpen,
     type ThemeOption
   } from '$lib/stores/settings'
+  import { modal } from '$lib/actions/modal'
   import { getVoiceOptions } from '$lib/counter/audio/voicePack'
 
   const dispatch = createEventDispatcher()
@@ -46,16 +47,26 @@
   }
 
   let localKey = ''
-  let localPrompt = $settings.aiInsightsPrompt ?? ''
+  let localPrompt = ''
   let localTheme: ThemeOption = 'dark'
-  let localTimer = $settings.timer
+  let localTimer = { ...($settings.timer ?? {}) }
   let localCounter = { ...defaultCounter, ...$settings.counter }
+  let wasOpen = false
 
-  $: localKey = $settings.openAiKey ?? ''
-  $: localPrompt = ($settings.aiInsightsPrompt as string) ?? ''
-  $: localTheme = ($settings.theme as ThemeOption) ?? 'dark'
-  $: localTimer = $settings.timer
-  $: localCounter = { ...defaultCounter, ...$settings.counter }
+  const snapshotFromStore = () => {
+    localKey = ($settings.openAiKey ?? '').toString()
+    localPrompt = (($settings.aiInsightsPrompt as string) ?? '').toString()
+    localTheme = ($settings.theme as ThemeOption) ?? 'dark'
+    localTimer = { ...($settings.timer ?? {}) }
+    localCounter = { ...defaultCounter, ...($settings.counter ?? {}) }
+  }
+
+  $: if ($settingsModalOpen && !wasOpen) {
+    snapshotFromStore()
+    wasOpen = true
+  } else if (!$settingsModalOpen && wasOpen) {
+    wasOpen = false
+  }
 
   const handleRestoreCounter = () => {
     localCounter = { ...defaultCounter }
@@ -63,8 +74,8 @@
 
   const handleSave = () => {
     setSettings({ openAiKey: localKey.trim(), aiInsightsPrompt: localPrompt.trim(), theme: localTheme })
-    setTimerSettings(localTimer)
-    setCounterSettings(localCounter)
+    setTimerSettings({ ...localTimer })
+    setCounterSettings({ ...localCounter })
     closeSettingsModal()
     dispatch('saved')
   }
@@ -84,7 +95,7 @@
     on:keydown={(event) => (event.key === 'Enter' || event.key === ' ') && handleClose()}
     aria-label="Close settings"
   ></div>
-  <div class="modal" role="dialog" aria-label="App settings">
+  <div class="modal" role="dialog" aria-label="App settings" use:modal={{ onClose: handleClose }}>
     <header>
       <div>
         <p class="eyebrow">Settings</p>
@@ -152,6 +163,10 @@
         <label class="toggle">
           <input type="checkbox" bind:checked={localTimer.ttsEnabled} />
           <span>Text-to-speech announcements</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={localTimer.autoOpenSummaryOnComplete} />
+          <span>Auto-open summary when workout completes</span>
         </label>
       </div>
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import YAML from 'yaml'
   import { buildTimeline } from '$lib/timer/lib/timeline'
   import { browser } from '$app/environment'
@@ -7,7 +7,9 @@
   import { rankSimilarWorkouts } from '$lib/stats/workoutSimilarity'
   import { buildAiPayloadBatch } from '$lib/stats/aiPayload'
   import { settings, openSettingsModal } from '$lib/stores/settings'
+  import { pushToast } from '$lib/stores/toasts'
   import { getInsightsPrompt, defaultInsightsPrompt } from '$lib/ai/prompts'
+  import { modal } from '$lib/actions/modal'
 
   type CompletedSet = {
     phase_index?: number
@@ -78,8 +80,6 @@
   let editTags: string[] = []
   let newTagInput = ''
   let confirmDeleteSetIdx: number | null = null
-  type Toast = { id: string; message: string; type: 'info' | 'success' | 'error' }
-  let toasts: Toast[] = []
   let searchTerm = ''
   let dateFilter: 'all' | '7' | '30' = 'all'
   let visibleItems: CompletedWorkout[] = []
@@ -139,6 +139,10 @@
   let hrAttached: Record<string, boolean> = {}
   let hrRemoveTarget: string | null = null
   let hrRemoveSession: CompletedWorkout | null = null
+  const HR_PROBE_CONCURRENCY = 4
+  let hrProbeQueue: string[] = []
+  let hrProbeInFlight = 0
+  let hrProbeToken = 0
   let confirmDeleteSession: CompletedWorkout | null = null
   let hrRemoveError = ''
   let hrRemoveStatus = ''
@@ -262,15 +266,6 @@
         if (hrRemoveStatus === 'Removed') hrRemoveStatus = ''
       }, 2000)
     }
-  }
-
-  const pushToast = (message: string, type: Toast['type'] = 'info', duration = 2400) => {
-    const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
-    const toast = { id, message, type }
-    toasts = [...toasts, toast]
-    setTimeout(() => {
-      toasts = toasts.filter((t) => t.id !== id)
-    }, duration)
   }
 
   const toggleOverflow = (id: string) => {
@@ -559,13 +554,45 @@
             .filter(Boolean)
         )
       ).slice(0, 30)
-      // probe hr
-      items.forEach((it) => checkHrStatus(it.id))
+      // probe HR (includes samples for sparklines; concurrency-limited)
+      queueHrProbes(items.map((it) => it.id))
     } catch (err) {
       const message = (err as any)?.message ?? 'Failed to load history'
       error = message
     } finally {
       loading = false
+    }
+  }
+
+  const queueHrProbes = (ids: string[]) => {
+    hrProbeToken += 1
+    hrProbeQueue = (ids ?? []).filter(Boolean)
+    hrProbeInFlight = 0
+    drainHrProbes(hrProbeToken)
+  }
+
+  const scrollToWorkoutCard = async (id: string) => {
+    if (!browser || !id) return
+    await tick()
+    const el = document.getElementById(`cw-${id}`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' })
+    }
+  }
+
+  const drainHrProbes = (token: number) => {
+    if (token !== hrProbeToken) return
+    while (hrProbeInFlight < HR_PROBE_CONCURRENCY && hrProbeQueue.length) {
+      const nextId = hrProbeQueue.shift()
+      if (!nextId) continue
+      hrProbeInFlight += 1
+      checkHrStatus(nextId)
+        .catch(() => {})
+        .finally(() => {
+          if (token !== hrProbeToken) return
+          hrProbeInFlight = Math.max(hrProbeInFlight - 1, 0)
+          drainHrProbes(token)
+        })
     }
   }
 
@@ -582,13 +609,7 @@
             maxHr: data.summary.maxHr ?? null
           }
         }
-        if (data.summary.samples) {
-          hrDetails = {
-            ...hrDetails,
-            [id]: { avgHr: data.summary.avgHr ?? null, maxHr: data.summary.maxHr ?? null, samples: data.summary.samples }
-          }
-        }
-        if (data.summary.samples) {
+        if (data.summary.samples?.length) {
           hrDetails = {
             ...hrDetails,
             [id]: {
@@ -892,8 +913,8 @@
 
   $: visibleItems = (() => {
     const list = items
-      .filter((item) => matchesFilters(item, searchTerm, dateFilter))
-      .filter((item) => !filterHasHr || !!hrAttached[item.id] || !!hrSummary[item.id])
+      .filter((item) => item.id === editingId || matchesFilters(item, searchTerm, dateFilter))
+      .filter((item) => item.id === editingId || !filterHasHr || !!hrAttached[item.id] || !!hrSummary[item.id])
     const keyTs = (it: CompletedWorkout) => it.started_at ?? it.created_at ?? 0
     const keyDuration = (it: CompletedWorkout) => Number(it.duration_s) || 0
     const keyHr = (it: CompletedWorkout) => hrSummary[it.id]?.avgHr ?? -Infinity
@@ -1089,7 +1110,10 @@
       if (!res.ok) throw new Error(data?.error ?? 'Failed to create log')
       // prepend
       if (data?.item) {
-        items = [data.item, ...items]
+        const created = data.item as CompletedWorkout
+        items = [created, ...items]
+        startEdit(created)
+        await scrollToWorkoutCard(created.id)
       }
       pushToast('Created empty session log.', 'success')
     } catch (err) {
@@ -1192,7 +1216,10 @@
       const result = await resCreate.json().catch(() => ({}))
       if (!resCreate.ok) throw new Error(result?.error ?? 'Failed to create log')
       if (result?.item) {
-        items = [result.item, ...items]
+        const created = result.item as CompletedWorkout
+        items = [created, ...items]
+        startEdit(created)
+        await scrollToWorkoutCard(created.id)
       }
       pushToast('Logged from template.', 'success')
     } catch (err) {
@@ -2166,24 +2193,35 @@
     return () => observer.disconnect()
   })
 
-  $: if (browser) {
-    const anyModalOpen =
-      !!hrRemoveTarget ||
-      !!confirmDeleteId ||
-      !!shareItem ||
-      templateModalOpen ||
-      insightsModalOpen ||
-      compareModalOpen ||
-      confirmDeleteSetIdx !== null
-    document.body.classList.toggle('modal-open', anyModalOpen)
-  }
-
   $: hrRemoveSession = hrRemoveTarget ? items.find((i) => i.id === hrRemoveTarget) ?? null : null
   $: confirmDeleteSession = confirmDeleteId ? items.find((i) => i.id === confirmDeleteId) ?? null : null
 
-  onDestroy(() => {
-    if (browser) document.body.classList.remove('modal-open')
-  })
+  const closeHrRemoveConfirm = () => {
+    hrRemoveTarget = null
+    hrRemoveError = ''
+    hrRemoveStatus = ''
+  }
+
+  const closeDeleteSetConfirm = () => {
+    confirmDeleteSetIdx = null
+  }
+
+  const closeDeleteSessionConfirm = () => {
+    confirmDeleteId = null
+  }
+
+  const closeShareModal = () => {
+    shareItem = null
+    sharePreviewUrl = ''
+  }
+
+  const closeInsightsModal = () => {
+    insightsModalOpen = false
+  }
+
+  const closeTemplateModal = () => {
+    templateModalOpen = false
+  }
 
   const refreshSharePreview = async () => {
     if (!browser || !shareItem) return
@@ -2583,7 +2621,7 @@
               {@const totals = computeTotals(item)}
               {@const isExpanded = editingId === item.id || expanded[item.id]}
               {@const summary = buildWorkoutSummary(item.sets)}
-              <article class="card">
+              <article class="card" id={`cw-${item.id}`}>
                 <div class="card-header two-col">
                   <div class="header-left">
                     {#if editingId === item.id}
@@ -2756,6 +2794,8 @@
                         type="number"
                         min="0"
                         step="1"
+                        inputmode="numeric"
+                        enterkeyhint="next"
                         bind:value={editDurationMinutes}
                         placeholder="auto"
                       />
@@ -2767,6 +2807,8 @@
                         min="1"
                         max="10"
                         step="1"
+                        inputmode="numeric"
+                        enterkeyhint="next"
                         bind:value={editRpe}
                         placeholder="1-10"
                       />
@@ -2836,6 +2878,9 @@
                                 class="duration-input narrow"
                                 type="number"
                                 min="0"
+                                step="1"
+                                inputmode="numeric"
+                                enterkeyhint="done"
                                 placeholder="sec"
                                 value={set.duration_s ?? ''}
                                 on:input={(e) => {
@@ -2872,6 +2917,9 @@
                                 class="duration-input narrow"
                                 type="number"
                                 min="0"
+                                step="1"
+                                inputmode="numeric"
+                                enterkeyhint="next"
                                 placeholder="sec"
                                 value={set.duration_s ?? ''}
                                 on:input={(e) => {
@@ -2886,6 +2934,9 @@
                                 class="narrow"
                                 type="number"
                                 min="0"
+                                step="1"
+                                inputmode="numeric"
+                                enterkeyhint="next"
                                 value={set.reps ?? ''}
                                 on:input={(e) => {
                                   const val = e.currentTarget.value.trim()
@@ -2900,6 +2951,8 @@
                                 type="number"
                                 min="0"
                                 step="0.5"
+                                inputmode="decimal"
+                                enterkeyhint="next"
                                 value={set.weight ?? ''}
                                 on:input={(e) => {
                                   const val = e.currentTarget.value.trim()
@@ -2916,6 +2969,8 @@
                                 min="1"
                                 max="10"
                                 step="1"
+                                inputmode="numeric"
+                                enterkeyhint="done"
                                 value={set.rpe ?? ''}
                                 placeholder="RPE"
                                 on:input={(e) => {
@@ -3074,7 +3129,7 @@
         {@const totals = computeTotals(item)}
         {@const isExpanded = editingId === item.id || expanded[item.id]}
         {@const summary = buildWorkoutSummary(item.sets)}
-        <article class="card">
+        <article class="card" id={`cw-${item.id}`}>
           <div class="card-header two-col">
             <div class="header-left">
               {#if editingId === item.id}
@@ -3327,6 +3382,8 @@
                   type="number"
                   min="0"
                   step="1"
+                  inputmode="numeric"
+                  enterkeyhint="next"
                   bind:value={editDurationMinutes}
                   placeholder="auto"
                 />
@@ -3338,6 +3395,8 @@
                   min="1"
                   max="10"
                   step="1"
+                  inputmode="numeric"
+                  enterkeyhint="next"
                   bind:value={editRpe}
                   placeholder="1-10"
                 />
@@ -3407,6 +3466,9 @@
                           class="duration-input narrow"
                           type="number"
                           min="0"
+                          step="1"
+                          inputmode="numeric"
+                          enterkeyhint="done"
                           placeholder="sec"
                           value={set.duration_s ?? ''}
                           on:input={(e) => {
@@ -3443,6 +3505,9 @@
                           class="duration-input narrow"
                           type="number"
                           min="0"
+                          step="1"
+                          inputmode="numeric"
+                          enterkeyhint="next"
                           placeholder="sec"
                           value={set.duration_s ?? ''}
                           on:input={(e) => {
@@ -3457,6 +3522,9 @@
                           class="narrow"
                           type="number"
                           min="0"
+                          step="1"
+                          inputmode="numeric"
+                          enterkeyhint="next"
                           value={set.reps ?? ''}
                           on:input={(e) => {
                             const val = e.currentTarget.value.trim()
@@ -3471,6 +3539,8 @@
                           type="number"
                           min="0"
                           step="0.5"
+                          inputmode="decimal"
+                          enterkeyhint="next"
                           value={set.weight ?? ''}
                           on:input={(e) => {
                             const val = e.currentTarget.value.trim()
@@ -3487,6 +3557,8 @@
                           min="1"
                           max="10"
                           step="1"
+                          inputmode="numeric"
+                          enterkeyhint="done"
                           value={set.rpe ?? ''}
                           placeholder="RPE"
                           on:input={(e) => {
@@ -3641,8 +3713,15 @@
   {#if compareModalOpen && compareSource}
     {@const srcTotals = compareSourceTotals ?? ensureCompareTotals(compareSource)}
     {@const srcSummary = buildWorkoutSummary(compareSource.sets)}
-    <div class="modal-backdrop"></div>
-    <div class="compare-modal">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close modal"
+      on:click={closeCompareModal}
+      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeCompareModal()}
+    ></div>
+    <div class="compare-modal" use:modal={{ onClose: closeCompareModal }}>
       <header class="compare-head">
         <div>
           <p class="eyebrow">Compare workouts</p>
@@ -3660,7 +3739,7 @@
           <button class="ghost small" on:click={swapCompareSides} disabled={!compareTarget}>
             Swap sides
           </button>
-          <button class="ghost small" on:click={closeCompareModal}>✕</button>
+          <button class="ghost small" on:click={closeCompareModal} aria-label="Close">✕</button>
         </div>
       </header>
       <div class="compare-top">
@@ -4216,8 +4295,15 @@
   {/if}
 
   {#if hrRemoveTarget}
-    <div class="modal-backdrop"></div>
-    <div class="confirm-modal">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close modal"
+      on:click={closeHrRemoveConfirm}
+      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeHrRemoveConfirm()}
+    ></div>
+    <div class="confirm-modal" use:modal={{ onClose: closeHrRemoveConfirm }}>
       <p>Remove HR file from this session?</p>
       {#if hrRemoveSession}
         <p class="muted small">
@@ -4226,14 +4312,7 @@
       {/if}
       {#if hrRemoveError}<p class="error small">{hrRemoveError}</p>{/if}
       <div class="actions">
-        <button
-          class="ghost"
-          on:click={() => {
-            hrRemoveTarget = null
-            hrRemoveError = ''
-            hrRemoveStatus = ''
-          }}
-        >
+        <button class="ghost" on:click={closeHrRemoveConfirm}>
           Cancel
         </button>
         <button
@@ -4247,11 +4326,18 @@
     </div>
   {/if}
   {#if confirmDeleteSetIdx !== null}
-    <div class="modal-backdrop"></div>
-    <div class="confirm-modal">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close modal"
+      on:click={closeDeleteSetConfirm}
+      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeDeleteSetConfirm()}
+    ></div>
+    <div class="confirm-modal" use:modal={{ onClose: closeDeleteSetConfirm }}>
       <p>Delete this row?</p>
       <div class="actions">
-        <button class="ghost" on:click={() => (confirmDeleteSetIdx = null)}>Cancel</button>
+        <button class="ghost" on:click={closeDeleteSetConfirm}>Cancel</button>
         <button
           class="danger"
           on:click={() => {
@@ -4265,8 +4351,15 @@
     </div>
   {/if}
   {#if confirmDeleteId}
-    <div class="modal-backdrop"></div>
-    <div class="confirm-modal">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close modal"
+      on:click={closeDeleteSessionConfirm}
+      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeDeleteSessionConfirm()}
+    ></div>
+    <div class="confirm-modal" use:modal={{ onClose: closeDeleteSessionConfirm }}>
       <p>Delete this session?</p>
       {#if confirmDeleteSession}
         <p class="muted small">
@@ -4274,7 +4367,7 @@
         </p>
       {/if}
       <div class="actions">
-        <button class="ghost" on:click={() => (confirmDeleteId = null)}>Cancel</button>
+        <button class="ghost" on:click={closeDeleteSessionConfirm}>Cancel</button>
         <button
           class="danger destructive"
           on:click={() => {
@@ -4288,20 +4381,16 @@
     </div>
   {/if}
 
-  {#if toasts.length}
-    <div class="toast-stack">
-      {#each toasts as toast (toast.id)}
-        <div class={`toast ${toast.type}`}>
-          <span>{toast.message}</span>
-          <button class="ghost icon-btn" aria-label="Dismiss" on:click={() => (toasts = toasts.filter((t) => t.id !== toast.id))}>×</button>
-        </div>
-      {/each}
-    </div>
-  {/if}
-
   {#if shareItem}
-    <div class="modal-backdrop"></div>
-    <div class="share-modal two-col">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close modal"
+      on:click={closeShareModal}
+      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeShareModal()}
+    ></div>
+    <div class="share-modal two-col" use:modal={{ onClose: closeShareModal }}>
       <div class="share-config-panel">
         <header>
           <h3>Share card</h3>
@@ -4403,7 +4492,7 @@
           >
             Save card (PNG)
           </button>
-          <button class="ghost" on:click={() => (shareItem = null)}>Close</button>
+          <button class="ghost" on:click={closeShareModal}>Close</button>
         </div>
       </div>
       <div class="share-preview-panel">
@@ -4417,8 +4506,15 @@
   {/if}
 
   {#if insightsModalOpen}
-    <div class="modal-backdrop"></div>
-    <div class="insights-modal">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close modal"
+      on:click={closeInsightsModal}
+      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeInsightsModal()}
+    ></div>
+    <div class="insights-modal" use:modal={{ onClose: closeInsightsModal }}>
       <header class="insights-head">
         <div>
           <p class="eyebrow">AI insights</p>
@@ -4426,7 +4522,7 @@
         </div>
         <div class="insights-head__actions">
           <button class="ghost small" type="button" on:click={openSettingsModal}>Settings</button>
-          <button class="ghost small" type="button" on:click={() => (insightsModalOpen = false)}>✕</button>
+          <button class="ghost small" type="button" on:click={closeInsightsModal} aria-label="Close">✕</button>
         </div>
       </header>
       <textarea
@@ -4447,7 +4543,7 @@
         >
           {#if insightsLoading}Generating…{:else}Generate insights{/if}
         </button>
-        <button class="ghost" type="button" on:click={() => (insightsModalOpen = false)}>Close</button>
+        <button class="ghost" type="button" on:click={closeInsightsModal}>Close</button>
         {#if insightsStatus}<span class="status small">{insightsStatus}</span>{/if}
         {#if insightsError}<span class="error small">{insightsError}</span>{/if}
       </div>
@@ -4460,11 +4556,18 @@
   {/if}
 
   {#if templateModalOpen}
-    <div class="modal-backdrop"></div>
-    <div class="template-modal">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close modal"
+      on:click={closeTemplateModal}
+      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeTemplateModal()}
+    ></div>
+    <div class="template-modal" use:modal={{ onClose: closeTemplateModal }}>
       <header>
         <h3>Select template</h3>
-        <button class="ghost" on:click={() => (templateModalOpen = false)}>✕</button>
+        <button class="ghost" on:click={closeTemplateModal} aria-label="Close">✕</button>
       </header>
       <div class="template-list">
         {#if templates.length === 0}
@@ -5435,55 +5538,6 @@
     color: var(--color-accent);
     margin-left: 0.35rem;
     font-size: 0.8rem;
-  }
-  .toast-stack {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    z-index: 220;
-    pointer-events: none;
-  }
-  .toast {
-    min-width: 240px;
-    padding: 0.65rem 0.85rem;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    pointer-events: auto;
-    animation: toast-in 220ms ease, toast-out 180ms ease 2.2s forwards;
-  }
-  .toast.error {
-    background: color-mix(in srgb, var(--color-danger) 85%, var(--color-surface-1) 15%);
-    border-color: var(--color-danger);
-    color: var(--color-text-inverse);
-  }
-  :global(body.modal-open) {
-    overflow: hidden;
-  }
-  @keyframes toast-in {
-    from {
-      opacity: 0;
-      transform: translateY(-10px) translateX(12px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) translateX(0);
-    }
-  }
-  @keyframes toast-out {
-    to {
-      opacity: 0;
-      transform: translateY(-6px) translateX(8px);
-    }
   }
   @media (max-width: 720px) {
     .meta-edit {

@@ -236,6 +236,22 @@
     aspect-ratio: auto;
   }
 
+  @media (max-width: 900px) {
+    .timer-display__body.with-inline {
+      grid-template-columns: 1fr;
+    }
+    .inline-slot {
+      justify-content: stretch;
+      align-items: stretch;
+    }
+    .inline-slot :global(video),
+    .inline-slot :global(canvas),
+    .inline-slot :global(img),
+    .inline-slot :global(.inline-content) {
+      max-height: 42vh;
+    }
+  }
+
   .bar {
     position: relative;
     height: 10px;

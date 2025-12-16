@@ -349,6 +349,10 @@ body {
   color: var(--color-text-primary);
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
 /* Theme-aware scrollbars (WebKit + Firefox) */
 * {
   scrollbar-width: thin;

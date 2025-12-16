@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte'
+  import { modal } from '$lib/actions/modal'
 
   type SummaryEntry = {
     id: string
@@ -37,6 +38,9 @@
   let localEntries: SummaryEntry[] = []
   let copyStatus = ''
   let pendingCopy: CopyIntent | null = null
+  let dirtyIds = new Set<string>()
+  let wasOpen = false
+  let lastEntries: SummaryEntry[] = []
 
   const isRestEntry = (entry: SummaryEntry) =>
     entry.type === 'rest' || entry.type === 'roundRest' || entry.type === 'roundTransition'
@@ -56,24 +60,43 @@
 
   const countMatchingTargets = (entry: SummaryEntry) => findMatchingTargets(entry).length
 
-  $: if (open) {
-    // reset snapshot when opening
-    localEntries = entries.map((e) => ({ ...e }))
-    copyStatus = ''
-    pendingCopy = null
+  $: {
+    if (open && !wasOpen) {
+      localEntries = (entries ?? []).map((e) => ({ ...e }))
+      copyStatus = ''
+      pendingCopy = null
+      dirtyIds = new Set()
+    } else if (open && wasOpen && entries !== lastEntries) {
+      const localById = new Map(localEntries.map((row) => [row.id, row]))
+      localEntries = (entries ?? []).map((incoming) => {
+        const local = localById.get(incoming.id)
+        if (!local) return { ...incoming }
+        if (dirtyIds.has(incoming.id)) return local
+        return { ...incoming }
+      })
+    } else if (!open && wasOpen) {
+      copyStatus = ''
+      pendingCopy = null
+      dirtyIds = new Set()
+    }
+    wasOpen = open
+    lastEntries = entries
   }
 
   const updateEntry = (id: string, value: number | null) => {
+    dirtyIds.add(id)
     localEntries = localEntries.map((row) =>
       row.id === id ? { ...row, loggedReps: value ?? null, autoFilled: false } : row
     )
   }
 
   const updateWeight = (id: string, value: number | null) => {
+    dirtyIds.add(id)
     localEntries = localEntries.map((row) => (row.id === id ? { ...row, weight: value ?? null } : row))
   }
 
   const handleSave = () => dispatch('save', { entries: localEntries })
+  const handleClose = () => dispatch('close')
 
   const openCopyConfirm = (entry: SummaryEntry) => {
     pendingCopy = {
@@ -96,6 +119,7 @@
       return
     }
 
+    targetIds.forEach((id) => dirtyIds.add(id))
     localEntries = localEntries.map((row) => {
       if (!targets.has(row.id)) return row
       const next = { ...row, autoFilled: false }
@@ -165,17 +189,17 @@
     class="backdrop"
     role="button"
     tabindex="0"
-    on:click={() => dispatch('close')}
-    on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && dispatch('close')}
+    on:click={handleClose}
+    on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleClose()}
     aria-label="Close summary"
   ></div>
-  <div class="modal" role="dialog" aria-label="Workout summary">
+  <div class="modal" role="dialog" aria-label="Workout summary" use:modal={{ onClose: handleClose }}>
     <header>
       <div>
         <p class="eyebrow">Workout summary</p>
         <h2>Log your reps</h2>
       </div>
-      <button class="ghost" on:click={() => dispatch('close')}>✕</button>
+      <button class="ghost" on:click={handleClose} aria-label="Close summary">✕</button>
     </header>
 
     <section class="toolbar">
@@ -220,6 +244,9 @@
               <input
                 type="number"
                 min="0"
+                step="1"
+                inputmode="numeric"
+                enterkeyhint="next"
                 value={entry.loggedReps ?? ''}
                 on:input={(e) => {
                   const value = e.currentTarget.value.trim()
@@ -233,6 +260,8 @@
                 type="number"
                 min="0"
                 step="0.5"
+                inputmode="decimal"
+                enterkeyhint="done"
                 value={entry.weight ?? ''}
                 on:input={(e) => {
                   const value = e.currentTarget.value.trim()
@@ -267,8 +296,15 @@
     </section>
 
     {#if pendingCopy}
-      <div class="copy-layer">
-        <div class="copy-modal">
+      <div
+        class="copy-layer"
+        role="button"
+        tabindex="0"
+        aria-label="Close modal"
+        on:click={(e) => e.target === e.currentTarget && (pendingCopy = null)}
+        on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (pendingCopy = null)}
+      >
+        <div class="copy-modal" use:modal={{ onClose: () => (pendingCopy = null) }}>
           <h3>Copy reps & weight?</h3>
           <p>
             Copy values from <strong>{pendingCopy.setLabel || 'this set'}</strong> to

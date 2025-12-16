@@ -1,4 +1,4 @@
-import { error, json } from '@sveltejs/kit'
+import { json } from '@sveltejs/kit'
 import { ensureSessionUser, getDb } from '$lib/server/db'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -7,6 +7,7 @@ import FitParser from 'fit-file-parser'
 
 const COOKIE_NAME = 'kb_session'
 const hrDir = path.resolve('data', 'hr')
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const ensureDir = async (dir: string) => {
   try {
@@ -16,10 +17,34 @@ const ensureDir = async (dir: string) => {
   }
 }
 
+const withSession = (cookies: any) => {
+  const session = ensureSessionUser(cookies.get(COOKIE_NAME))
+  cookies.set(COOKIE_NAME, session.token, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 60 * 60 * 24 * 365
+  })
+  return session
+}
+
+const assertOwnsCompletedWorkout = (userId: string, id: string) => {
+  const db = getDb()
+  const row = db
+    .prepare('SELECT user_id FROM completed_workouts WHERE id = ?')
+    .get(id) as { user_id: string } | undefined
+  return !!row && row.user_id === userId
+}
+
 export const GET = async ({ params, cookies, url }) => {
-  ensureSessionUser(cookies.get(COOKIE_NAME))
+  const session = withSession(cookies)
   const id = params.id
-  if (!id) throw error(400, 'Missing id')
+  if (!id) return json({ attached: false, files: [], error: 'Missing id' }, { status: 400 })
+  if (!UUID_RE.test(id)) return json({ attached: false, files: [], error: 'Invalid id' }, { status: 400 })
+  if (!assertOwnsCompletedWorkout(session.userId, id)) {
+    return json({ attached: false, files: [], error: 'Not found' }, { status: 404 })
+  }
   const wantDetails = url.searchParams.get('details') === '1'
   const dir = path.join(hrDir, id)
   try {
@@ -53,12 +78,16 @@ export const GET = async ({ params, cookies, url }) => {
 }
 
 export const POST = async ({ request, params, cookies }) => {
-  ensureSessionUser(cookies.get(COOKIE_NAME))
+  const session = withSession(cookies)
   const id = params.id
-  if (!id) throw error(400, 'Missing id')
+  if (!id) return json({ ok: false, error: 'Missing id' }, { status: 400 })
+  if (!UUID_RE.test(id)) return json({ ok: false, error: 'Invalid id' }, { status: 400 })
+  if (!assertOwnsCompletedWorkout(session.userId, id)) {
+    return json({ ok: false, error: 'Not found' }, { status: 404 })
+  }
   const form = await request.formData()
   const file = form.get('file') as File | null
-  if (!file) throw error(400, 'No file provided')
+  if (!file) return json({ ok: false, error: 'No file provided' }, { status: 400 })
   const filename = file.name || 'garmin.fit'
   const lower = filename.toLowerCase()
   const isZip = lower.endsWith('.zip')
@@ -75,13 +104,13 @@ export const POST = async ({ request, params, cookies }) => {
     const fitEntry: any = zip
       .getEntries()
       .find((e: any) => !e.isDirectory && (e.entryName.toLowerCase().endsWith('.fit') || e.entryName.toLowerCase().endsWith('.tcx')))
-    if (!fitEntry) throw error(400, 'No FIT/TCX inside zip')
+    if (!fitEntry) return json({ ok: false, error: 'No FIT/TCX inside zip' }, { status: 400 })
     chosenName = path.basename(fitEntry.entryName)
     buffer = fitEntry.getData()
   } else {
     buffer = buf
   }
-  if (!buffer) throw error(400, 'Failed to read file')
+  if (!buffer) return json({ ok: false, error: 'Failed to read file' }, { status: 400 })
   await fs.writeFile(path.join(dir, chosenName), buffer)
 
   // parse summary
@@ -106,16 +135,16 @@ export const POST = async ({ request, params, cookies }) => {
 }
 
 export const DELETE = async ({ params, cookies }) => {
-  ensureSessionUser(cookies.get(COOKIE_NAME))
+  const session = withSession(cookies)
   const id = params.id
-  if (!id) throw error(400, 'Missing id')
+  if (!id) return json({ ok: false, error: 'Missing id' }, { status: 400 })
+  if (!UUID_RE.test(id)) return json({ ok: false, error: 'Invalid id' }, { status: 400 })
+  if (!assertOwnsCompletedWorkout(session.userId, id)) {
+    return json({ ok: false, error: 'Not found' }, { status: 404 })
+  }
   const dir = path.join(hrDir, id)
   try {
     await fs.rm(dir, { recursive: true, force: true })
-    const db = getDb()
-    db.prepare(
-      `UPDATE completed_workouts SET started_at = started_at, finished_at = finished_at WHERE id = ?`
-    ).run(id)
     return json({ ok: true })
   } catch {
     return json({ ok: false }, { status: 500 })

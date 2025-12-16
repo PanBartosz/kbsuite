@@ -11,13 +11,15 @@ import { libraryTemplates } from '$lib/timer/library/index.js'
 import TimerDisplay from '$lib/timer/components/TimerDisplay.svelte'
 import PhaseQueue from '$lib/timer/components/PhaseQueue.svelte'
 import ControlBar from '$lib/timer/components/ControlBar.svelte'
-import YamlHelpModal from '$lib/timer/components/YamlHelpModal.svelte'
+  import YamlHelpModal from '$lib/timer/components/YamlHelpModal.svelte'
   import LibraryModal from '$lib/timer/components/LibraryModal.svelte'
   import PlanEditorModal from '$lib/timer/components/PlanEditorModal.svelte'
   import RoundEditorModal from '$lib/timer/components/RoundEditorModal.svelte'
   import SetEditorModal from '$lib/timer/components/SetEditorModal.svelte'
   import TimerWorker from '$lib/timer/workers/timerWorker.js?worker'
   import { settings, openSettingsModal, setTimerSettings } from '$lib/stores/settings'
+  import { pushToast } from '$lib/stores/toasts'
+  import { modal } from '$lib/actions/modal'
 import {
   applyRepCountToPhase,
   openSummaryModal,
@@ -31,6 +33,12 @@ import { get } from 'svelte/store'
 import '$lib/timer/app.css'
 
   const dispatch = createEventDispatcher()
+
+  const templateIdSet = new Set(
+    (libraryTemplates ?? [])
+      .map((t) => (t?.id ? String(t.id) : ''))
+      .filter(Boolean)
+  )
 
   export let compact = false
   export let hideHeader = false
@@ -184,7 +192,8 @@ import '$lib/timer/app.css'
           id: item.id,
           name: item.name,
           source: item.source,
-          updatedAt: item.updatedAt ?? Date.now()
+          updatedAt: item.updatedAt ?? Date.now(),
+          isTemplate: item.isTemplate === true
         }))
         .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
     } catch (error) {
@@ -206,7 +215,8 @@ import '$lib/timer/app.css'
     id: item.id,
     name: item.name,
     source: item.yaml_source,
-    updatedAt: item.updated_at ?? Date.now()
+    updatedAt: item.updated_at ?? Date.now(),
+    isTemplate: !!item.is_template
   })
 
   const loadSavedWorkoutsFromApi = async () => {
@@ -325,11 +335,12 @@ import '$lib/timer/app.css'
   const buildSummaryKey = () => {
     if (!timeline.length) return ''
     return timeline
-      .filter((phase) => phase.type === 'work')
-      .map(
-        (phase, idx) =>
-          `${phase.roundId ?? phase.roundIndex ?? 'r'}-${phase.setId ?? phase.setIndex ?? 's'}-${phase.id ?? phase.label ?? idx}-${phase.durationSeconds ?? 0}`
-      )
+      .filter((phase) => phase.type !== 'prep')
+      .map((phase, idx) => {
+        const duration = phase.durationSeconds ?? phase.duration ?? 0
+        const repIndex = Number.isInteger(phase.repetitionIndex) ? phase.repetitionIndex : ''
+        return `${phase.type ?? 'phase'}:${phase.roundId ?? phase.roundIndex ?? 'r'}:${phase.setId ?? phase.setIndex ?? 's'}:${repIndex}:${phase.id ?? phase.label ?? idx}:${duration}`
+      })
       .join('|')
   }
 
@@ -445,7 +456,11 @@ let plan =
   let confirmSavedDeleteId = null
   let savedDeleteError = ''
   let savedDeleteStatus = ''
-  let toasts = []
+  const closeSavedDeleteConfirm = () => {
+    confirmSavedDeleteId = null
+    savedDeleteError = ''
+    savedDeleteStatus = ''
+  }
   let saveName = ''
   let selectedWorkoutId = null
   let fileInputEl
@@ -498,6 +513,7 @@ let plan =
   let unsubscribeLatestRep = null
   let pendingSkipReset = false
   let lastFinalizedPhaseIndex = -1
+  let autoOpenedSummaryOnComplete = false
   let sessionStartMs = null
   let pendingInitialWorkoutId = ''
   let pendingInitialPlannedId = ''
@@ -1001,10 +1017,6 @@ let plan =
     }
   }
 
-  $: if (typeof document !== 'undefined') {
-    document.body.classList.toggle('modal-open', !!confirmSavedDeleteId)
-  }
-
   onDestroy(() => {
     stopAllSpeech()
     ttsStatusMessage = ''
@@ -1025,7 +1037,6 @@ let plan =
       if (getFullscreenElement() === timerPanelEl) {
         exitFullscreen().catch(() => {})
       }
-      doc.body.classList.remove('modal-open')
     }
   })
 
@@ -1225,13 +1236,13 @@ let plan =
       }
 
       if (type === 'phaseStarted') {
+        if (tickId !== lastTickId) return
         const previousPhaseIndex = activePhaseIndex
         const previousPhase = activePhase
         if (previousPhase && previousPhase.type === 'work') {
           finalizeWorkPhase(previousPhaseIndex)
         }
         lastPhase = previousPhase
-        if (tickId !== lastTickId) return
         timerStatusMessage = isTimerPaused ? 'Timer paused' : 'Timer running'
         activePhaseIndex = message.phaseIndex
         activePhase = message.phase ?? null
@@ -1409,10 +1420,10 @@ let plan =
       }
 
       if (type === 'completed') {
+        if (tickId !== lastTickId) return
         if (activePhase && activePhase.type === 'work') {
           finalizeWorkPhase(activePhaseIndex)
         }
-        if (tickId !== lastTickId) return
         isTimerRunning = false
         isTimerPaused = false
         timerStatusMessage = 'Workout complete'
@@ -1422,11 +1433,17 @@ let plan =
         elapsedMs = totalDurationMs
         nextWorkCountdownIndex = null
         workFinishCountdownIndex = null
+        const shouldAutoOpen = $settings.timer.autoOpenSummaryOnComplete !== false
+        if (isBrowser && shouldAutoOpen && !autoOpenedSummaryOnComplete) {
+          autoOpenedSummaryOnComplete = true
+          setTimeout(() => openSummary(), 0)
+        }
         return
       }
 
       if (type === 'paused') {
         if (tickId !== lastTickId) return
+        autoOpenedSummaryOnComplete = false
         isTimerRunning = false
         isTimerPaused = true
         timerStatusMessage = 'Timer paused'
@@ -1440,6 +1457,7 @@ let plan =
 
       if (type === 'resumed') {
         if (tickId !== lastTickId) return
+        autoOpenedSummaryOnComplete = false
         isTimerRunning = true
         isTimerPaused = false
         timerStatusMessage = 'Timer running'
@@ -1450,6 +1468,7 @@ let plan =
 
       if (type === 'stopped') {
         if (tickId !== lastTickId) return
+        autoOpenedSummaryOnComplete = false
         isTimerRunning = false
         isTimerPaused = false
         timerStatusMessage =
@@ -1481,6 +1500,7 @@ let plan =
   const startTimer = async () => {
     initWorker()
     if (!timerWorker) return
+    autoOpenedSummaryOnComplete = false
     if (parseError) {
       timerError = 'Fix YAML configuration before starting the timer.'
       return
@@ -2019,7 +2039,10 @@ Rules:
     if (!normalizedName) return
 
     const now = Date.now()
-    const id = selectedWorkoutId ?? createId()
+    const selected = selectedWorkoutId ? savedWorkouts.find((w) => w.id === selectedWorkoutId) : null
+    const isTemplate =
+      !!selectedWorkoutId && (selected?.isTemplate === true || templateIdSet.has(selectedWorkoutId))
+    const id = selectedWorkoutId && !isTemplate ? selectedWorkoutId : createId()
 
     const entry = {
       id,
@@ -2082,18 +2105,6 @@ Rules:
     confirmSavedDeleteId = id
     savedDeleteError = ''
     savedDeleteStatus = ''
-  }
-
-  const pushToast = (message, type = 'info', duration = 2400) => {
-    const id =
-      typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random()}`
-    const toast = { id, message, type }
-    toasts = [...toasts, toast]
-    setTimeout(() => {
-      toasts = toasts.filter((t) => t.id !== id)
-    }, duration)
   }
 
   const loadPlannedWorkout = async (id) => {
@@ -2361,7 +2372,9 @@ Rules:
           </span>
         </div>
         <div class="status-actions">
-          {#if !isFullscreen}
+          {#if timerStatusMessage === 'Workout complete'}
+            <button class="primary small" type="button" on:click={openSummary}>Log results</button>
+          {:else if !isFullscreen}
             <button class="ghost small" type="button" on:click={openSummary}>Summary</button>
           {/if}
           {#if isFullscreenSupported}
@@ -2496,19 +2509,22 @@ Rules:
         {/if}
       </section>
       {#if confirmSavedDeleteId}
-        <div class="modal-backdrop"></div>
-        <div class="confirm-modal">
+        <div
+          class="modal-backdrop"
+          role="button"
+          tabindex="0"
+          aria-label="Close modal"
+          on:click={closeSavedDeleteConfirm}
+          on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeSavedDeleteConfirm()}
+        ></div>
+        <div class="confirm-modal" use:modal={{ onClose: closeSavedDeleteConfirm }}>
           <p>Delete this saved workout?</p>
           {#if savedDeleteError}<p class="error small">{savedDeleteError}</p>{/if}
           <div class="confirm-actions">
             <button
               class="ghost"
               type="button"
-              on:click={() => {
-                confirmSavedDeleteId = null
-                savedDeleteError = ''
-                savedDeleteStatus = ''
-              }}
+              on:click={closeSavedDeleteConfirm}
             >
               Cancel
             </button>
@@ -2523,24 +2539,6 @@ Rules:
           </div>
         </div>
       {/if}
-      {#if toasts.length}
-        <div class="toast-stack">
-          {#each toasts as toast (toast.id)}
-            <div class={`toast ${toast.type}`}>
-              <span>{toast.message}</span>
-              <button
-                class="ghost icon-btn"
-                aria-label="Dismiss"
-                type="button"
-                on:click={() => (toasts = toasts.filter((t) => t.id !== toast.id))}
-              >
-                ×
-              </button>
-            </div>
-          {/each}
-        </div>
-      {/if}
-
       <section class="ai-panel">
         <h2>AI Assistant</h2>
         <p class="ai-panel__note">
@@ -4210,36 +4208,6 @@ Rules:
   button.primary:disabled {
     opacity: 0.45;
     cursor: not-allowed;
-  }
-  .toast-stack {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    z-index: 200;
-    pointer-events: none;
-  }
-  .toast {
-    min-width: 240px;
-    padding: 0.65rem 0.85rem;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    pointer-events: auto;
-    animation: toast-in 220ms ease, toast-out 180ms ease 2.2s forwards;
-  }
-  .toast.error {
-    background: color-mix(in srgb, var(--color-danger) 85%, var(--color-surface-1) 15%);
-    border-color: var(--color-danger);
-    color: var(--color-text-inverse);
   }
 
   .modal-backdrop {

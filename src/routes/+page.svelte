@@ -9,6 +9,7 @@
   import { buildAiPayloadBatch } from '$lib/stats/aiPayload'
   import { defaultInsightsPrompt, getInsightsPrompt } from '$lib/ai/prompts'
   import { settings } from '$lib/stores/settings'
+  import { modal } from '$lib/actions/modal'
   import SessionOverview from '$lib/timer/components/shared/SessionOverview.svelte'
 
   type Planned = {
@@ -115,6 +116,14 @@ let insightsLoading = false
 let insightsModalOpen = false
 let currentTheme = ''
 let movementInfoOpen = false
+
+  const closeInsightsModal = () => {
+    insightsModalOpen = false
+  }
+
+  const closeMovementInfoModal = () => {
+    movementInfoOpen = false
+  }
 
 const OPENAI_CHAT_MODEL = 'gpt-5.1'
 
@@ -1356,14 +1365,14 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   </div>
 
   {#if insightsModalOpen}
-    <div class="insights-modal">
+    <div class="insights-modal" use:modal={{ onClose: closeInsightsModal }}>
       <div class="insights-panel">
         <div class="insights-head">
           <div>
             <p class="eyebrow">AI insights</p>
             <h3>Last 7 days</h3>
           </div>
-          <button class="ghost" type="button" on:click={() => (insightsModalOpen = false)}>✕</button>
+          <button class="ghost" type="button" on:click={closeInsightsModal} aria-label="Close">✕</button>
         </div>
         <textarea
           placeholder="Ask a question (optional). Default: trends in volume and RPE."
@@ -1378,7 +1387,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
           >
             {insightsLoading ? 'Generating…' : 'Generate insights'}
           </button>
-          <button class="ghost" type="button" on:click={() => (insightsModalOpen = false)}>Close</button>
+          <button class="ghost" type="button" on:click={closeInsightsModal}>Close</button>
           {#if insightsStatus}<span class="muted small">{insightsStatus}</span>{/if}
           {#if insightsError}<span class="error small">{insightsError}</span>{/if}
         </div>
@@ -1392,14 +1401,14 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   {/if}
 
   {#if movementInfoOpen}
-    <div class="insights-modal">
+    <div class="insights-modal" use:modal={{ onClose: closeMovementInfoModal }}>
       <div class="insights-panel">
         <div class="insights-head">
           <div>
             <p class="eyebrow">How we tally</p>
             <h3>Movement mix</h3>
           </div>
-          <button class="ghost" type="button" on:click={() => (movementInfoOpen = false)}>✕</button>
+          <button class="ghost" type="button" on:click={closeMovementInfoModal} aria-label="Close">✕</button>
         </div>
         <div class="insights-body">
           <ul>

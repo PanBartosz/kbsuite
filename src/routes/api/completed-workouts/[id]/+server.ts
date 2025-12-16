@@ -60,6 +60,12 @@ export const PUT = async ({ params, request, cookies }) => {
 
   const body = await request.json().catch(() => ({}))
   const { title, entries, startedAt, finishedAt, durationSeconds, notes, rpe, tags } = body ?? {}
+  const entriesProvided =
+    body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body as any, 'entries')
+
+  if (entriesProvided && !Array.isArray(entries)) {
+    return json({ error: 'entries must be an array' }, { status: 400 })
+  }
 
   db.prepare(
     `UPDATE completed_workouts
@@ -82,40 +88,46 @@ export const PUT = async ({ params, request, cookies }) => {
     id
   )
 
-  db.prepare('DELETE FROM completed_sets WHERE completed_workout_id = ?').run(id)
+  if (entriesProvided) {
+    db.prepare('DELETE FROM completed_sets WHERE completed_workout_id = ?').run(id)
 
-  if (Array.isArray(entries) && entries.length) {
-    const insertSet = db.prepare(
-      `INSERT INTO completed_sets
-        (id, completed_workout_id, phase_index, position, round_label, set_label, reps, weight, duration_s, type, rpe, auto_filled)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    entries.forEach((entry, idx) => {
-      const repsVal =
-        entry?.reps !== null && entry?.reps !== undefined
-          ? Number(entry.reps)
-          : entry?.loggedReps !== undefined
-            ? Number(entry.loggedReps)
-            : null
-      const reps = Number.isFinite(repsVal) ? repsVal : null
-      const duration = entry?.duration_s ?? entry?.durationSeconds ?? null
-      const type = entry?.type ?? 'work'
-      const rpe = entry?.rpe ?? null
-      insertSet.run(
-        crypto.randomUUID(),
-        id,
-        Number.isInteger(entry?.phase_index) ? entry.phase_index : Number.isInteger(entry?.phaseIndex) ? entry.phaseIndex : null,
-        idx,
-        entry?.round_label ?? entry?.roundLabel ?? '',
-        entry?.set_label ?? entry?.setLabel ?? '',
-        reps,
-        entry?.weight !== undefined && entry?.weight !== null ? Number(entry.weight) : null,
-        duration,
-        type,
-        rpe,
-        entry?.auto_filled ? 1 : 0
+    if (entries.length) {
+      const insertSet = db.prepare(
+        `INSERT INTO completed_sets
+          (id, completed_workout_id, phase_index, position, round_label, set_label, reps, weight, duration_s, type, rpe, auto_filled)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-    })
+      entries.forEach((entry: any, idx: number) => {
+        const repsVal =
+          entry?.reps !== null && entry?.reps !== undefined
+            ? Number(entry.reps)
+            : entry?.loggedReps !== undefined
+              ? Number(entry.loggedReps)
+              : null
+        const reps = Number.isFinite(repsVal) ? repsVal : null
+        const duration = entry?.duration_s ?? entry?.durationSeconds ?? null
+        const type = entry?.type ?? 'work'
+        const rpe = entry?.rpe ?? null
+        insertSet.run(
+          crypto.randomUUID(),
+          id,
+          Number.isInteger(entry?.phase_index)
+            ? entry.phase_index
+            : Number.isInteger(entry?.phaseIndex)
+              ? entry.phaseIndex
+              : null,
+          idx,
+          entry?.round_label ?? entry?.roundLabel ?? '',
+          entry?.set_label ?? entry?.setLabel ?? '',
+          reps,
+          entry?.weight !== undefined && entry?.weight !== null ? Number(entry.weight) : null,
+          duration,
+          type,
+          rpe,
+          entry?.auto_filled ? 1 : 0
+        )
+      })
+    }
   }
 
   const workout = db.prepare('SELECT * FROM completed_workouts WHERE id = ?').get(id) as any

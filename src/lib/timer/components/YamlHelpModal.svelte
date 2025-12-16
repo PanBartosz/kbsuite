@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import { modal } from '$lib/actions/modal'
 
   export let open = false
 
@@ -15,12 +16,6 @@
     }
   }
 
-  const handleBackdropKeydown = (event) => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      close()
-    }
-  }
 </script>
 
 {#if open}
@@ -30,7 +25,7 @@
     aria-modal="true"
     tabindex="-1"
     on:click={handleBackdropClick}
-    on:keydown={handleBackdropKeydown}
+    use:modal={{ onClose: close }}
   >
     <section class="modal" role="document">
       <header class="modal__header">

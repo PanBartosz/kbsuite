@@ -27,7 +27,7 @@ export const GET = async ({ params, cookies }) => {
   if (!id) return json({ error: 'missing id' }, { status: 400 })
   const db = getDb()
   const row = db
-    .prepare('SELECT * FROM workouts WHERE id = ? AND (owner_id = ? OR is_template = 1 OR owner_id IS NULL)')
+    .prepare('SELECT * FROM workouts WHERE id = ? AND (owner_id = ? OR is_template = 1)')
     .get(id, session.userId)
   if (!row) return json({ error: 'not found' }, { status: 404 })
   return json({ workout: serializeWorkout(row) })
@@ -45,6 +45,9 @@ export const DELETE = async ({ params, cookies }) => {
   const { id } = params
   if (!id) return json({ ok: false }, { status: 400 })
   const db = getDb()
-  db.prepare('DELETE FROM workouts WHERE id = ? AND (owner_id = ? OR owner_id IS NULL)').run(id, session.userId)
+  db.prepare('DELETE FROM workouts WHERE id = ? AND owner_id = ? AND is_template = 0').run(
+    id,
+    session.userId
+  )
   return json({ ok: true })
 }

@@ -2,9 +2,11 @@
  import '../app.css';
  	import favicon from '$lib/assets/favicon.svg';
 	import SettingsModal from '$lib/components/SettingsModal.svelte';
+	import ToastStack from '$lib/components/ToastStack.svelte';
 	import { openSettingsModal } from '$lib/stores/settings';
 	import WorkoutSummaryModal from '$lib/stats/WorkoutSummaryModal.svelte';
 	import { loadPendingCount, shares } from '$lib/stores/shares';
+	import { pushToast } from '$lib/stores/toasts';
 	import {
 		closeSummaryModal,
 		openSummaryModal,
@@ -52,7 +54,7 @@
 		const meta = $summaryMetadata ?? {};
 		if (!entries?.length) return;
 		try {
-			await fetch('/api/completed-workouts', {
+			const res = await fetch('/api/completed-workouts', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -64,8 +66,24 @@
 					entries
 				})
 			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				throw new Error(data?.error ?? 'Failed to save workout');
+			}
+			const id = data?.item?.id ? String(data.item.id) : '';
+			pushToast('Workout saved.', 'success', 3200, {
+				label: 'Open history',
+				onClick: () => {
+					if (id) {
+						window.location.href = `/history#cw-${encodeURIComponent(id)}`;
+						return;
+					}
+					window.location.href = '/history';
+				}
+			});
 		} catch (err) {
 			console.warn('Failed to save completed workout', err);
+			pushToast((err as any)?.message ?? 'Failed to save workout', 'error');
 		}
 	};
 </script>
@@ -130,6 +148,7 @@
 			closeSummaryModal();
 		}}
 	/>
+	<ToastStack />
 </div>
 
 <style>

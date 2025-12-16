@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import { modal } from '$lib/actions/modal'
 
   export let open = false
   export let workouts = []
@@ -12,13 +13,6 @@
 
   const handleBackdropClick = (event) => {
     if (event.target === event.currentTarget) {
-      close()
-    }
-  }
-
-  const handleBackdropKeydown = (event) => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
       close()
     }
   }
@@ -43,7 +37,7 @@
     aria-modal="true"
     tabindex="-1"
     on:click={handleBackdropClick}
-    on:keydown={handleBackdropKeydown}
+    use:modal={{ onClose: close }}
   >
     <section class="modal" role="document">
       <header class="modal__header">

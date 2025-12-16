@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte'
+  import { modal } from '$lib/actions/modal'
 
   export let open = false
   export let title = 'Share planned workout'
@@ -61,8 +62,15 @@
 </script>
 
 {#if open}
-  <div class="modal-backdrop"></div>
-  <div class="share-modal">
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close modal"
+    on:click={close}
+    on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && close()}
+  ></div>
+  <div class="share-modal" use:modal={{ onClose: close }}>
     <header>
       <div>
         <p class="eyebrow">Share</p>
