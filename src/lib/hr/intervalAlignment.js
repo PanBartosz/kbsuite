@@ -43,13 +43,17 @@ const safeHr = (value) => {
 /**
  * Build a phase list from completed sets rows.
  * @param {Array<any>} sets
+ * @param {{ includeTransitions?: boolean }} [options]
  * @returns {Phase[]}
  */
-export const buildPhasesFromSets = (sets) => {
+export const buildPhasesFromSets = (sets, options = {}) => {
   if (!Array.isArray(sets)) return []
+  const includeTransitions = !!options.includeTransitions
   return sets
     .map((s) => {
       const type = (s?.type ?? 'work').toString()
+      const normType = type.toLowerCase()
+      if (!includeTransitions && (normType === 'transition' || normType === 'roundtransition')) return null
       const durationSeconds = safeInt(s?.duration_s ?? s?.durationSeconds ?? 0)
       if (!durationSeconds) return null
       return {
