@@ -10,7 +10,8 @@
   import { pushToast } from '$lib/stores/toasts'
   import { getInsightsPrompt, defaultInsightsPrompt } from '$lib/ai/prompts'
   import { modal } from '$lib/actions/modal'
-  import { alignPhasesToHr, buildPhasesFromSets } from '$lib/hr/intervalAlignment.js'
+  import ManualHrIntervals from '$lib/hr/ManualHrIntervals.svelte'
+  import { normalizeHrSamples } from '$lib/hr/manualIntervals'
 
   type CompletedSet = {
     phase_index?: number
@@ -50,28 +51,6 @@
     score: number
     reasons: string[]
     totals: CompareTotals
-  }
-
-  type HrIntervalAlignmentResult = {
-    method: 'shift' | 'warp'
-    hrSeconds: number
-    planSeconds: number
-    shiftSeconds?: number
-    insertedSeconds?: number
-    deletedSeconds?: number
-    avgMatchError?: number
-    phases: Array<
-      {
-        type: string
-        durationSeconds: number
-        roundLabel?: string
-        setLabel?: string
-        planStart: number
-        planEnd: number
-        hrStart: number
-        hrEnd: number
-      }
-    >
   }
   type ExerciseRollup = {
     label: string
@@ -213,8 +192,6 @@
 
   let intervalsModalOpen = false
   let intervalsItem: CompletedWorkout | null = null
-  let intervalsMethod: 'warp_strict' | 'shift_strict' | 'warp_with_transitions' | 'shift_with_transitions' = 'warp_strict'
-  let intervalsResults: Partial<Record<string, HrIntervalAlignmentResult>> = {}
   let intervalsSamples: { t: number; hr: number }[] = []
   let intervalsStatus = ''
   let intervalsError = ''
@@ -698,45 +675,9 @@
     return null
   }
 
-  const normalizeHrSamplesForIntervals = (
-    raw: { t: number; hr: number }[],
-    durationSeconds: number | null
-  ) => {
-    if (!Array.isArray(raw) || !raw.length) return []
-    const sorted = raw
-      .map((p) => ({ t: Number(p?.t), hr: Number(p?.hr) }))
-      .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.hr))
-      .map((p) => ({ t: Math.max(0, Math.round(p.t)), hr: p.hr }))
-      .sort((a, b) => a.t - b.t)
-    if (!sorted.length) return []
-    const deduped: { t: number; hr: number }[] = []
-    for (const p of sorted) {
-      const last = deduped[deduped.length - 1]
-      if (last && last.t === p.t) last.hr = p.hr
-      else deduped.push({ ...p })
-    }
-    const first = deduped[0]
-    if (first.t > 0) deduped.unshift({ t: 0, hr: first.hr })
-    const last = deduped[deduped.length - 1]
-    if (Number.isFinite(durationSeconds ?? NaN)) {
-      const endT = Math.max(0, Math.round(Number(durationSeconds)))
-      if (endT > last.t) {
-        deduped.push({ t: endT, hr: last.hr })
-      }
-    }
-    return deduped
-  }
-
-  const ensureHrDetailsForIntervals = async (id: string) => {
-    if (hrDetails[id]?.samples?.length) return hrDetails[id]
-    await loadHrDetails(id)
-    return hrDetails[id] ?? null
-  }
-
   const closeIntervalsModal = () => {
     intervalsModalOpen = false
     intervalsItem = null
-    intervalsResults = {}
     intervalsSamples = []
     intervalsStatus = ''
     intervalsError = ''
@@ -746,51 +687,37 @@
     if (!browser || !item?.id) return
     intervalsModalOpen = true
     intervalsItem = item
-    intervalsMethod = 'warp_strict'
-    intervalsResults = {}
     intervalsSamples = []
     intervalsStatus = 'Loading HR…'
     intervalsError = ''
     try {
-      await ensureHrDetailsForIntervals(item.id)
-      const details = hrDetails[item.id]
-      const raw = details?.samples ?? []
+      const res = await fetch(`/api/completed-workouts/${item.id}/hr?details=1&full=1`)
+      const data = await res.json().catch(() => ({}))
+      hrAttached = { ...hrAttached, [item.id]: !!data?.attached }
+      if (data?.summary) {
+        hrSummary = {
+          ...hrSummary,
+          [item.id]: {
+            avgHr: data.summary.avgHr ?? null,
+            maxHr: data.summary.maxHr ?? null
+          }
+        }
+      }
+      const raw = data?.summary?.samples ?? []
       if (!raw.length) {
         intervalsError = 'No HR samples available for this session.'
         intervalsStatus = ''
         return
       }
       const dur =
-        details?.durationSeconds !== undefined && details?.durationSeconds !== null
-          ? Number(details.durationSeconds)
+        data?.summary?.durationSeconds !== undefined && data?.summary?.durationSeconds !== null
+          ? Number(data.summary.durationSeconds)
           : null
-      const samples = normalizeHrSamplesForIntervals(raw, Number.isFinite(dur ?? NaN) ? dur : null)
-      intervalsSamples = samples
-      const phasesStrict = buildPhasesFromSets(item.sets) as any
-      const phasesWithTransitions = buildPhasesFromSets(item.sets, { includeTransitions: true }) as any
-      if (!phasesStrict?.length && !phasesWithTransitions?.length) {
-        intervalsError = 'No set/rest phases found to align.'
-        intervalsStatus = ''
-        return
-      }
-      intervalsStatus = 'Aligning…'
-      const results: Record<string, HrIntervalAlignmentResult> = {}
-      if (phasesStrict?.length) {
-        results.shift_strict = alignPhasesToHr(phasesStrict, samples, { method: 'shift' }) as HrIntervalAlignmentResult
-        results.warp_strict = alignPhasesToHr(phasesStrict, samples, { method: 'warp' }) as HrIntervalAlignmentResult
-      }
-      if (phasesWithTransitions?.length) {
-        results.shift_with_transitions = alignPhasesToHr(phasesWithTransitions, samples, { method: 'shift' }) as HrIntervalAlignmentResult
-        results.warp_with_transitions = alignPhasesToHr(phasesWithTransitions, samples, { method: 'warp' }) as HrIntervalAlignmentResult
-      }
-      intervalsResults = results
-      if (!intervalsResults[intervalsMethod]) {
-        intervalsMethod = (Object.keys(intervalsResults)[0] as any) ?? 'warp_strict'
-      }
+      intervalsSamples = normalizeHrSamples(raw, Number.isFinite(dur ?? NaN) ? dur : null)
       intervalsStatus = ''
     } catch (err) {
-      console.warn('Failed to compute HR intervals', err)
-      intervalsError = 'Failed to compute intervals.'
+      console.warn('Failed to load HR interval samples', err)
+      intervalsError = 'Failed to load HR samples.'
       intervalsStatus = ''
     }
   }
@@ -1368,14 +1295,6 @@
     } catch (err) {
       pushToast((err as any)?.message ?? 'Copy failed', 'error')
     }
-  }
-
-  const duplicateWorkoutFromItem = async (item: CompletedWorkout) => {
-    if (!item.workout_id) {
-      await createEmptyCompletedWorkout()
-      return
-    }
-    await createLogFromTemplate(item.workout_id, item.title ?? 'Workout log')
   }
 
   const startEdit = (item: CompletedWorkout) => {
@@ -2439,6 +2358,9 @@
       <button class="ghost" on:click={createEmptyCompletedWorkout}>New empty session log</button>
       <button class="ghost" on:click={() => (templateModalOpen = true)}>From template</button>
       <button class="ghost" on:click={() => (insightsModalOpen = true)}>Insights</button>
+      <button class="ghost" type="button" on:click={() => (window.location.href = '/interval-analysis')}>
+        Interval analysis
+      </button>
       <div class="filters">
         <input
           type="search"
@@ -3232,7 +3154,6 @@
                       </button>
                       <button class="ghost" on:click={() => openCompareModal(item)}>Compare</button>
                       <button class="text-button" on:click={() => duplicateLog(item)}>Log again</button>
-                      <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
                       <button class="ghost" on:click={() => {
                         uploadTargetId = item.id
                         if (fileInputEl) fileInputEl.click()
@@ -3405,7 +3326,6 @@
                 Share
               </button>
               <button class="ghost" on:click={() => openCompareModal(item)}>Compare</button>
-              <button class="ghost secondary-action" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
               <button class="text-button" on:click={() => duplicateLog(item)}>Log again</button>
 	              <div class="export-group secondary-action">
 	                <button class="ghost small" on:click={() => copySummary(item)}>Copy</button>
@@ -3447,7 +3367,6 @@
                   </button>
                   {#if overflowOpen[item.id]}
                     <div class="overflow-menu">
-                      <button on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
 	                      <button on:click={() => openCompareModal(item)}>Compare</button>
 	                      <button on:click={() => copySummary(item)}>Copy</button>
 	                      <button on:click={() => copyCsv(item)}>CSV</button>
@@ -3825,7 +3744,6 @@
                         Share
                       </button>
                       <button class="text-button" on:click={() => duplicateLog(item)}>Log again</button>
-                      <button class="ghost" on:click={() => duplicateWorkoutFromItem(item)}>Save as workout</button>
                       <button class="ghost" on:click={() => {
                         uploadTargetId = item.id
                         if (fileInputEl) fileInputEl.click()
@@ -4720,7 +4638,7 @@
     <div class="intervals-modal" use:modal={{ onClose: closeIntervalsModal }}>
       <header class="intervals-head">
         <div>
-          <p class="eyebrow">HR intervals (guess)</p>
+          <p class="eyebrow">HR intervals (manual)</p>
           <h3>{intervalsItem.title || 'Workout'}</h3>
           <p class="muted tiny">
             {formatDate(intervalsItem.started_at || intervalsItem.created_at)}
@@ -4739,83 +4657,10 @@
         <p class="error small">{intervalsError}</p>
       {/if}
 
-      {#if intervalsResults[intervalsMethod] && intervalsSamples.length}
-        {@const current = intervalsResults[intervalsMethod] as HrIntervalAlignmentResult}
-        <div class="intervals-controls">
-          <label class="intervals-select">
-            <span class="muted tiny">Method</span>
-            <select bind:value={intervalsMethod}>
-              {#if intervalsResults.warp_strict}<option value="warp_strict">Smart (strict)</option>{/if}
-              {#if intervalsResults.shift_strict}<option value="shift_strict">Shift-only (strict)</option>{/if}
-              {#if intervalsResults.warp_with_transitions}<option value="warp_with_transitions">Smart (+ transitions)</option>{/if}
-              {#if intervalsResults.shift_with_transitions}<option value="shift_with_transitions">Shift-only (+ transitions)</option>{/if}
-            </select>
-          </label>
-          <div class="intervals-metrics">
-            {#if current.method === 'shift'}
-              <span class="chip">Shift {current.shiftSeconds ?? 0}s</span>
-            {:else}
-              <span class="chip">Inserted {current.insertedSeconds ?? 0}s</span>
-              <span class="chip">Missing {current.deletedSeconds ?? 0}s</span>
-            {/if}
-            {#if current.avgMatchError !== undefined}
-              <span class="chip">Err {current.avgMatchError.toFixed(2)}</span>
-            {/if}
-          </div>
-        </div>
-
-        {@const s = intervalsSamples}
-        {@const maxT = Math.max(...s.map((p) => p.t), 1)}
-        {@const minHrRaw = Math.min(...s.map((p) => p.hr))}
-        {@const maxHrRaw = Math.max(...s.map((p) => p.hr))}
-        {@const padding = Math.max(8, Math.round((maxHrRaw - minHrRaw) * 0.15))}
-        {@const minHr = minHrRaw - padding}
-        {@const maxHr = maxHrRaw + padding}
-
-        <svg class="intervals-plot" viewBox="0 0 900 280" preserveAspectRatio="none">
-          <rect class="intervals-bg" x="0" y="0" width="900" height="280" rx="14" ry="14" />
-
-          {#each current.phases as p (p.planStart)}
-            {@const t = (p.type ?? '').toString().toLowerCase()}
-            {@const x0 = (p.hrStart / maxT) * 900}
-            {@const x1 = (p.hrEnd / maxT) * 900}
-            {@const w = Math.max(0, x1 - x0)}
-            {#if t === 'work'}
-              <rect class="intervals-work" x={x0} y="0" width={w} height="280" />
-            {:else if t === 'transition' || t === 'roundtransition'}
-              <rect class="intervals-transition" x={x0} y="0" width={w} height="280" />
-            {:else if t === 'rest' || t === 'roundrest'}
-              <rect class="intervals-rest" x={x0} y="0" width={w} height="280" />
-            {/if}
-          {/each}
-
-          <polyline
-            class="intervals-hr-line"
-            fill="none"
-            stroke-width="2.5"
-            points={s
-              .map((p) => {
-                const x = (p.t / maxT) * 900
-                const y = 280 - ((p.hr - minHr) / Math.max(1, maxHr - minHr)) * 280
-                return `${x},${y}`
-              })
-              .join(' ')}
-          />
-
-          {#each current.phases as p (p.planStart)}
-            {@const t = (p.type ?? '').toString().toLowerCase()}
-            {#if t === 'work'}
-              {@const x = (p.hrStart / maxT) * 900}
-              <line class="intervals-boundary" x1={x} x2={x} y1="0" y2="280" />
-            {/if}
-          {/each}
-        </svg>
-
-        <div class="intervals-legend">
-          <span class="legend-item"><span class="swatch work"></span>Work</span>
-          <span class="legend-item"><span class="swatch rest"></span>Rest</span>
-          <span class="legend-item"><span class="swatch transition"></span>Transition</span>
-        </div>
+      {#if intervalsSamples.length}
+        {#key intervalsItem.id}
+          <ManualHrIntervals samples={intervalsSamples} completedWorkoutId={intervalsItem.id} />
+        {/key}
       {/if}
     </div>
   {/if}
@@ -5025,92 +4870,6 @@
     display: flex;
     gap: 0.4rem;
     align-items: center;
-  }
-  .intervals-controls {
-    display: flex;
-    gap: 0.75rem;
-    align-items: flex-end;
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-  .intervals-select {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    min-width: 220px;
-  }
-  .intervals-select select {
-    width: 100%;
-    border: 1px solid var(--color-border);
-    border-radius: 10px;
-    padding: 0.45rem 0.6rem;
-    background: var(--color-surface-1);
-    color: var(--color-text-primary);
-  }
-  .intervals-metrics {
-    display: flex;
-    gap: 0.4rem;
-    align-items: center;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-  .intervals-plot {
-    width: 100%;
-    height: auto;
-    border: 1px solid color-mix(in srgb, var(--color-border) 65%, transparent);
-    border-radius: 14px;
-    background: var(--hr-spark-bg, color-mix(in srgb, var(--color-surface-1) 70%, transparent));
-  }
-  .intervals-bg {
-    fill: var(--hr-spark-bg, color-mix(in srgb, var(--color-surface-1) 70%, transparent));
-  }
-  .intervals-work {
-    fill: color-mix(in srgb, var(--color-accent) 18%, transparent);
-  }
-  .intervals-rest {
-    fill: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
-    opacity: 0.16;
-  }
-  .intervals-transition {
-    fill: color-mix(in srgb, var(--color-warning, #f7b955) 20%, transparent);
-    opacity: 0.22;
-  }
-  .intervals-hr-line {
-    stroke: var(--hr-spark-line, var(--color-text-primary));
-  }
-  .intervals-boundary {
-    stroke: color-mix(in srgb, var(--color-text-primary) 55%, transparent);
-    stroke-width: 1;
-    opacity: 0.65;
-  }
-  .intervals-legend {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    align-items: center;
-    color: var(--color-text-muted);
-    font-size: 0.95rem;
-  }
-  .intervals-legend .legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-  .intervals-legend .swatch {
-    width: 14px;
-    height: 10px;
-    border-radius: 4px;
-    border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
-    background: transparent;
-  }
-  .intervals-legend .swatch.work {
-    background: color-mix(in srgb, var(--color-accent) 22%, transparent);
-  }
-  .intervals-legend .swatch.rest {
-    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
-  }
-  .intervals-legend .swatch.transition {
-    background: color-mix(in srgb, var(--color-warning, #f7b955) 24%, transparent);
   }
   .compare-modal {
     position: fixed;

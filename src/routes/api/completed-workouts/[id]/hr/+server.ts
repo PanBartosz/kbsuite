@@ -46,12 +46,15 @@ export const GET = async ({ params, cookies, url }) => {
     return json({ attached: false, files: [], error: 'Not found' }, { status: 404 })
   }
   const wantDetails = url.searchParams.get('details') === '1'
+  const wantFullSamples = url.searchParams.get('full') === '1'
+  const maxSamples = wantDetails ? (wantFullSamples ? 0 : 200) : 0
   const dir = path.join(hrDir, id)
   try {
     const entries = await fs.readdir(dir)
     const files = entries.filter((f) => f.endsWith('.fit') || f.endsWith('.tcx'))
     const summaryPath = path.join(dir, 'summary.json')
     let summary = null
+    let parsedFromFile = false
     try {
       const raw = await fs.readFile(summaryPath, 'utf-8')
       summary = JSON.parse(raw)
@@ -59,16 +62,28 @@ export const GET = async ({ params, cookies, url }) => {
       // attempt to derive from first file
       if (files[0]) {
         const buffer = await fs.readFile(path.join(dir, files[0]))
-        summary = await parseHrFile(buffer, files[0], wantDetails)
+        summary = await parseHrFile(buffer, files[0], wantDetails, maxSamples)
+        parsedFromFile = true
         if (summary) {
-          await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2))
+          if (wantFullSamples) {
+            const persistable = { ...summary }
+            delete (persistable as any).samples
+            await fs.writeFile(summaryPath, JSON.stringify(persistable, null, 2))
+          } else {
+            await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2))
+          }
         }
       }
     }
-    // if details requested but summary lacks samples, rebuild from first file
-    if (wantDetails && summary && !summary.samples && files[0]) {
+    if (wantDetails && wantFullSamples && files[0] && !parsedFromFile) {
       const buffer = await fs.readFile(path.join(dir, files[0]))
-      const detailed = await parseHrFile(buffer, files[0], true)
+      const detailed = await parseHrFile(buffer, files[0], true, 0)
+      if (detailed) summary = detailed
+    }
+    // if details requested but summary lacks samples, rebuild from first file
+    if (wantDetails && !wantFullSamples && summary && !summary.samples && files[0]) {
+      const buffer = await fs.readFile(path.join(dir, files[0]))
+      const detailed = await parseHrFile(buffer, files[0], true, 200)
       if (detailed) summary = detailed
     }
     return json({ attached: files.length > 0, files, summary })
@@ -151,11 +166,11 @@ export const DELETE = async ({ params, cookies }) => {
   }
 }
 
-const parseHrFile = (buffer: Buffer, filename: string, includeSamples = false) =>
+const parseHrFile = (buffer: Buffer, filename: string, includeSamples = false, maxSamples = 200) =>
   new Promise<any | null>((resolve) => {
     const lower = filename.toLowerCase()
     if (lower.endsWith('.tcx')) {
-      resolve(parseTcx(buffer, includeSamples))
+      resolve(parseTcx(buffer, includeSamples, maxSamples))
       return
     }
     const parser = new FitParser({ force: true })
@@ -190,8 +205,7 @@ const parseHrFile = (buffer: Buffer, filename: string, includeSamples = false) =
         const maxHr = hrValues.length > 0 ? Math.max(...hrValues) : null
         const durationSeconds =
           startTime !== null && endTime !== null ? Math.max(0, Math.round((endTime - startTime) / 1000)) : null
-        const downsampled =
-          includeSamples && startTime !== null ? downsample(samples, 200, startTime) : undefined
+        const downsampled = includeSamples ? downsample(samples, maxSamples, startTime) : undefined
         resolve({ avgHr, maxHr, startTime, durationSeconds, samples: downsampled })
       } catch {
         resolve(null)
@@ -199,7 +213,7 @@ const parseHrFile = (buffer: Buffer, filename: string, includeSamples = false) =
     })
   })
 
-const parseTcx = (buffer: Buffer, includeSamples = false) => {
+const parseTcx = (buffer: Buffer, includeSamples = false, maxSamples = 200) => {
   try {
     const xml = buffer.toString('utf-8')
     const timeMatches = [...xml.matchAll(/<Time>([^<]+)<\/Time>/g)].map((m) => m[1])
@@ -215,7 +229,7 @@ const parseTcx = (buffer: Buffer, includeSamples = false) => {
       samples = timeMatches
         .map((t, idx) => ({ t: Date.parse(t), hr: hrMatches[idx] ?? null }))
         .filter((s) => Number.isFinite(s.t) && s.hr !== null) as any
-      samples = downsample(samples, 200, Number.isFinite(startTime) ? startTime : null)
+      samples = downsample(samples, maxSamples, Number.isFinite(startTime) ? startTime : null)
     }
     return { avgHr, maxHr, startTime: Number.isFinite(startTime) ? startTime : null, durationSeconds, samples }
   } catch {
@@ -225,12 +239,12 @@ const parseTcx = (buffer: Buffer, includeSamples = false) => {
 
 const downsample = (samples: { t: number; hr: number }[], target = 200, start: number | null = null) => {
   if (!samples?.length) return []
-  if (samples.length <= target) {
-    const base = start ?? samples[0].t
+  const base = start ?? samples[0].t
+  const maxSamples = Number(target)
+  if (!Number.isFinite(maxSamples) || maxSamples <= 0 || samples.length <= maxSamples) {
     return samples.map((s) => ({ t: Math.round((s.t - base) / 1000), hr: s.hr }))
   }
-  const base = start ?? samples[0].t
-  const bucketSize = Math.ceil(samples.length / target)
+  const bucketSize = Math.ceil(samples.length / maxSamples)
   const res: { t: number; hr: number }[] = []
   for (let i = 0; i < samples.length; i += bucketSize) {
     const bucket = samples.slice(i, i + bucketSize)

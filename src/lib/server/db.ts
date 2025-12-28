@@ -88,6 +88,7 @@ const initDb = () => {
   migrateUsersTable()
   migrateCompletedSets()
   migrateCompletedWorkouts()
+  migrateHrIntervalAnalysis()
   migratePlannedWorkouts()
   migrateSharedWorkoutInvites()
   seedTemplates()
@@ -170,6 +171,24 @@ const migratePlannedWorkouts = () => {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_planned_user_date ON planned_workouts(user_id, planned_for);
+  `)
+}
+
+const migrateHrIntervalAnalysis = () => {
+  const database = db!
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS hr_interval_analysis (
+      completed_workout_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      version TEXT NOT NULL DEFAULT 'v1',
+      settings_json TEXT NOT NULL,
+      analysis_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (completed_workout_id) REFERENCES completed_workouts(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_interval_analysis_user ON hr_interval_analysis(user_id);
   `)
 }
 
