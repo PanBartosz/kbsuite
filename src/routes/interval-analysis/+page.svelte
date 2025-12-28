@@ -34,7 +34,6 @@
   let analysisErrors: Record<string, string> = {}
 
   let roundsLimit = 0 // 0 = auto (min across selected)
-  let metric: 'hrr60' | 'hr_peak' | 'hr_end' | 'tau_rec' = 'hrr60'
 
   let chartEl: HTMLDivElement | null = null
   let chart: any | null = null
@@ -190,6 +189,43 @@
     return out
   }
 
+  type NormalizationMode = 'none' | 'delta' | 'zscore'
+  type HrrDisplayMode = 'delta' | 'percent'
+
+  let showPeak = true
+  let showEnd = true
+  let showHrr = true
+  let showTau = false
+
+  let normalization: NormalizationMode = 'none'
+  let hrrDisplay: HrrDisplayMode = 'delta'
+
+  const deriveHrrPercent = (hrr: Array<number | null>, endHr: Array<number | null>) =>
+    hrr.map((v, i) => {
+      const end = endHr[i]
+      if (v === null || end === null) return null
+      if (!Number.isFinite(v) || !Number.isFinite(end) || end <= 0) return null
+      return (100 * v) / end
+    })
+
+  const normalizeSeries = (values: Array<number | null>, mode: NormalizationMode) => {
+    if (mode === 'none') return values
+    const numeric = values.filter((v) => v !== null && Number.isFinite(v)) as number[]
+    if (!numeric.length) return values.map(() => null)
+
+    if (mode === 'delta') {
+      const baseline = values.find((v) => v !== null && Number.isFinite(v)) as number | undefined
+      if (baseline === undefined) return values.map(() => null)
+      return values.map((v) => (v === null || !Number.isFinite(v) ? null : v - baseline))
+    }
+
+    const mu = numeric.reduce((acc, v) => acc + v, 0) / numeric.length
+    const variance = numeric.reduce((acc, v) => acc + (v - mu) * (v - mu), 0) / numeric.length
+    const sd = Math.sqrt(variance)
+    if (!sd) return values.map((v) => (v === null || !Number.isFinite(v) ? null : 0))
+    return values.map((v) => (v === null || !Number.isFinite(v) ? null : (v - mu) / sd))
+  }
+
   $: filtered = items.filter((it) => {
     const term = (search ?? '').toLowerCase().trim()
     if (!term) return true
@@ -210,11 +246,12 @@
   $: autoRounds = availableRoundCounts.length ? Math.min(...availableRoundCounts) : 0
   $: compareRounds = selectedItems.length ? (safeInt(roundsLimit) > 0 ? safeInt(roundsLimit) : autoRounds) : 0
 
-  const metricMeta = (m: typeof metric) => {
-    if (m === 'hr_peak') return { label: 'Peak HR', unit: 'bpm' }
-    if (m === 'hr_end') return { label: 'End HR', unit: 'bpm' }
-    if (m === 'tau_rec') return { label: 'τrec', unit: 's' }
-    return { label: 'HRR', unit: 'Δbpm' }
+  const unitFor = (kind: 'bpm' | 'hrr' | 'tau') => {
+    if (normalization === 'zscore') return 'z'
+    if (kind === 'bpm') return normalization === 'delta' ? 'Δbpm' : 'bpm'
+    if (kind === 'tau') return normalization === 'delta' ? 'Δs' : 's'
+    if (hrrDisplay === 'percent') return normalization === 'delta' ? 'Δ%' : '%'
+    return normalization === 'delta' ? 'Δbpm' : 'Δbpm'
   }
 
   $: comparisonRows = selectedItems.map((it) => {
@@ -223,7 +260,8 @@
     const used = compareRounds ? Math.min(compareRounds, available || 0) : 0
     const peak = extractSeries(a, 'hr_peak', used)
     const end = extractSeries(a, 'hr_end', used)
-    const hrr = extractSeries(a, 'hrr60', used)
+    const hrrRaw = extractSeries(a, 'hrr60', used)
+    const hrr = hrrDisplay === 'percent' ? deriveHrrPercent(hrrRaw, end) : hrrRaw
     const tau = extractSeries(a, 'tau_rec', used)
     const block = (a?.block ?? it.block ?? {}) as any
     return {
@@ -245,29 +283,72 @@
     }
   })
 
+  const legendLabelFor = (it: AnalysisListItem) => `${titleFor(it)} · ${it.id.slice(0, 4)}`
+
+  const metricKeyFromSeriesId = (id: unknown) => {
+    const raw = typeof id === 'string' ? id : ''
+    if (raw.includes(':peak')) return 'peak'
+    if (raw.includes(':end')) return 'end'
+    if (raw.includes(':hrr')) return 'hrr'
+    if (raw.includes(':tau')) return 'tau'
+    return 'unknown'
+  }
+
+  const metricLabelFromKey = (key: string) => {
+    if (key === 'peak') return 'Peak HR'
+    if (key === 'end') return 'End HR'
+    if (key === 'hrr') return hrrDisplay === 'percent' ? 'HRR%' : 'HRR'
+    if (key === 'tau') return 'τrec'
+    return 'Value'
+  }
+
+  const escapeHtml = (s: unknown) =>
+    String(s ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;')
+
   const buildChartOption = () => {
     const theme = getTheme()
-    const meta = metricMeta(metric)
-    const clampNonNegative = metric !== 'hrr60'
-    const minPad = metric === 'tau_rec' ? 2 : 1
-    const paddedMin = (value: any) => {
-      const min = typeof value?.min === 'number' ? value.min : null
-      const max = typeof value?.max === 'number' ? value.max : null
-      if (min === null || max === null || !Number.isFinite(min) || !Number.isFinite(max)) return null
-      const range = max - min
-      const pad = Math.max(minPad, range > 0 ? range * 0.1 : minPad)
-      const out = min - pad
-      return clampNonNegative ? Math.max(0, out) : out
+    const makePaddedExtent = ({
+      minPad,
+      clampNonNegative
+    }: {
+      minPad: number
+      clampNonNegative: boolean
+    }) => {
+      const paddedMin = (value: any) => {
+        const min = typeof value?.min === 'number' ? value.min : null
+        const max = typeof value?.max === 'number' ? value.max : null
+        if (min === null || max === null || !Number.isFinite(min) || !Number.isFinite(max)) return null
+        const range = max - min
+        const pad = Math.max(minPad, range > 0 ? range * 0.1 : minPad)
+        const out = min - pad
+        return clampNonNegative ? Math.max(0, out) : out
+      }
+      const paddedMax = (value: any) => {
+        const min = typeof value?.min === 'number' ? value.min : null
+        const max = typeof value?.max === 'number' ? value.max : null
+        if (min === null || max === null || !Number.isFinite(min) || !Number.isFinite(max)) return null
+        const range = max - min
+        const pad = Math.max(minPad, range > 0 ? range * 0.1 : minPad)
+        const out = max + pad
+        return clampNonNegative ? Math.max(0, out) : out
+      }
+      return { min: paddedMin, max: paddedMax }
     }
-    const paddedMax = (value: any) => {
-      const min = typeof value?.min === 'number' ? value.min : null
-      const max = typeof value?.max === 'number' ? value.max : null
-      if (min === null || max === null || !Number.isFinite(min) || !Number.isFinite(max)) return null
-      const range = max - min
-      const pad = Math.max(minPad, range > 0 ? range * 0.1 : minPad)
-      const out = max + pad
-      return clampNonNegative ? Math.max(0, out) : out
-    }
+
+    const bpmExtent = makePaddedExtent({ minPad: 1, clampNonNegative: normalization === 'none' })
+    const hrrExtent = makePaddedExtent({ minPad: 1, clampNonNegative: false })
+    const tauExtent = makePaddedExtent({ minPad: 2, clampNonNegative: normalization === 'none' })
+
+    const showBpmAxis = showPeak || showEnd
+    const showHrrAxis = showHrr
+    const showTauAxis = showTau
+    const rightSpace = showTauAxis ? 74 : 56
+
     const palette = [
       '#22d3ee',
       '#22c55e',
@@ -278,21 +359,137 @@
       '#f97316',
       '#34d399'
     ]
+
+    const series = selectedItems.flatMap((it: AnalysisListItem, idx: number) => {
+      const groupName = legendLabelFor(it)
+      const a = analyses[it.id] ?? null
+      const color = palette[idx % palette.length]
+      const used = compareRounds || 0
+
+      const peak = normalizeSeries(extractSeries(a, 'hr_peak', used), normalization)
+      const end = normalizeSeries(extractSeries(a, 'hr_end', used), normalization)
+      const hrrRaw = extractSeries(a, 'hrr60', used)
+      const hrrBase = hrrDisplay === 'percent' ? deriveHrrPercent(hrrRaw, extractSeries(a, 'hr_end', used)) : hrrRaw
+      const hrr = normalizeSeries(hrrBase, normalization)
+      const tau = normalizeSeries(extractSeries(a, 'tau_rec', used), normalization)
+
+      const out: any[] = []
+
+      if (showPeak) {
+        out.push({
+          id: `${it.id}:peak`,
+          name: groupName,
+          type: 'line',
+          yAxisIndex: 0,
+          connectNulls: false,
+          showSymbol: true,
+          symbol: 'triangle',
+          symbolSize: 8,
+          data: peak.map((v, i) => [i + 1, v]),
+          lineStyle: { width: 2, type: 'solid', color },
+          itemStyle: { color }
+        })
+      }
+
+      if (showEnd) {
+        out.push({
+          id: `${it.id}:end`,
+          name: groupName,
+          type: 'line',
+          yAxisIndex: 0,
+          connectNulls: false,
+          showSymbol: true,
+          symbol: 'circle',
+          symbolSize: 7,
+          data: end.map((v, i) => [i + 1, v]),
+          lineStyle: { width: 2, type: 'dashed', color },
+          itemStyle: { color }
+        })
+      }
+
+      if (showHrr) {
+        out.push({
+          id: `${it.id}:hrr`,
+          name: groupName,
+          type: 'line',
+          yAxisIndex: 1,
+          connectNulls: false,
+          showSymbol: true,
+          symbol: 'diamond',
+          symbolSize: 7,
+          data: hrr.map((v, i) => [i + 1, v]),
+          lineStyle: { width: 2, type: 'dotted', color },
+          itemStyle: { color }
+        })
+      }
+
+      if (showTau) {
+        out.push({
+          id: `${it.id}:tau`,
+          name: groupName,
+          type: 'line',
+          yAxisIndex: 2,
+          connectNulls: false,
+          showSymbol: true,
+          symbol: 'rect',
+          symbolSize: 7,
+          data: tau.map((v, i) => [i + 1, v]),
+          lineStyle: { width: 2, type: 'solid', opacity: 0.55, color },
+          itemStyle: { opacity: 0.55, color }
+        })
+      }
+
+      return out
+    })
+
     return {
       animation: false,
-      grid: { left: 52, right: 22, top: 36, bottom: 48 },
+      grid: { left: 52, right: rightSpace, top: 36, bottom: 48 },
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'cross' },
         backgroundColor: theme.surface,
         borderColor: theme.border,
-        textStyle: { color: theme.text }
+        textStyle: { color: theme.text },
+        formatter: (params: any) => {
+          const items = Array.isArray(params) ? params : [params]
+          const round = items[0]?.axisValue ?? '–'
+          const byWorkout = new Map<string, any[]>()
+          for (const p of items) {
+            const name = typeof p?.seriesName === 'string' ? p.seriesName : 'Workout'
+            if (!byWorkout.has(name)) byWorkout.set(name, [])
+            byWorkout.get(name)!.push(p)
+          }
+
+          const kindUnit = (key: string) => {
+            if (key === 'peak' || key === 'end') return unitFor('bpm')
+            if (key === 'hrr') return unitFor('hrr')
+            if (key === 'tau') return unitFor('tau')
+            return ''
+          }
+
+          let html = `<strong>Round ${escapeHtml(round)}</strong>`
+          for (const [workoutName, ps] of byWorkout.entries()) {
+            html += `<div style="margin-top:6px"><div><strong>${escapeHtml(workoutName)}</strong></div>`
+            for (const p of ps) {
+              const key = metricKeyFromSeriesId(p?.seriesId)
+              const label = metricLabelFromKey(key)
+              const y = Array.isArray(p?.value) ? p.value[1] : p?.value
+              html += `<div>${escapeHtml(label)}: ${escapeHtml(fmt(typeof y === 'number' && Number.isFinite(y) ? y : null))} ${escapeHtml(
+                kindUnit(key)
+              )}</div>`
+            }
+            html += `</div>`
+          }
+          return html
+        }
       },
       legend: {
         top: 6,
         left: 84,
         textStyle: { color: theme.muted },
-        data: selectedItems.map((it) => titleFor(it))
+        type: 'scroll',
+        data: selectedItems.map((it) => legendLabelFor(it))
       },
       xAxis: {
         type: 'value',
@@ -305,39 +502,54 @@
         axisLine: { lineStyle: { color: theme.border } },
         splitLine: { lineStyle: { color: theme.border } }
       },
-      yAxis: {
-        type: 'value',
-        name: `${meta.label} (${meta.unit})`,
-        scale: true,
-        min: paddedMin,
-        max: paddedMax,
-        nameTextStyle: { color: theme.muted },
-        axisLabel: { color: theme.muted },
-        axisLine: { lineStyle: { color: theme.border } },
-        splitLine: { lineStyle: { color: theme.border } }
-      },
-      series: selectedItems.map((it: AnalysisListItem, idx: number) => {
-        const a = analyses[it.id] ?? null
-        const values = extractSeries(a, metric, compareRounds || 0)
-        const data = values.map((v, i) => [i + 1, v])
-        const color = palette[idx % palette.length]
-        return {
-          name: titleFor(it),
-          type: 'line',
-          connectNulls: false,
-          showSymbol: true,
-          symbolSize: 7,
-          data,
-          lineStyle: { width: 2, color },
-          itemStyle: { color }
+      yAxis: [
+        {
+          type: 'value',
+          show: showBpmAxis,
+          name: unitFor('bpm'),
+          scale: true,
+          min: bpmExtent.min,
+          max: bpmExtent.max,
+          nameTextStyle: { color: theme.muted },
+          axisLabel: { color: theme.muted },
+          axisLine: { lineStyle: { color: theme.border } },
+          splitLine: { lineStyle: { color: theme.border } }
+        },
+        {
+          type: 'value',
+          show: showHrrAxis,
+          position: 'right',
+          name: unitFor('hrr'),
+          scale: true,
+          min: hrrExtent.min,
+          max: hrrExtent.max,
+          nameTextStyle: { color: theme.muted },
+          axisLabel: { color: theme.muted },
+          axisLine: { lineStyle: { color: theme.border } },
+          splitLine: { show: false }
+        },
+        {
+          type: 'value',
+          show: showTauAxis,
+          position: 'right',
+          offset: 44,
+          name: unitFor('tau'),
+          scale: true,
+          min: tauExtent.min,
+          max: tauExtent.max,
+          nameTextStyle: { color: theme.muted },
+          axisLabel: { color: theme.muted },
+          axisLine: { lineStyle: { color: theme.border } },
+          splitLine: { show: false }
         }
-      })
+      ],
+      series
     }
   }
 
   const updateChart = () => {
     if (!chart) return
-    if (!selectedItems.length || !compareRounds) {
+    if (!selectedItems.length || !compareRounds || (!showPeak && !showEnd && !showHrr && !showTau)) {
       chart.clear()
       return
     }
@@ -347,7 +559,12 @@
   $: if (chart && echarts) {
     void selectedItems
     void compareRounds
-    void metric
+    void showPeak
+    void showEnd
+    void showHrr
+    void showTau
+    void normalization
+    void hrrDisplay
     void analyses
     updateChart()
   }
@@ -426,13 +643,40 @@
       <div class="panel__head">
         <strong>Comparison</strong>
         <div class="panel__controls">
+          <div class="control">
+            <span class="muted tiny">Metrics</span>
+            <div class="toggles">
+              <label class="toggle">
+                <input type="checkbox" bind:checked={showPeak} />
+                <span>Peak</span>
+              </label>
+              <label class="toggle">
+                <input type="checkbox" bind:checked={showEnd} />
+                <span>End</span>
+              </label>
+              <label class="toggle">
+                <input type="checkbox" bind:checked={showHrr} />
+                <span>HRR</span>
+              </label>
+              <label class="toggle">
+                <input type="checkbox" bind:checked={showTau} />
+                <span>τrec</span>
+              </label>
+            </div>
+          </div>
           <label>
-            <span class="muted tiny">Metric</span>
-            <select bind:value={metric}>
-              <option value="hrr60">HRR</option>
-              <option value="hr_peak">Peak HR</option>
-              <option value="hr_end">End HR</option>
-              <option value="tau_rec">τrec</option>
+            <span class="muted tiny">Normalization</span>
+            <select bind:value={normalization}>
+              <option value="none">Absolute</option>
+              <option value="delta">Δ from round 1</option>
+              <option value="zscore">z-score</option>
+            </select>
+          </label>
+          <label>
+            <span class="muted tiny">HRR scale</span>
+            <select bind:value={hrrDisplay} disabled={!showHrr}>
+              <option value="delta">Δbpm</option>
+              <option value="percent">% (HRR/End)</option>
             </select>
           </label>
           <label>
@@ -443,6 +687,10 @@
       </div>
 
       <div class="chart" bind:this={chartEl}></div>
+      <p class="muted tiny">
+        Styles: Peak = solid ▲ · End = dashed ● · HRR = dotted ◆ · τrec = solid ▮ (faded)
+        {#if normalization === 'delta'} · Δ values are relative to the first available round in the compared window.{/if}
+      </p>
 
       {#if selectedItems.length < 2}
         <p class="muted small">Select 2+ workouts above to compare.</p>
@@ -461,11 +709,11 @@
                 <th>Rest</th>
                 <th>Peak (avg)</th>
                 <th>End (avg)</th>
-                <th>HRR (avg)</th>
+                <th>{hrrDisplay === 'percent' ? 'HRR% (avg)' : 'HRR (avg)'}</th>
                 <th>τrec (avg)</th>
                 <th>Peak slope</th>
                 <th>End slope</th>
-                <th>HRR slope</th>
+                <th>{hrrDisplay === 'percent' ? 'HRR% slope' : 'HRR slope'}</th>
               </tr>
             </thead>
             <tbody>
@@ -479,11 +727,21 @@
                   <td>{row.restSeconds !== null ? formatSeconds(row.restSeconds) : '–'}</td>
                   <td>{fmt(row.meanPeak)}</td>
                   <td>{fmt(row.meanEnd)}</td>
-                  <td>{fmt(row.meanHrr)}</td>
+                  <td>
+                    {fmt(row.meanHrr)}
+                    {#if hrrDisplay === 'percent' && row.meanHrr !== null}
+                      <span class="muted tiny">%</span>
+                    {/if}
+                  </td>
                   <td>{fmt(row.meanTau)}</td>
                   <td>{fmtSlope(row.slopePeak)}</td>
                   <td>{fmtSlope(row.slopeEnd)}</td>
-                  <td>{fmtSlope(row.slopeHrr)}</td>
+                  <td>
+                    {fmtSlope(row.slopeHrr)}
+                    {#if hrrDisplay === 'percent' && row.slopeHrr !== null}
+                      <span class="muted tiny">%/round</span>
+                    {/if}
+                  </td>
                 </tr>
               {/each}
             </tbody>
@@ -555,6 +813,38 @@
     flex-wrap: wrap;
     align-items: end;
     justify-content: flex-end;
+  }
+
+  .control {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .toggles {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .toggle {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    padding: 0.35rem 0.6rem;
+    background: color-mix(in srgb, var(--color-surface-1) 85%, transparent);
+    color: var(--color-text-primary);
+    cursor: pointer;
+    user-select: none;
+    font-size: 0.9rem;
+    line-height: 1;
+  }
+
+  .toggle input {
+    accent-color: var(--color-accent);
   }
 
   .panel__controls label {
