@@ -22,6 +22,9 @@ export type HrIntervalRoundMetrics = {
   hr_peak: number | null
   t_peak: number | null
   hr_end: number | null
+  hrr30: number | null
+  hr_at_hrr30: number | null
+  hrr30TimeUsedSec: number | null
   hrr60: number | null
   hr_at_hrr: number | null
   hrrTimeUsedSec: number | null
@@ -32,6 +35,7 @@ export type HrIntervalRoundMetrics = {
 }
 
 export type HrIntervalBlockTrends = {
+  HRR30_slope_per_round: number | null
   HRR60_slope_per_round: number | null
   HR_peak_slope_per_round: number | null
   HR_end_slope_per_round: number | null
@@ -255,20 +259,28 @@ const computeHrEnd = (samples: HrSample[], workStart: number, workEnd: number, e
   return hrAt(samples, workEnd)
 }
 
-const computeHrr = (samples: HrSample[], hrEnd: number | null, restStart: number, restEnd: number, hrrWindowSec: number) => {
+const computeHrrAt = (
+  samples: HrSample[],
+  hrEnd: number | null,
+  restStart: number,
+  restEnd: number,
+  targetSeconds: number,
+  hrrWindowSec: number
+) => {
   if (hrEnd === null) {
-    return { hrr60: null as number | null, hrAtHrr: null as number | null, hrrTimeUsedSec: null as number | null }
+    return { hrr: null as number | null, hrAtHrr: null as number | null, hrrTimeUsedSec: null as number | null }
   }
   if (restEnd <= restStart) {
-    return { hrr60: null as number | null, hrAtHrr: null as number | null, hrrTimeUsedSec: null as number | null }
+    return { hrr: null as number | null, hrAtHrr: null as number | null, hrrTimeUsedSec: null as number | null }
   }
 
-  const tHrr = Math.min(restStart + 60, restEnd)
+  const target = Math.max(0, safeInt(targetSeconds))
+  const tHrr = Math.min(restStart + target, restEnd)
   const half = Math.max(0, safeInt(hrrWindowSec)) / 2
   const mean = meanHR(samples, tHrr - half, tHrr + half)
   const hrAtHrr = mean !== null ? mean : hrAt(samples, tHrr)
-  const hrr60 = hrAtHrr === null ? null : hrEnd - hrAtHrr
-  return { hrr60, hrAtHrr, hrrTimeUsedSec: tHrr - restStart }
+  const hrr = hrAtHrr === null ? null : hrEnd - hrAtHrr
+  return { hrr, hrAtHrr, hrrTimeUsedSec: tHrr - restStart }
 }
 
 const computeTauRecovery = (samples: HrSample[], restStart: number, restEnd: number) => {
@@ -377,7 +389,8 @@ export const computeHrIntervalMetrics = ({
     const peakWindowEnd = Math.min(restEnd, workEnd + peakExtensionSec)
     const peak = maxHrWithTime(samples, workStart, peakWindowEnd)
     const hr_end = computeHrEnd(samples, workStart, workEnd, endWindowSec)
-    const hrr = computeHrr(samples, hr_end, restStart, restEnd, hrrWindowSec)
+    const hrr30 = computeHrrAt(samples, hr_end, restStart, restEnd, 30, hrrWindowSec)
+    const hrr60 = computeHrrAt(samples, hr_end, restStart, restEnd, 60, hrrWindowSec)
     const tau = computeTauRecovery(samples, restStart, restEnd)
 
     return {
@@ -390,9 +403,12 @@ export const computeHrIntervalMetrics = ({
       hr_peak: peak.hr,
       t_peak: peak.t,
       hr_end,
-      hrr60: hrr.hrr60,
-      hr_at_hrr: hrr.hrAtHrr,
-      hrrTimeUsedSec: hrr.hrrTimeUsedSec,
+      hrr30: hrr30.hrr,
+      hr_at_hrr30: hrr30.hrAtHrr,
+      hrr30TimeUsedSec: hrr30.hrrTimeUsedSec,
+      hrr60: hrr60.hrr,
+      hr_at_hrr: hrr60.hrAtHrr,
+      hrrTimeUsedSec: hrr60.hrrTimeUsedSec,
       tau_rec: tau.tau_rec,
       tau_fit_r2: tau.tau_fit_r2,
       tau_fit_attempted: tau.tau_fit_attempted,
@@ -411,12 +427,14 @@ export const computeHrIntervalMetrics = ({
     return fit.slope
   }
 
+  const HRR30_slope_per_round = buildSlope((r) => r.hrr30)
   const HRR60_slope_per_round = buildSlope((r) => r.hrr60)
   const HR_peak_slope_per_round = buildSlope((r) => r.hr_peak)
   const HR_end_slope_per_round = buildSlope((r) => r.hr_end)
   const recoveryDegrading = (HRR60_slope_per_round ?? 0) < -1.0
 
   const trends: HrIntervalBlockTrends = {
+    HRR30_slope_per_round,
     HRR60_slope_per_round,
     HR_peak_slope_per_round,
     HR_end_slope_per_round,

@@ -197,15 +197,19 @@
   })
   $: intervalRows = metricsResult.perRound
   $: trends = metricsResult.trends
-  $: hrrLabel = safeInt(restSeconds) < 60 ? `HRR@${Math.max(0, safeInt(restSeconds))}s` : 'HRR60'
+  $: showHrr60 = safeInt(restSeconds) > 30
+  $: hrr30Label = safeInt(restSeconds) < 30 ? `HRR@${Math.max(0, safeInt(restSeconds))}s` : 'HRR30'
+  $: hrr60Label = safeInt(restSeconds) < 60 ? `HRR@${Math.max(0, safeInt(restSeconds))}s` : 'HRR60'
 
   const peakHrLabel = 'Peak HR'
   const endHrLabel = 'End HR'
+  const hrr30Color = '#a855f7'
 
   const buildOverlaySeriesData = () => {
     const peak: any[] = []
     const end: any[] = []
-    const hrr: any[] = []
+    const hrr30: any[] = []
+    const hrr60: any[] = []
     for (const row of intervalRows) {
       if (row.t_peak !== null && row.hr_peak !== null) {
         peak.push({ value: [row.t_peak, row.hr_peak], round: row.round })
@@ -213,15 +217,22 @@
       if (row.hr_end !== null) {
         end.push({ value: [row.workEnd, row.hr_end], round: row.round })
       }
-      if (row.hrr60 !== null && row.hrrTimeUsedSec !== null) {
-        hrr.push({
+      if (row.hrr30 !== null && row.hrr30TimeUsedSec !== null) {
+        hrr30.push({
+          value: [row.restStart + row.hrr30TimeUsedSec, row.hrr30],
+          round: row.round,
+          hrrTimeUsedSec: row.hrr30TimeUsedSec
+        })
+      }
+      if (showHrr60 && row.hrr60 !== null && row.hrrTimeUsedSec !== null) {
+        hrr60.push({
           value: [row.restStart + row.hrrTimeUsedSec, row.hrr60],
           round: row.round,
           hrrTimeUsedSec: row.hrrTimeUsedSec
         })
       }
     }
-    return { peak, end, hrr }
+    return { peak, end, hrr30, hrr60 }
   }
 
   const buildBaseOption = () => {
@@ -241,7 +252,7 @@
         top: 8,
         left: 84,
         textStyle: { color: theme.muted },
-        data: ['HR', peakHrLabel, endHrLabel, hrrLabel]
+        data: ['HR', peakHrLabel, endHrLabel, hrr30Label, ...(showHrr60 ? [hrr60Label] : [])]
       },
       xAxis: {
         type: 'value',
@@ -349,16 +360,42 @@
           z: 4
         },
         {
-          id: 'hrr',
-          name: hrrLabel,
+          id: 'hrr30',
+          name: hrr30Label,
+          type: 'line',
+          showSymbol: true,
+          symbol: 'rect',
+          symbolSize: 8,
+          connectNulls: false,
+          yAxisIndex: 1,
+          data: overlay.hrr30,
+          lineStyle: { width: 2, type: 'dotted', color: hrr30Color },
+          itemStyle: { color: hrr30Color },
+          tooltip: {
+            trigger: 'item',
+            formatter: (p: any) => {
+              const round = p?.data?.round ?? '–'
+              const t = Array.isArray(p?.value) ? p.value[0] : null
+              const hrr = Array.isArray(p?.value) ? p.value[1] : null
+              const timeUsed = p?.data?.hrrTimeUsedSec
+              const used = Number.isFinite(timeUsed ?? NaN) ? safeInt(timeUsed) : null
+              const at = used !== null && used !== 30 ? `at ${used}s` : ''
+              return `Round ${round}<br/>${hrr30Label}: ${fmt(hrr)} Δbpm<br/>${at}<br/>t: ${formatSeconds(t)}`
+            }
+          },
+          z: 4
+        },
+        {
+          id: 'hrr60',
+          name: hrr60Label,
           type: 'line',
           showSymbol: true,
           symbol: 'diamond',
           symbolSize: 8,
           connectNulls: false,
           yAxisIndex: 1,
-          data: overlay.hrr,
-          lineStyle: { width: 2, type: 'dashed', color: theme.warning },
+          data: overlay.hrr60,
+          lineStyle: { width: 2, type: 'dotted', color: theme.warning },
           itemStyle: { color: theme.warning },
           tooltip: {
             trigger: 'item',
@@ -367,8 +404,9 @@
               const t = Array.isArray(p?.value) ? p.value[0] : null
               const hrr = Array.isArray(p?.value) ? p.value[1] : null
               const timeUsed = p?.data?.hrrTimeUsedSec
-              const at = Number.isFinite(timeUsed ?? NaN) ? `at ${safeInt(timeUsed)}s` : ''
-              return `Round ${round}<br/>${hrrLabel}: ${fmt(hrr)} bpm<br/>${at}<br/>t: ${formatSeconds(t)}`
+              const used = Number.isFinite(timeUsed ?? NaN) ? safeInt(timeUsed) : null
+              const at = used !== null && used !== 60 ? `at ${used}s` : ''
+              return `Round ${round}<br/>${hrr60Label}: ${fmt(hrr)} Δbpm<br/>${at}<br/>t: ${formatSeconds(t)}`
             }
           },
           z: 4
@@ -390,7 +428,12 @@
     const overlay = buildOverlaySeriesData()
     chart.setOption(
       {
-        legend: { top: 8, left: 84, data: ['HR', peakHrLabel, endHrLabel, hrrLabel], textStyle: { color: theme.muted } },
+        legend: {
+          top: 8,
+          left: 84,
+          data: ['HR', peakHrLabel, endHrLabel, hrr30Label, ...(showHrr60 ? [hrr60Label] : [])],
+          textStyle: { color: theme.muted }
+        },
         series: [
           {
             id: 'hr_peak',
@@ -400,7 +443,8 @@
             itemStyle: { color: theme.accent }
           },
           { id: 'hr_end', name: endHrLabel, data: overlay.end, lineStyle: { color: theme.success }, itemStyle: { color: theme.success } },
-          { id: 'hrr', name: hrrLabel, data: overlay.hrr, lineStyle: { color: theme.warning }, itemStyle: { color: theme.warning } }
+          { id: 'hrr30', name: hrr30Label, data: overlay.hrr30, lineStyle: { color: hrr30Color }, itemStyle: { color: hrr30Color } },
+          { id: 'hrr60', name: hrr60Label, data: overlay.hrr60, lineStyle: { color: theme.warning }, itemStyle: { color: theme.warning } }
         ]
       },
       { notMerge: false, lazyUpdate: true }
@@ -450,7 +494,9 @@
 
   $: if (chart) {
     void intervalRows
-    void hrrLabel
+    void showHrr60
+    void hrr30Label
+    void hrr60Label
     updateMetricsOverlay()
   }
 
@@ -640,15 +686,19 @@
       'hr_peak',
       't_peak',
       'hr_end',
-      'hrr',
-      'hrrTimeUsedSec',
-      'hr_at_hrr',
+      'hrr30',
+      'hrr30TimeUsedSec',
+      'hr_at_hrr30',
+      'hrr60',
+      'hrr60TimeUsedSec',
+      'hr_at_hrr60',
       'tau_rec',
       'tau_fit_r2',
       'tau_reliable',
       'cfg_peakExtensionSec',
       'cfg_endWindowSec',
       'cfg_hrrWindowSec',
+      'trend_HRR30_slope_per_round',
       'trend_HRR60_slope_per_round',
       'trend_HR_peak_slope_per_round',
       'trend_HR_end_slope_per_round',
@@ -669,6 +719,9 @@
       r.hr_peak ?? '',
       r.t_peak ?? '',
       r.hr_end ?? '',
+      r.hrr30 ?? '',
+      r.hrr30TimeUsedSec ?? '',
+      r.hr_at_hrr30 ?? '',
       r.hrr60 ?? '',
       r.hrrTimeUsedSec ?? '',
       r.hr_at_hrr ?? '',
@@ -678,6 +731,7 @@
       cfg.peakExtensionSec,
       cfg.endWindowSec,
       cfg.hrrWindowSec,
+      trends.HRR30_slope_per_round ?? '',
       trends.HRR60_slope_per_round ?? '',
       trends.HR_peak_slope_per_round ?? '',
       trends.HR_end_slope_per_round ?? '',
@@ -824,7 +878,10 @@
             <th>Max HR</th>
             <th>{peakHrLabel}</th>
             <th>{endHrLabel}</th>
-            <th>{hrrLabel}</th>
+            <th>{hrr30Label}</th>
+            {#if showHrr60}
+              <th>{hrr60Label}</th>
+            {/if}
             <th>τrec (s)</th>
           </tr>
         </thead>
@@ -844,15 +901,27 @@
               </td>
               <td>{fmt(row.hr_end)}</td>
               <td>
-                {#if row.hrr60 === null}
+                {#if row.hrr30 === null}
                   –
                 {:else}
-                  {fmt(row.hrr60)}
-                  {#if (row.hrrTimeUsedSec ?? 60) !== 60}
-                    <span class="muted tiny">@{safeInt(row.hrrTimeUsedSec)}s</span>
+                  {fmt(row.hrr30)}
+                  {#if (row.hrr30TimeUsedSec ?? 30) !== 30}
+                    <span class="muted tiny">@{safeInt(row.hrr30TimeUsedSec)}s</span>
                   {/if}
                 {/if}
               </td>
+              {#if showHrr60}
+                <td>
+                  {#if row.hrr60 === null}
+                    –
+                  {:else}
+                    {fmt(row.hrr60)}
+                    {#if (row.hrrTimeUsedSec ?? 60) !== 60}
+                      <span class="muted tiny">@{safeInt(row.hrrTimeUsedSec)}s</span>
+                    {/if}
+                  {/if}
+                </td>
+              {/if}
               <td>
                 {#if row.tau_rec !== null}
                   {fmt(row.tau_rec)}
@@ -880,11 +949,19 @@
             <td>{fmtSlope(trends.HR_peak_slope_per_round)}</td>
             <td>{fmtSlope(trends.HR_end_slope_per_round)}</td>
             <td>
-              {fmtSlope(trends.HRR60_slope_per_round)}
-              {#if trends.recoveryDegrading}
+              {fmtSlope(trends.HRR30_slope_per_round)}
+              {#if !showHrr60 && trends.recoveryDegrading}
                 <span class="warn-text" title="Recovery degrading">(degrading)</span>
               {/if}
             </td>
+            {#if showHrr60}
+              <td>
+                {fmtSlope(trends.HRR60_slope_per_round)}
+                {#if trends.recoveryDegrading}
+                  <span class="warn-text" title="Recovery degrading">(degrading)</span>
+                {/if}
+              </td>
+            {/if}
             <td></td>
           </tr>
         </tfoot>

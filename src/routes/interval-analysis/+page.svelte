@@ -191,6 +191,7 @@
 
   type NormalizationMode = 'none' | 'delta' | 'zscore'
   type HrrDisplayMode = 'delta' | 'percent'
+  type HrrSeconds = 30 | 60
 
   let showPeak = true
   let showEnd = true
@@ -199,6 +200,36 @@
 
   let normalization: NormalizationMode = 'none'
   let hrrDisplay: HrrDisplayMode = 'delta'
+  let hrrSeconds: HrrSeconds = 60
+
+  const extractHrrSeries = (analysis: SavedAnalysis | null, n: number, seconds: HrrSeconds) => {
+    if (!analysis?.perRound || !Array.isArray(analysis.perRound)) return [] as Array<number | null>
+    const out: Array<number | null> = []
+    for (let i = 0; i < n; i++) {
+      const row = analysis.perRound[i] ?? null
+      if (!row || typeof row !== 'object') {
+        out.push(null)
+        continue
+      }
+
+      if (seconds === 60) {
+        const v = typeof (row as any).hrr60 === 'number' && Number.isFinite((row as any).hrr60) ? Number((row as any).hrr60) : null
+        out.push(v)
+        continue
+      }
+
+      const v30 = typeof (row as any).hrr30 === 'number' && Number.isFinite((row as any).hrr30) ? Number((row as any).hrr30) : null
+      if (v30 !== null) {
+        out.push(v30)
+        continue
+      }
+
+      const v60 = typeof (row as any).hrr60 === 'number' && Number.isFinite((row as any).hrr60) ? Number((row as any).hrr60) : null
+      const used = typeof (row as any).hrrTimeUsedSec === 'number' && Number.isFinite((row as any).hrrTimeUsedSec) ? Number((row as any).hrrTimeUsedSec) : null
+      out.push(v60 !== null && used !== null && used <= 30 ? v60 : null)
+    }
+    return out
+  }
 
   const deriveHrrPercent = (hrr: Array<number | null>, endHr: Array<number | null>) =>
     hrr.map((v, i) => {
@@ -260,7 +291,7 @@
     const used = compareRounds ? Math.min(compareRounds, available || 0) : 0
     const peak = extractSeries(a, 'hr_peak', used)
     const end = extractSeries(a, 'hr_end', used)
-    const hrrRaw = extractSeries(a, 'hrr60', used)
+    const hrrRaw = extractHrrSeries(a, used, hrrSeconds)
     const hrr = hrrDisplay === 'percent' ? deriveHrrPercent(hrrRaw, end) : hrrRaw
     const tau = extractSeries(a, 'tau_rec', used)
     const block = (a?.block ?? it.block ?? {}) as any
@@ -297,7 +328,7 @@
   const metricLabelFromKey = (key: string) => {
     if (key === 'peak') return 'Peak HR'
     if (key === 'end') return 'End HR'
-    if (key === 'hrr') return hrrDisplay === 'percent' ? 'HRR%' : 'HRR'
+    if (key === 'hrr') return `HRR${hrrSeconds}`
     if (key === 'tau') return 'τrec'
     return 'Value'
   }
@@ -367,9 +398,10 @@
       const used = compareRounds || 0
 
       const peak = normalizeSeries(extractSeries(a, 'hr_peak', used), normalization)
-      const end = normalizeSeries(extractSeries(a, 'hr_end', used), normalization)
-      const hrrRaw = extractSeries(a, 'hrr60', used)
-      const hrrBase = hrrDisplay === 'percent' ? deriveHrrPercent(hrrRaw, extractSeries(a, 'hr_end', used)) : hrrRaw
+      const endRaw = extractSeries(a, 'hr_end', used)
+      const end = normalizeSeries(endRaw, normalization)
+      const hrrRaw = extractHrrSeries(a, used, hrrSeconds)
+      const hrrBase = hrrDisplay === 'percent' ? deriveHrrPercent(hrrRaw, endRaw) : hrrRaw
       const hrr = normalizeSeries(hrrBase, normalization)
       const tau = normalizeSeries(extractSeries(a, 'tau_rec', used), normalization)
 
@@ -565,6 +597,7 @@
     void showTau
     void normalization
     void hrrDisplay
+    void hrrSeconds
     void analyses
     updateChart()
   }
@@ -680,6 +713,20 @@
             </select>
           </label>
           <label>
+            <span class="muted tiny">HRR at</span>
+            <select
+              value={hrrSeconds}
+              disabled={!showHrr}
+              on:change={(e) => {
+                const n = Number((e.currentTarget as HTMLSelectElement).value)
+                hrrSeconds = n === 30 ? 30 : 60
+              }}
+            >
+              <option value="60">60s</option>
+              <option value="30">30s</option>
+            </select>
+          </label>
+          <label>
             <span class="muted tiny">Rounds (0 = auto min)</span>
             <input type="number" min="0" step="1" bind:value={roundsLimit} />
           </label>
@@ -709,11 +756,11 @@
                 <th>Rest</th>
                 <th>Peak (avg)</th>
                 <th>End (avg)</th>
-                <th>{hrrDisplay === 'percent' ? 'HRR% (avg)' : 'HRR (avg)'}</th>
+                <th>{hrrDisplay === 'percent' ? `HRR${hrrSeconds}% (avg)` : `HRR${hrrSeconds} (avg)`}</th>
                 <th>τrec (avg)</th>
                 <th>Peak slope</th>
                 <th>End slope</th>
-                <th>{hrrDisplay === 'percent' ? 'HRR% slope' : 'HRR slope'}</th>
+                <th>{hrrDisplay === 'percent' ? `HRR${hrrSeconds}% slope` : `HRR${hrrSeconds} slope`}</th>
               </tr>
             </thead>
             <tbody>
