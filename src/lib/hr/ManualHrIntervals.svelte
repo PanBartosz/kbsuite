@@ -25,6 +25,17 @@
   let chart: any | null = null
   let echarts: any | null = null
   let resizeObserver: ResizeObserver | null = null
+  let zoomStartPct = 0
+  let zoomEndPct = 100
+  let zoomSpanSec = 0
+  let zoomedIn = false
+  let offsetSliderHalfSpanSec: number | null = null
+  let offsetSliderMin = 0
+  let offsetSliderMax = 0
+
+  let offsetSliderCenter = offsetSeconds
+  let offsetSliderDragging = false
+  let dataZoomHandler: (() => void) | null = null
 
   const getTheme = () => {
     if (typeof window === 'undefined') {
@@ -103,6 +114,54 @@
 
   $: offsetMin = -Math.min(600, Math.max(0, maxT))
   $: offsetMax = Math.max(0, maxT)
+
+  const syncZoomFromChart = () => {
+    if (!chart) {
+      zoomStartPct = 0
+      zoomEndPct = 100
+      return
+    }
+    try {
+      const opt = chart.getOption()
+      const dz = Array.isArray(opt?.dataZoom) ? opt.dataZoom : []
+      const z =
+        dz.find((d: any) => {
+          const idx = d?.xAxisIndex
+          if (idx === 0) return true
+          if (Array.isArray(idx) && idx.includes(0)) return true
+          return false
+        }) ?? dz[0]
+
+      const start = typeof z?.start === 'number' ? z.start : Number(z?.start)
+      const end = typeof z?.end === 'number' ? z.end : Number(z?.end)
+      if (Number.isFinite(start) && Number.isFinite(end)) {
+        zoomStartPct = clamp(start, 0, 100)
+        zoomEndPct = clamp(end, 0, 100)
+        return
+      }
+    } catch {
+      // ignore
+    }
+    zoomStartPct = 0
+    zoomEndPct = 100
+  }
+
+  $: zoomSpanSec = Math.max(
+    0,
+    (Math.abs(zoomEndPct - zoomStartPct) / 100) * Math.max(0, safeInt(maxT))
+  )
+  $: zoomedIn = Math.max(0, safeInt(maxT)) > 0 && Math.abs(zoomEndPct - zoomStartPct) < 99.9
+  $: offsetSliderHalfSpanSec = zoomedIn ? Math.max(5, Math.round(zoomSpanSec / 2)) : null
+  $: offsetSliderMin = zoomedIn
+    ? clamp(offsetSliderCenter - (offsetSliderHalfSpanSec ?? 0), offsetMin, offsetMax)
+    : offsetMin
+  $: offsetSliderMax = zoomedIn
+    ? clamp(offsetSliderCenter + (offsetSliderHalfSpanSec ?? 0), offsetMin, offsetMax)
+    : offsetMax
+
+  $: if (!offsetSliderDragging && offsetSliderCenter !== offsetSeconds) {
+    offsetSliderCenter = offsetSeconds
+  }
 
   const clampInputs = () => {
     const nextRounds = clamp(safeInt(rounds), 0, 1000)
@@ -416,6 +475,13 @@
     updateWorkOverlay()
     updateMetricsOverlay()
 
+    dataZoomHandler = () => {
+      syncZoomFromChart()
+      if (!offsetSliderDragging) offsetSliderCenter = offsetSeconds
+    }
+    chart.on('datazoom', dataZoomHandler)
+    syncZoomFromChart()
+
     resizeObserver = new ResizeObserver(() => chart?.resize())
     resizeObserver.observe(chartEl)
   })
@@ -423,6 +489,9 @@
   onDestroy(() => {
     resizeObserver?.disconnect()
     resizeObserver = null
+    if (chart && dataZoomHandler) {
+      chart.off('datazoom', dataZoomHandler)
+    }
     chart?.dispose()
     chart = null
     echarts = null
@@ -657,14 +726,26 @@
       />
     </label>
     <label class="offset">
-      <span>Start offset ({formatSeconds(offsetSeconds)})</span>
+      <span>
+        Start offset ({formatSeconds(offsetSeconds)})
+        {#if zoomedIn && offsetSliderHalfSpanSec !== null}
+          <span class="muted tiny"> · zoom: ±{formatSeconds(offsetSliderHalfSpanSec)}</span>
+        {/if}
+      </span>
       <input
         type="range"
-        min={offsetMin}
-        max={offsetMax}
+        min={offsetSliderMin}
+        max={offsetSliderMax}
         step="1"
         value={offsetSeconds}
-        on:input={(e) => (offsetSeconds = Number((e.currentTarget as HTMLInputElement).value))}
+        on:input={(e) => {
+          offsetSliderDragging = true
+          offsetSeconds = Number((e.currentTarget as HTMLInputElement).value)
+        }}
+        on:change={() => {
+          offsetSliderDragging = false
+          offsetSliderCenter = offsetSeconds
+        }}
       />
     </label>
 
