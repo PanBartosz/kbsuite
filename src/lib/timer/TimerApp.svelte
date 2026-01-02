@@ -100,8 +100,15 @@ import '$lib/timer/app.css'
       }
 
       const roundId = round.id ?? `round-${roundIndex + 1}`
+      const transitionAfterSecondsRaw = round.transitionAfterSeconds
+      const transitionAfterSeconds =
+        transitionAfterSecondsRaw === undefined ||
+        transitionAfterSecondsRaw === null ||
+        transitionAfterSecondsRaw === ''
+          ? undefined
+          : coerceSeconds(transitionAfterSecondsRaw)
 
-      return {
+      const normalizedRound = {
         id: roundId,
         label: round.label ?? `Round ${roundIndex + 1}`,
         repetitions: coerceRepetitions(round.repetitions),
@@ -133,6 +140,12 @@ import '$lib/timer/app.css'
           }
         })
       }
+
+      if (transitionAfterSeconds !== undefined) {
+        normalizedRound.transitionAfterSeconds = transitionAfterSeconds
+      }
+
+      return normalizedRound
     })
 
     return {
@@ -308,7 +321,7 @@ import '$lib/timer/app.css'
         (phase.type === 'work' ? `Set ${Number(phase.setIndex) + 1 || ''}`.trim() : phase.type)
 
       if (phase.type === 'roundRest') {
-        setLabel = 'Rest between rounds'
+        setLabel = 'Rest between repeats'
       } else if (phase.type === 'roundTransition') {
         setLabel = 'Next round prep'
       } else if (phase.type === 'transition') {
@@ -629,6 +642,13 @@ let plan =
     const mins = Math.floor(seconds / 60)
     const secs = Math.round(seconds % 60)
     return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  const resolveRoundTransitionAfterSeconds = (round) => {
+    const raw = round?.transitionAfterSeconds
+    const fallback = Math.max(Number(round?.restAfterSeconds) || 0, 0)
+    if (raw === undefined || raw === null || raw === '') return fallback
+    return Math.max(Number(raw) || 0, 0)
   }
 
 
@@ -1687,7 +1707,8 @@ rounds: array of objects
   - id: string (optional)
     label: string (optional)
     repetitions: integer >= 1 (default 1)
-    restAfterSeconds: number >= 0 (optional)
+    restAfterSeconds: number >= 0 (optional) rest between repeats
+    transitionAfterSeconds: number >= 0 (optional) rest/transition after the round, before next round
     sets: array of objects, in order
       - id: string (optional)
         label: string (mandatory)
@@ -1933,6 +1954,15 @@ Rules:
       }
       target.repetitions = coerceRepetitions(values.repetitions ?? target.repetitions)
       target.restAfterSeconds = coerceSeconds(values.restAfterSeconds ?? target.restAfterSeconds)
+      if (
+        values.transitionAfterSeconds === undefined ||
+        values.transitionAfterSeconds === null ||
+        values.transitionAfterSeconds === ''
+      ) {
+        delete target.transitionAfterSeconds
+      } else {
+        target.transitionAfterSeconds = coerceSeconds(values.transitionAfterSeconds)
+      }
     })
     closeRoundEditor()
   }
@@ -2783,6 +2813,8 @@ Rules:
           {#each plan.rounds as round, roundIndex}
             {#key round.id}
               {@const roundTotals = getRoundTotals(round, roundIndex, roundTotalsMap)}
+              {@const hasNextRound = roundIndex < plan.rounds.length - 1}
+              {@const roundTransitionAfterSeconds = resolveRoundTransitionAfterSeconds(round)}
               <article class="round">
                 <header class="round__header">
                   <div>
@@ -2790,8 +2822,11 @@ Rules:
                       Round {roundIndex + 1}: {round.label}
                     </h3>
                     <p>
-                      Repetitions: {round.repetitions} · Rest after round:{' '}
+                      Repetitions: {round.repetitions} · Rest between repeats:{' '}
                       {formatDuration(round.restAfterSeconds || 0)}
+                      {#if hasNextRound}
+                        · Transition to next round: {formatDuration(roundTransitionAfterSeconds)}
+                      {/if}
                     </p>
                   </div>
                   <div class="round__actions">
@@ -2919,10 +2954,10 @@ Rules:
                         {/key}
                       {/each}
                     </ul>
-                    {#if roundIndex < plan.rounds.length - 1 && round.restAfterSeconds > 0}
+                    {#if hasNextRound && roundTransitionAfterSeconds > 0}
                       <div class="round-rest-block">
-                        <span class="round-rest-block__label">Rest between rounds</span>
-                        <span class="round-rest-block__time">{formatDuration(round.restAfterSeconds)}</span>
+                        <span class="round-rest-block__label">Transition to next round</span>
+                        <span class="round-rest-block__time">{formatDuration(roundTransitionAfterSeconds)}</span>
                       </div>
                     {/if}
                   </div>

@@ -11,6 +11,7 @@
   let labelInput = ''
   let repetitionsInput = 1
   let restAfterInput = 0
+  let transitionAfterInput = ''
   let lastRoundKey = null
 
   $: if (open) {
@@ -19,6 +20,10 @@
       labelInput = round?.label ?? `Round ${roundIndex + 1}`
       repetitionsInput = round?.repetitions ?? 1
       restAfterInput = round?.restAfterSeconds ?? 0
+      transitionAfterInput =
+        round?.transitionAfterSeconds === undefined || round?.transitionAfterSeconds === null
+          ? ''
+          : round.transitionAfterSeconds
       lastRoundKey = key
     }
   } else if (lastRoundKey !== null) {
@@ -47,7 +52,8 @@
       values: {
         label: labelInput?.trim() || `Round ${roundIndex + 1}`,
         repetitions: toReps(repetitionsInput),
-        restAfterSeconds: toSeconds(restAfterInput)
+        restAfterSeconds: toSeconds(restAfterInput),
+        transitionAfterSeconds: transitionAfterInput
       }
     })
   }
@@ -99,13 +105,24 @@
               />
             </label>
             <label>
-              <span>Rest after round (sec)</span>
+              <span>Rest between repeats (sec)</span>
               <input
                 type="number"
                 min="0"
                 step="1"
                 inputmode="numeric"
                 bind:value={restAfterInput}
+              />
+            </label>
+            <label>
+              <span>Transition to next round (sec)</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                inputmode="numeric"
+                placeholder="(inherit)"
+                bind:value={transitionAfterInput}
               />
             </label>
           </div>

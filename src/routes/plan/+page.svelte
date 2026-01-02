@@ -504,6 +504,15 @@
       target.label = values.label?.trim?.() || target.label || `Round ${roundIndex + 1}`
       target.repetitions = coerceRepetitions(values.repetitions ?? target.repetitions)
       target.restAfterSeconds = coerceSeconds(values.restAfterSeconds ?? target.restAfterSeconds)
+      if (
+        values.transitionAfterSeconds === undefined ||
+        values.transitionAfterSeconds === null ||
+        values.transitionAfterSeconds === ''
+      ) {
+        delete target.transitionAfterSeconds
+      } else {
+        target.transitionAfterSeconds = coerceSeconds(values.transitionAfterSeconds)
+      }
     })
     closeRoundEditor()
   }
@@ -612,12 +621,20 @@
       }
 
       const roundId = round.id ?? `round-${roundIndex + 1}`
+      const transitionAfterSecondsRaw = round.transitionAfterSeconds
+      const transitionAfterSeconds =
+        transitionAfterSecondsRaw === undefined ||
+        transitionAfterSecondsRaw === null ||
+        transitionAfterSecondsRaw === ''
+          ? undefined
+          : coerceSeconds(transitionAfterSecondsRaw)
 
       return {
         id: roundId,
         label: typeof round.label === 'string' ? round.label : `Round ${roundIndex + 1}`,
         repetitions: coerceRepetitions(round.repetitions ?? 1),
         restAfterSeconds: coerceSeconds(round.restAfterSeconds ?? 0),
+        ...(transitionAfterSeconds !== undefined ? { transitionAfterSeconds } : {}),
         sets: round.sets.map((set: any, setIndex: number) => {
           if (!set || typeof set !== 'object') {
             throw new Error(`Set ${setIndex + 1} in round ${roundIndex + 1} must be an object`)

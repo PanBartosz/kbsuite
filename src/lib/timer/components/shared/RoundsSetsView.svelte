@@ -141,6 +141,13 @@
       label: enabled ? (mode === 'lockout' ? 'RC lockout' : 'RC swing') : 'RC off'
     }
   }
+
+  const resolveRoundTransitionAfterSeconds = (round: any) => {
+    const raw = round?.transitionAfterSeconds
+    const fallback = Math.max(Number(round?.restAfterSeconds) || 0, 0)
+    if (raw === undefined || raw === null || raw === '') return fallback
+    return Math.max(Number(raw) || 0, 0)
+  }
 </script>
 
 <section class="rounds">
@@ -155,6 +162,8 @@
   <div class="rounds__list">
     {#each plan?.rounds ?? [] as round, roundIndex (round.id || roundIndex)}
       {@const roundTotals = getRoundTotals(round, roundIndex, roundTotalsMap)}
+      {@const hasNextRound = roundIndex < (plan?.rounds?.length ?? 0) - 1}
+      {@const roundTransitionAfterSeconds = resolveRoundTransitionAfterSeconds(round)}
       <article class="round">
         <header class="round__header">
           <div>
@@ -162,8 +171,11 @@
               Round {roundIndex + 1}: {round.label}
             </h3>
             <p>
-              Repetitions: {round.repetitions} · Rest after round:{' '}
+              Repetitions: {round.repetitions} · Rest between repeats:{' '}
               {formatDuration(round.restAfterSeconds || 0)}
+              {#if hasNextRound}
+                · Transition to next round: {formatDuration(roundTransitionAfterSeconds)}
+              {/if}
             </p>
           </div>
           <div class="round__actions">
@@ -310,10 +322,10 @@
                 {/key}
               {/each}
             </ul>
-            {#if roundIndex < (plan?.rounds?.length ?? 0) - 1 && round.restAfterSeconds > 0}
+            {#if hasNextRound && roundTransitionAfterSeconds > 0}
               <div class="round-rest-block">
-                <span class="round-rest-block__label">Rest between rounds</span>
-                <span class="round-rest-block__time">{formatDuration(round.restAfterSeconds)}</span>
+                <span class="round-rest-block__label">Transition to next round</span>
+                <span class="round-rest-block__time">{formatDuration(roundTransitionAfterSeconds)}</span>
               </div>
             {/if}
           </div>

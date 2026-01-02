@@ -8,7 +8,8 @@ rounds: array of objects
   - id: string (optional)
     label: string (optional)
     repetitions: integer >= 1 (default 1)
-    restAfterSeconds: number >= 0 (optional)
+    restAfterSeconds: number >= 0 (optional) rest between repeats
+    transitionAfterSeconds: number >= 0 (optional) rest/transition after the round, before next round
     sets: array of objects, in order
       - id: string (optional)
         label: string (mandatory)

@@ -205,11 +205,19 @@ $: currentTheme = $settings.theme ?? ''
         throw new Error(`Round "${round.label ?? `#${roundIndex + 1}`}" requires sets`)
       }
       const roundId = round.id ?? `round-${roundIndex + 1}`
+      const transitionAfterSecondsRaw = round.transitionAfterSeconds
+      const transitionAfterSeconds =
+        transitionAfterSecondsRaw === undefined ||
+        transitionAfterSecondsRaw === null ||
+        transitionAfterSecondsRaw === ''
+          ? undefined
+          : coerceSeconds(transitionAfterSecondsRaw)
       return {
         id: roundId,
         label: round.label ?? `Round ${roundIndex + 1}`,
         repetitions: coerceRepetitions(round.repetitions),
         restAfterSeconds: coerceSeconds(round.restAfterSeconds),
+        ...(transitionAfterSeconds !== undefined ? { transitionAfterSeconds } : {}),
         sets: round.sets.map((set: any, setIndex: number) => ({
           id: set.id ?? `${roundId}-set-${setIndex + 1}`,
           label: set.label ?? `Set ${setIndex + 1}`,

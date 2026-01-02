@@ -277,6 +277,14 @@ export const buildTimeline = (plan) => {
       })
 
       const roundRestSeconds = toSeconds(round.restAfterSeconds)
+      const transitionAfterSecondsRaw = round?.transitionAfterSeconds
+      const hasExplicitTransitionAfterSeconds =
+        transitionAfterSecondsRaw !== undefined &&
+        transitionAfterSecondsRaw !== null &&
+        transitionAfterSecondsRaw !== ''
+      const roundTransitionSeconds = hasExplicitTransitionAfterSeconds
+        ? toSeconds(transitionAfterSecondsRaw)
+        : roundRestSeconds
       const isLastRoundRepetition = roundRep === roundRepetitions - 1
       const hasNextRound = roundIndex < plan.rounds.length - 1
       if (!isLastRoundRepetition && roundRestSeconds > 0) {
@@ -298,13 +306,13 @@ export const buildTimeline = (plan) => {
             }
           })
         )
-      } else if (isLastRoundRepetition && hasNextRound && roundRestSeconds > 0) {
+      } else if (isLastRoundRepetition && hasNextRound && roundTransitionSeconds > 0) {
         phases.push(
           createPhase({
             id: `phase-${phaseIndex++}`,
             type: 'roundTransition',
             label: `Transition to ${plan.rounds[roundIndex + 1].label ?? `Round ${roundIndex + 2}`}`,
-            duration: roundRestSeconds,
+            duration: roundTransitionSeconds,
             roundIndex,
             setIndex: -1,
             roundId,
