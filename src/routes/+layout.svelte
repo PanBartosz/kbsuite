@@ -8,6 +8,7 @@
 	import { loadPendingCount, shares } from '$lib/stores/shares';
 	import { pushToast } from '$lib/stores/toasts';
 	import {
+		clearSummaryDraft,
 		closeSummaryModal,
 		openSummaryModal,
 		setSummaryEntries,
@@ -36,6 +37,14 @@
 	const toggleMenu = () => (menuOpen = !menuOpen);
 	const closeMenu = () => (menuOpen = false);
 
+	const handleSummaryClose = (event: CustomEvent<{ entries: any[] }>) => {
+		const nextEntries = event?.detail?.entries;
+		if (Array.isArray(nextEntries)) {
+			setSummaryEntries(nextEntries);
+		}
+		closeSummaryModal();
+	};
+
 	onMount(() => {
 		// ensure session cookie exists
 		fetch('/api/session').catch(() => {});
@@ -50,9 +59,9 @@
 		}
 	});
 
-	const saveCompleted = async (entries: any[]) => {
+	const saveCompleted = async (entries: any[]): Promise<string | null> => {
 		const meta = $summaryMetadata ?? {};
-		if (!entries?.length) return;
+		if (!entries?.length) return null;
 		try {
 			const res = await fetch('/api/completed-workouts', {
 				method: 'POST',
@@ -81,9 +90,11 @@
 					window.location.href = '/history';
 				}
 			});
+			return id || null;
 		} catch (err) {
 			console.warn('Failed to save completed workout', err);
 			pushToast((err as any)?.message ?? 'Failed to save workout', 'error');
+			return null;
 		}
 	};
 </script>
@@ -140,12 +151,14 @@
 	<WorkoutSummaryModal
 		open={$summaryModalOpen}
 		entries={$summaryEntries}
-		on:close={closeSummaryModal}
+		on:close={handleSummaryClose}
 		on:save={(event) => {
 			const nextEntries = event.detail?.entries ?? [];
 			setSummaryEntries(nextEntries);
-			saveCompleted(nextEntries);
 			closeSummaryModal();
+			saveCompleted(nextEntries).then((id) => {
+				if (id) clearSummaryDraft();
+			});
 		}}
 	/>
 	<ToastStack />

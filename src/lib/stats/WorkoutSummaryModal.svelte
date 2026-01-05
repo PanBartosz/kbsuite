@@ -96,7 +96,7 @@
   }
 
   const handleSave = () => dispatch('save', { entries: localEntries })
-  const handleClose = () => dispatch('close')
+  const handleClose = () => dispatch('close', { entries: localEntries })
 
   const openCopyConfirm = (entry: SummaryEntry) => {
     pendingCopy = {
@@ -326,7 +326,7 @@
     {/if}
 
     <footer>
-      <button class="ghost" type="button" on:click={() => dispatch('close')}>Close</button>
+      <button class="ghost" type="button" on:click={handleClose}>Close</button>
       <button class="primary" type="button" on:click={handleSave}>Save</button>
     </footer>
   </div>

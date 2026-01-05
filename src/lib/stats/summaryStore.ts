@@ -81,4 +81,11 @@ export const setSummaryMetadata = (meta: {
   durationSeconds?: number | null
 }) => summaryMetadata.set(meta ?? {})
 
+export const clearSummaryDraft = () => {
+  summaryEntries.set([])
+  summaryLatestRepCount.set(null)
+  summaryPlanKey.set(null)
+  summaryMetadata.set({})
+}
+
 export { summaryEntries, summaryLatestRepCount, summaryModalOpen, summaryPlanKey, summaryMetadata }
