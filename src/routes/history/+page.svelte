@@ -8,10 +8,12 @@
   import { buildAiPayloadBatch } from '$lib/stats/aiPayload'
   import { settings, openSettingsModal } from '$lib/stores/settings'
   import { pushToast } from '$lib/stores/toasts'
-  import { getInsightsPrompt, defaultInsightsPrompt } from '$lib/ai/prompts'
-  import { modal } from '$lib/actions/modal'
-  import ManualHrIntervals from '$lib/hr/ManualHrIntervals.svelte'
-  import { normalizeHrSamples } from '$lib/hr/manualIntervals'
+	  import { getInsightsPrompt, defaultInsightsPrompt } from '$lib/ai/prompts'
+	  import { modal } from '$lib/actions/modal'
+	  import ManualHrIntervals from '$lib/hr/ManualHrIntervals.svelte'
+	  import { normalizeHrSamples } from '$lib/hr/manualIntervals'
+	  import MarkdownNotesModal from '$lib/components/MarkdownNotesModal.svelte'
+	  import { renderMarkdownToHtml } from '$lib/markdown/render'
 
   type CompletedSet = {
     phase_index?: number
@@ -78,12 +80,22 @@
   let editFinishedAt = ''
   let editDurationMinutes: number | null = null
   let editNotes = ''
-  let editRpe: number | null = null
-  let editTags: string[] = []
-  let newTagInput = ''
-  let confirmDeleteSetIdx: number | null = null
-  let searchTerm = ''
-  let dateFilter: 'all' | '7' | '30' = 'all'
+	  let editRpe: number | null = null
+	  let editTags: string[] = []
+	  let newTagInput = ''
+		  let notesModalOpen = false
+		  let notesModalTitle = ''
+		  let notesModalSubtitle = ''
+		  let notesModalStatsMarkdown = ''
+		  let notesModalWorkoutId: string | null = null
+		  let notesModalValue = ''
+		  let notesModalLastSavedValue = ''
+		  let notesModalSaving = false
+		  let notesModalSaveStatus = ''
+		  let notesModalSaveError = ''
+		  let confirmDeleteSetIdx: number | null = null
+		  let searchTerm = ''
+		  let dateFilter: 'all' | '7' | '30' = 'all'
   let visibleItems: CompletedWorkout[] = []
   let selectedTags: string[] = []
   let availableTags: string[] = []
@@ -1317,13 +1329,13 @@
     newTagInput = ''
   }
 
-  const cancelEdit = () => {
-    editingId = null
-    editSets = []
-    editTitle = ''
-    editTags = []
-    newTagInput = ''
-  }
+	  const cancelEdit = () => {
+	    editingId = null
+	    editSets = []
+	    editTitle = ''
+	    editTags = []
+	    newTagInput = ''
+	  }
 
   const addTag = () => {
     const tag = newTagInput.trim()
@@ -1419,17 +1431,108 @@
     return `${sign}${formatShort(abs)}`
   }
 
-  const formatSignedTonnage = (value: number) => {
-    if (!value) return ''
-    const sign = value > 0 ? '+' : '-'
-    const abs = Math.round(Math.abs(value))
-    return `${sign}${abs.toLocaleString()}`
-  }
+	  const formatSignedTonnage = (value: number) => {
+	    if (!value) return ''
+	    const sign = value > 0 ? '+' : '-'
+	    const abs = Math.round(Math.abs(value))
+	    return `${sign}${abs.toLocaleString()}`
+	  }
 
-  const computeHrSharedRange = (
-    srcSamples: { hr: number }[] = [],
-    tgtSamples: { hr: number }[] = []
-  ) => {
+	  const buildNotesSnapshot = (item: CompletedWorkout) => {
+	    const totals = computeTotals(item)
+	    const startedTs = Number(item.started_at ?? item.created_at ?? 0)
+	    const started = Number.isFinite(startedTs) && startedTs > 0 ? new Date(startedTs).toLocaleString() : 'Unknown'
+	    const hr = hrSummary[item.id]
+	    const avgWeight =
+	      totals.avgWeight !== null && totals.avgWeight !== undefined && Number.isFinite(totals.avgWeight)
+	        ? Math.round(totals.avgWeight * 10) / 10
+	        : null
+	    return [
+	      '## Session snapshot',
+	      `- Date: ${started}`,
+	      item.duration_s ? `- Duration: ${formatDuration(item.duration_s)}` : null,
+	      totals.totalWorkSeconds ? `- Work time: ${formatShort(totals.totalWorkSeconds)}` : null,
+	      `- Total reps: ${totals.totalReps}`,
+	      `- Sets: ${totals.totalSets}`,
+	      totals.tonnage ? `- Tonnage: ${Math.round(totals.tonnage).toLocaleString()}` : null,
+	      avgWeight ? `- Avg weight: ${avgWeight}` : null,
+	      item.rpe ? `- Session RPE: ${item.rpe}` : null,
+	      hr ? `- HR: avg ${hr.avgHr ?? '–'} / max ${hr.maxHr ?? '–'} bpm` : null,
+	      item.tags?.length ? `- Tags: ${item.tags.join(', ')}` : null
+	    ]
+	      .filter(Boolean)
+	      .join('\n')
+	  }
+
+	  const openNotesEditor = (item: CompletedWorkout) => {
+	    const isEditingThis = editingId === item.id
+	    notesModalWorkoutId = item.id
+	    notesModalTitle = (isEditingThis ? editTitle : item.title) || item.title || 'Workout'
+	    notesModalSubtitle = formatDate(item.started_at || item.created_at)
+	    notesModalStatsMarkdown = buildNotesSnapshot(
+	      isEditingThis ? { ...item, sets: editSets, rpe: editRpe, tags: editTags } : item
+	    )
+	    notesModalValue = isEditingThis ? editNotes : (item.notes ?? '')
+	    notesModalLastSavedValue = item.notes ?? ''
+	    notesModalSaveStatus = ''
+	    notesModalSaveError = ''
+	    notesModalSaving = false
+	    notesModalOpen = true
+	  }
+
+	  const closeNotesModal = () => {
+	    notesModalOpen = false
+	    notesModalWorkoutId = null
+	    notesModalSaveStatus = ''
+	    notesModalSaveError = ''
+	    notesModalSaving = false
+	  }
+
+	  const handleNotesValueChange = (next: string) => {
+	    notesModalValue = next
+	    notesModalSaveStatus = ''
+	    notesModalSaveError = ''
+	    if (notesModalWorkoutId && notesModalWorkoutId === editingId) {
+	      editNotes = next
+	    }
+	  }
+
+	  const saveNotes = async (nextValue?: string) => {
+	    const id = notesModalWorkoutId
+	    if (!id || notesModalSaving) return
+	    notesModalSaving = true
+	    notesModalSaveStatus = ''
+	    notesModalSaveError = ''
+	    const value = nextValue ?? notesModalValue ?? ''
+
+	    try {
+	      const res = await fetch(`/api/completed-workouts/${id}`, {
+	        method: 'PUT',
+	        headers: { 'Content-Type': 'application/json' },
+	        body: JSON.stringify({ notes: value })
+	      })
+	      const data = await res.json().catch(() => ({}))
+	      if (!res.ok) throw new Error(data?.error ?? 'Failed to save notes')
+
+	      items = items.map((it) => (it.id === id ? { ...it, notes: value } : it))
+	      if (editingId === id) editNotes = value
+	      if (notesModalWorkoutId === id) {
+	        notesModalValue = value
+	        notesModalLastSavedValue = value
+	        notesModalSaveStatus = 'Saved'
+	      }
+	    } catch (err) {
+	      const message = (err as any)?.message ?? 'Save failed'
+	      if (notesModalWorkoutId === id) notesModalSaveError = message
+	    } finally {
+	      if (notesModalWorkoutId === id) notesModalSaving = false
+	    }
+	  }
+
+	  const computeHrSharedRange = (
+	    srcSamples: { hr: number }[] = [],
+	    tgtSamples: { hr: number }[] = []
+	  ) => {
     if (!srcSamples.length || !tgtSamples.length) return null
     const vals = [...srcSamples, ...tgtSamples].map((p) => Number(p.hr)).filter((n) => Number.isFinite(n))
     if (!vals.length) return null
@@ -2878,14 +2981,19 @@
                         placeholder="1-10"
                       />
                     </label>
-                    <label class="notes-field">
-                      <span class="muted small">Notes</span>
-                      <input
-                        type="text"
-                        bind:value={editNotes}
-                        placeholder='e.g., "jerks felt heavy"'
-                      />
-                    </label>
+	                    <label class="notes-field">
+	                      <span class="muted small">Notes</span>
+	                      <div class="notes-field__row">
+	                        <button class="ghost small" type="button" on:click={() => openNotesEditor(item)}>Open editor</button>
+	                      </div>
+	                      {#if editNotes.trim()}
+	                        <div class="notes-field__preview markdown collapsed">
+	                          {@html renderMarkdownToHtml(editNotes)}
+	                        </div>
+	                      {:else}
+	                        <p class="muted tiny">No notes yet.</p>
+	                      {/if}
+	                    </label>
                     <label class="tags-field">
                       <span class="muted small">Tags</span>
                       <div class="tag-editor">
@@ -2914,11 +3022,21 @@
                       </div>
                     </label>
                   </div>
-                {:else}
-                  {#if item.notes}
-                    <p class="muted small">Notes: {item.notes}</p>
-                  {/if}
-                {/if}
+	                {:else}
+	                  {#if item.notes}
+	                    <div class="notes-block">
+	                      <div class="notes-block__head">
+	                        <span class="muted small">Notes</span>
+	                        <button class="ghost small" type="button" on:click={() => openNotesEditor(item)}>
+	                          Edit notes
+	                        </button>
+	                      </div>
+	                      <div class="notes-markdown markdown" class:collapsed={!isExpanded}>
+	                        {@html renderMarkdownToHtml(item.notes ?? '')}
+	                      </div>
+	                    </div>
+	                  {/if}
+	                {/if}
                 {#if editingId === item.id}
                   <div class="sets">
                     <div class="set-grid-labels desktop-only">
@@ -3138,6 +3256,7 @@
                     </div>
 	                    <div class="actions">
 	                      <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
+	                      <button class="ghost" type="button" on:click={() => openNotesEditor(item)}>Notes</button>
 	                      {#if hrSummary[item.id]}
 	                        <button class="ghost" type="button" on:click={() => openIntervalsModal(item)}>Intervals</button>
 	                      {/if}
@@ -3314,6 +3433,7 @@
                 {#if isExpanded}▲{:else}▼{/if}
               </button>
               <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
+              <button class="ghost" type="button" on:click={() => openNotesEditor(item)}>Notes</button>
               <button
                 class="ghost"
                 on:click={() => {
@@ -3472,14 +3592,19 @@
                   placeholder="1-10"
                 />
               </label>
-              <label class="notes-field">
-                <span class="muted small">Notes</span>
-                <input
-                  type="text"
-                  bind:value={editNotes}
-                  placeholder='e.g., "jerks felt heavy"'
-                />
-              </label>
+	              <label class="notes-field">
+	                <span class="muted small">Notes</span>
+	                <div class="notes-field__row">
+	                  <button class="ghost small" type="button" on:click={() => openNotesEditor(item)}>Open editor</button>
+	                </div>
+	                {#if editNotes.trim()}
+	                  <div class="notes-field__preview markdown collapsed">
+	                    {@html renderMarkdownToHtml(editNotes)}
+	                  </div>
+	                {:else}
+	                  <p class="muted tiny">No notes yet.</p>
+	                {/if}
+	              </label>
               <label class="tags-field">
                 <span class="muted small">Tags</span>
                 <div class="tag-editor">
@@ -3508,11 +3633,21 @@
                 </div>
               </label>
             </div>
-          {:else}
-            {#if item.notes}
-              <p class="muted small">Notes: {item.notes}</p>
-            {/if}
-          {/if}
+	          {:else}
+	            {#if item.notes}
+	              <div class="notes-block">
+	                <div class="notes-block__head">
+	                  <span class="muted small">Notes</span>
+		                  <button class="ghost small" type="button" on:click={() => openNotesEditor(item)}>
+		                    Edit notes
+		                  </button>
+	                </div>
+	                <div class="notes-markdown markdown" class:collapsed={!isExpanded}>
+	                  {@html renderMarkdownToHtml(item.notes ?? '')}
+	                </div>
+	              </div>
+	            {/if}
+	          {/if}
           {#if editingId === item.id}
             <div class="sets">
               <div class="set-grid-labels desktop-only">
@@ -3732,6 +3867,7 @@
               </div>
                     <div class="actions">
                       <button class="ghost" on:click={() => startEdit(item)}>Edit</button>
+                      <button class="ghost" type="button" on:click={() => openNotesEditor(item)}>Notes</button>
                       <button
                         class="ghost"
                         on:click={() => {
@@ -4700,11 +4836,26 @@
         {/if}
       </div>
     </div>
-  {/if}
-  <input
-    type="file"
-    accept=".fit,.tcx"
-    class="sr-only"
+	  {/if}
+
+	  <MarkdownNotesModal
+	    open={notesModalOpen}
+	    title={notesModalTitle}
+	    subtitle={notesModalSubtitle}
+	    value={notesModalValue}
+	    statsMarkdown={notesModalStatsMarkdown}
+	    saving={notesModalSaving}
+	    saveStatus={notesModalSaveStatus}
+	    saveError={notesModalSaveError}
+	    saveDisabled={!notesModalWorkoutId || notesModalValue === notesModalLastSavedValue}
+	    on:close={closeNotesModal}
+	    on:valueChange={(e) => handleNotesValueChange(e.detail)}
+	    on:save={(e) => saveNotes(e.detail)}
+	  />
+	  <input
+	    type="file"
+	    accept=".fit,.tcx"
+	    class="sr-only"
     bind:this={fileInputEl}
     on:change={(e) => {
       const file = e.currentTarget.files?.[0]
@@ -5373,13 +5524,106 @@
     background: var(--color-surface-1);
     color: var(--color-text-primary);
   }
-  .notes-field input {
-    min-width: 240px;
-  }
-  .toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
+	  .notes-field__row {
+	    display: flex;
+	    align-items: center;
+	    gap: 0.5rem;
+	    flex-wrap: wrap;
+	  }
+	  .notes-field__preview {
+	    margin-top: 0.35rem;
+	    border: 1px solid var(--color-border);
+	    border-radius: 12px;
+	    background: color-mix(in srgb, var(--color-surface-1) 75%, transparent);
+	    padding: 0.6rem 0.7rem;
+	    font-size: 0.95rem;
+	    line-height: 1.35;
+	  }
+	  .notes-block {
+	    border: 1px solid var(--color-border);
+	    border-radius: 12px;
+	    background: color-mix(in srgb, var(--color-surface-1) 72%, transparent);
+	    padding: 0.7rem 0.8rem;
+	    font-size: 0.95rem;
+	    line-height: 1.35;
+	  }
+	  .notes-block__head {
+	    display: flex;
+	    align-items: center;
+	    justify-content: space-between;
+	    gap: 0.5rem;
+	    margin-bottom: 0.35rem;
+	  }
+	  .notes-markdown.collapsed,
+	  .notes-field__preview.collapsed {
+	    max-height: 110px;
+	    overflow: hidden;
+	    position: relative;
+	  }
+	  .notes-markdown.collapsed::after,
+	  .notes-field__preview.collapsed::after {
+	    content: '';
+	    position: absolute;
+	    left: 0;
+	    right: 0;
+	    bottom: 0;
+	    height: 38px;
+	    background: linear-gradient(
+	      to bottom,
+	      transparent,
+	      color-mix(in srgb, var(--color-surface-1) 90%, transparent)
+	    );
+	  }
+	  .markdown :global(p) {
+	    margin: 0.35rem 0;
+	  }
+	  .markdown :global(ul),
+	  .markdown :global(ol) {
+	    margin: 0.35rem 0 0.5rem;
+	    padding-left: 1.25rem;
+	  }
+	  .markdown :global(li) {
+	    margin: 0.2rem 0;
+	  }
+	  .markdown :global(code) {
+	    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+	    font-size: 0.92em;
+	    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+	    border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+	    padding: 0.1rem 0.35rem;
+	    border-radius: 8px;
+	  }
+	  .markdown :global(pre) {
+	    background: color-mix(in srgb, var(--color-surface-2) 85%, transparent);
+	    border: 1px solid var(--color-border);
+	    border-radius: 12px;
+	    padding: 0.65rem 0.75rem;
+	    overflow: auto;
+	  }
+	  .markdown :global(pre code) {
+	    background: transparent;
+	    border: none;
+	    padding: 0;
+	  }
+	  .markdown :global(blockquote) {
+	    margin: 0.6rem 0;
+	    border-left: 3px solid color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+	    padding-left: 0.7rem;
+	    opacity: 0.95;
+	  }
+	  .markdown :global(a) {
+	    color: var(--color-accent);
+	    text-decoration: underline;
+	    text-underline-offset: 2px;
+	  }
+	  .markdown :global(input[type='checkbox']) {
+	    accent-color: var(--color-accent);
+	    transform: translateY(1px);
+	  }
+	  .toolbar {
+	    display: flex;
+	    flex-wrap: wrap;
+	    gap: 0.75rem;
     align-items: center;
     margin-bottom: 0.25rem;
   }

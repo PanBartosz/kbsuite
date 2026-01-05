@@ -1512,7 +1512,7 @@
     on:click={closeEdit}
     on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeEdit()}
   ></div>
-  <div class="edit-modal" use:modal={{ onClose: closeEdit }}>
+	  <div class="edit-modal" use:modal={{ onClose: closeEdit, closeOnEscape: !($settings.editor?.vimMode ?? false) }}>
       <header>
         <h3>{editId ? 'Edit planned workout' : 'Add planned workout'}</h3>
         <button class="ghost" on:click={closeEdit} aria-label="Close">✕</button>

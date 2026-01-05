@@ -12,5 +12,6 @@ declare global {
 
 declare module 'monaco-editor/esm/vs/editor/editor.api';
 declare module 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution';
+declare module 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution';
 
 export {};

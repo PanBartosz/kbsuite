@@ -1,7 +1,8 @@
-<script lang="ts">
-  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte'
-  import Ajv from 'ajv'
-  import schema from '$lib/timer/config/workout-schema.json'
+	<script lang="ts">
+	  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte'
+	  import Ajv from 'ajv'
+	  import schema from '$lib/timer/config/workout-schema.json'
+	  import { settings } from '$lib/stores/settings'
 
   export let title = 'Configuration (YAML)'
   export let value = ''
@@ -21,17 +22,22 @@
   const dispatch = createEventDispatcher()
   const emit = (event: string, detail?: any) => dispatch(event, detail)
 
-  let monacoContainer: HTMLDivElement | null = null
-  let editor: any = null
-  let monacoModel: any = null
-  let monacoReady = false
-  let monacoError: string | null = null
-  let disposeFns: (() => void)[] = []
-  let lastEmitted = value
-  let schemaIssues: string[] = []
+	  let monacoContainer: HTMLDivElement | null = null
+	  let vimStatusEl: HTMLDivElement | null = null
+	  let editor: any = null
+	  let monacoModel: any = null
+	  let monacoReady = false
+	  let monacoError: string | null = null
+	  let disposeFns: (() => void)[] = []
+	  let vimMode: any = null
+	  let vimEnabled = false
+	  let lastEmitted = value
+	  let schemaIssues: string[] = []
 
-  const ajv = new Ajv({ allErrors: true, strict: false })
-  const validateSchema = ajv.compile(schema as any)
+	  $: vimEnabled = $settings.editor?.vimMode ?? false
+
+	  const ajv = new Ajv({ allErrors: true, strict: false })
+	  const validateSchema = ajv.compile(schema as any)
   const formatAjvError = (err: any) => {
     const path = err?.instancePath || err?.schemaPath || '/'
     let message = err?.message ?? 'Schema validation failed'
@@ -58,21 +64,46 @@
     return `${mins}m ${secs}s`
   }
 
-  const destroyMonaco = () => {
-    disposeFns.forEach((fn) => {
-      try {
-        fn()
+	  const destroyMonaco = () => {
+	    disposeFns.forEach((fn) => {
+	      try {
+	        fn()
       } catch {
         // ignore
       }
-    })
-    disposeFns = []
-    if (editor?.dispose) editor.dispose()
-    if (monacoModel?.dispose) monacoModel.dispose()
-    editor = null
-    monacoModel = null
-    monacoReady = false
-  }
+	    })
+	    disposeFns = []
+	    if (vimMode?.dispose) vimMode.dispose()
+	    vimMode = null
+	    if (vimStatusEl) vimStatusEl.textContent = ''
+	    if (editor?.dispose) editor.dispose()
+	    if (monacoModel?.dispose) monacoModel.dispose()
+	    editor = null
+	    monacoModel = null
+	    monacoReady = false
+	  }
+
+	  const initVim = async () => {
+	    if (!vimEnabled) return
+	    if (!editor || !vimStatusEl || vimMode) return
+	    try {
+	      const mod: any = await import('monaco-vim')
+	      if (typeof mod?.initVimMode !== 'function') return
+	      vimMode = mod.initVimMode(editor, vimStatusEl)
+	    } catch {
+	      // ignore
+	    }
+	  }
+
+	  const syncVim = () => {
+	    if (!vimEnabled) {
+	      if (vimMode?.dispose) vimMode.dispose()
+	      vimMode = null
+	      if (vimStatusEl) vimStatusEl.textContent = ''
+	      return
+	    }
+	    initVim()
+	  }
 
   onDestroy(() => {
     destroyMonaco()
@@ -156,23 +187,25 @@
         }
       })
 
-      editor = monacoEditor.create(monacoContainer!, {
-        model: monacoModel,
-        language: 'yaml',
-        minimap: { enabled: false },
+	      editor = monacoEditor.create(monacoContainer!, {
+	        model: monacoModel,
+	        language: 'yaml',
+	        minimap: { enabled: false },
         fontSize: 14,
         lineNumbers: 'on',
         automaticLayout: true,
         scrollBeyondLastLine: false,
         renderWhitespace: 'selection',
-        theme: 'kb-theme',
-        quickSuggestions: true
-      })
+	        theme: 'kb-theme',
+	        quickSuggestions: true
+	      })
 
-      const d2 = editor.onDidChangeModelContent(() => {
-        const next = monacoModel.getValue()
-        if (next === lastEmitted) return
-        lastEmitted = next
+	      syncVim()
+
+	      const d2 = editor.onDidChangeModelContent(() => {
+	        const next = monacoModel.getValue()
+	        if (next === lastEmitted) return
+	        lastEmitted = next
         emit('valueChange', next)
         runValidation()
       })
@@ -181,9 +214,9 @@
         d1.dispose.bind(d1),
         d2.dispose.bind(d2)
       ].filter(Boolean)
-      monacoReady = true
-      monacoError = null
-    } catch (error) {
+	      monacoReady = true
+	      monacoError = null
+	    } catch (error) {
       const err: any = error
       console.warn('Failed to init Monaco YAML editor', err)
       monacoError = err?.message ?? 'Failed to load editor'
@@ -192,14 +225,19 @@
     }
   })
 
-  $: if (monacoReady && monacoModel) {
-    const current = monacoModel.getValue()
-    if (value !== current) {
-      monacoModel.setValue(value ?? '')
-      lastEmitted = value ?? ''
-    }
-  }
-</script>
+	  $: if (monacoReady && monacoModel) {
+	    const current = monacoModel.getValue()
+	    if (value !== current) {
+	      monacoModel.setValue(value ?? '')
+	      lastEmitted = value ?? ''
+	    }
+	  }
+
+	  $: if (monacoReady) {
+	    vimEnabled && vimEnabled
+	    syncVim()
+	  }
+	</script>
 
 <section class="config-editor">
   <div class="config-editor__header">
@@ -271,9 +309,9 @@
       </div>
     {/if}
   </div>
-  <div class="config-editor__body">
-    <div class="monaco-shell" class:hidden={!monacoReady} bind:this={monacoContainer}></div>
-    {#if !monacoReady}
+	  <div class="config-editor__body">
+	    <div class="monaco-shell" class:hidden={!monacoReady} bind:this={monacoContainer}></div>
+	    {#if !monacoReady}
       <textarea
         class:has-error={!!parseError}
         bind:value={value}
@@ -284,12 +322,13 @@
       {#if monacoError}
         <p class="status status--warning">Editor fallback: {monacoError}</p>
       {/if}
-    {/if}
-    <div class="config-editor__status">
-      {#if parseError}
-        <p class="status status--error">
-          Parse error: {parseError.message}
-        </p>
+	    {/if}
+	    <div class="config-editor__status">
+	      <div class="vim-status" hidden={!vimEnabled} bind:this={vimStatusEl}></div>
+	      {#if parseError}
+	        <p class="status status--error">
+	          Parse error: {parseError.message}
+	        </p>
       {:else if schemaIssues.length}
         <div class="status status--pending">
           <p class="status">Validation issues:</p>

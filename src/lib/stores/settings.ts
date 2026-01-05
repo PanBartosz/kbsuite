@@ -1,6 +1,7 @@
 import { browser } from '$app/environment'
 import { writable } from 'svelte/store'
 import { defaultInsightsPrompt } from '$lib/ai/prompts'
+import { defaultNotesTemplates, type NotesTemplate } from '$lib/notes/templates'
 
 export type ThemeOption = 'dark' | 'light' | 'vibrant' | 'neon' | 'midnight' | 'sand'
 
@@ -8,6 +9,10 @@ interface SettingsState {
   theme: ThemeOption
   openAiKey: string
   aiInsightsPrompt: string
+  editor: {
+    vimMode: boolean
+    notesTemplates: NotesTemplate[]
+  }
   timer: {
     ttsEnabled: boolean
     enableMetronome: boolean
@@ -35,6 +40,7 @@ interface SettingsState {
 const themeKey = 'gs_ai_timer_theme'
 const apiKeyKey = 'gs_ai_timer_openai_key'
 const aiInsightsKey = 'gs_ai_timer_ai_insights_prompt'
+const editorKey = 'gs_ai_timer_settings_editor'
 const timerKey = 'gs_ai_timer_settings_timer'
 const counterKey = 'gs_ai_timer_settings_counter'
 
@@ -54,6 +60,7 @@ const defaultState = (): SettingsState => ({
   theme: 'dark',
   openAiKey: '',
   aiInsightsPrompt: defaultInsightsPrompt,
+  editor: { vimMode: false, notesTemplates: defaultNotesTemplates() },
   timer: { ttsEnabled: false, enableMetronome: false, notificationsEnabled: false, audioEnabled: true, openAiVoice: 'alloy', autoOpenSummaryOnComplete: true },
   counter: {
     lowFpsMode: false,
@@ -90,15 +97,38 @@ const loadSettings = (): SettingsState => {
       // backward compat with prior key, if present
       window.localStorage.getItem('gs_ai_timer_ai_prompt') ??
       defaultInsightsPrompt
+    const editorRaw = window.localStorage.getItem(editorKey)
     const timerRaw = window.localStorage.getItem(timerKey)
     const counterRaw = window.localStorage.getItem(counterKey)
+    const editor = editorRaw
+      ? { ...defaultState().editor, ...JSON.parse(editorRaw) }
+      : { ...defaultState().editor }
+    // Migration from older per-modal vim toggle (History notes)
+    if (!editorRaw) {
+      const legacyVim = window.localStorage.getItem('kb_notes_vim')
+      if (legacyVim === '1') editor.vimMode = true
+      if (legacyVim === '0') editor.vimMode = false
+    }
+    if (!Array.isArray(editor.notesTemplates) || !editor.notesTemplates.length) {
+      editor.notesTemplates = defaultNotesTemplates()
+    } else {
+      editor.notesTemplates = editor.notesTemplates
+        .filter((t: any) => t && typeof t === 'object')
+        .map((t: any) => ({
+          id: String(t.id ?? '').trim(),
+          label: String(t.label ?? '').trim(),
+          body: String(t.body ?? '')
+        }))
+        .filter((t: NotesTemplate) => t.id && t.label)
+      if (!editor.notesTemplates.length) editor.notesTemplates = defaultNotesTemplates()
+    }
     const timer = timerRaw
       ? { ...defaultState().timer, ...JSON.parse(timerRaw) }
       : { ...defaultState().timer }
     const counter = counterRaw
       ? { ...defaultState().counter, ...JSON.parse(counterRaw) }
       : { ...defaultState().counter }
-    return { theme, openAiKey, aiInsightsPrompt, timer, counter }
+    return { theme, openAiKey, aiInsightsPrompt, editor, timer, counter }
   } catch {
     return defaultState()
   }
@@ -123,6 +153,7 @@ if (browser) {
       } else {
         window.localStorage.removeItem(aiInsightsKey)
       }
+      window.localStorage.setItem(editorKey, JSON.stringify(value.editor))
       window.localStorage.setItem(timerKey, JSON.stringify(value.timer))
       window.localStorage.setItem(counterKey, JSON.stringify(value.counter))
       document.documentElement.setAttribute('data-theme', value.theme)
@@ -157,6 +188,7 @@ if (browser) {
           return {
             ...server,
             ...current,
+            editor: { ...(server.editor ?? {}), ...(current.editor ?? {}) },
             timer: { ...(server.timer ?? {}), ...(current.timer ?? {}) },
             counter: { ...(server.counter ?? {}), ...(current.counter ?? {}) },
             openAiKey: current.openAiKey // keep local only
@@ -178,6 +210,9 @@ export const setTimerSettings = (patch: Partial<SettingsState['timer']>) =>
 
 export const setCounterSettings = (patch: Partial<SettingsState['counter']>) =>
   settings.update((current) => ({ ...current, counter: { ...current.counter, ...patch } }))
+
+export const setEditorSettings = (patch: Partial<SettingsState['editor']>) =>
+  settings.update((current) => ({ ...current, editor: { ...current.editor, ...patch } }))
 
 export const settingsModalOpen = writable(false)
 export const openSettingsModal = () => settingsModalOpen.set(true)

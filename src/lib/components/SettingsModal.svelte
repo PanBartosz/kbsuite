@@ -6,11 +6,13 @@
     setSettings,
     setTimerSettings,
     setCounterSettings,
+    setEditorSettings,
     settingsModalOpen,
     type ThemeOption
   } from '$lib/stores/settings'
   import { modal } from '$lib/actions/modal'
   import { getVoiceOptions } from '$lib/counter/audio/voicePack'
+  import { defaultNotesTemplates, type NotesTemplate } from '$lib/notes/templates'
 
   const dispatch = createEventDispatcher()
 
@@ -51,7 +53,31 @@
   let localTheme: ThemeOption = 'dark'
   let localTimer = { ...($settings.timer ?? {}) }
   let localCounter = { ...defaultCounter, ...$settings.counter }
+  let localEditor: { vimMode: boolean; notesTemplates: NotesTemplate[] } = {
+    vimMode: false,
+    notesTemplates: defaultNotesTemplates()
+  }
+  let templateSelectedId = 'kb_comp'
   let wasOpen = false
+
+  const cloneTemplates = (templates: NotesTemplate[] = []): NotesTemplate[] =>
+    templates.map((t) => ({ id: String(t.id ?? ''), label: String(t.label ?? ''), body: String(t.body ?? '') }))
+
+  const pickValidTemplateId = (templates: NotesTemplate[], desired: string) => {
+    const id = String(desired ?? '').trim()
+    if (id && templates.some((t) => t.id === id)) return id
+    return templates[0]?.id ?? 'kb_comp'
+  }
+
+  const createId = () => {
+    try {
+      const uuid = (globalThis as any)?.crypto?.randomUUID
+      if (typeof uuid === 'function') return uuid.call((globalThis as any).crypto)
+    } catch {
+      // ignore
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  }
 
   const snapshotFromStore = () => {
     localKey = ($settings.openAiKey ?? '').toString()
@@ -59,6 +85,12 @@
     localTheme = ($settings.theme as ThemeOption) ?? 'dark'
     localTimer = { ...($settings.timer ?? {}) }
     localCounter = { ...defaultCounter, ...($settings.counter ?? {}) }
+    const storeEditor = ($settings.editor ?? {}) as any
+    const templates = Array.isArray(storeEditor?.notesTemplates) && storeEditor.notesTemplates.length
+      ? cloneTemplates(storeEditor.notesTemplates)
+      : defaultNotesTemplates()
+    localEditor = { vimMode: !!storeEditor?.vimMode, notesTemplates: templates }
+    templateSelectedId = pickValidTemplateId(localEditor.notesTemplates, templateSelectedId)
   }
 
   $: if ($settingsModalOpen && !wasOpen) {
@@ -72,10 +104,48 @@
     localCounter = { ...defaultCounter }
   }
 
+  let selectedTemplate: NotesTemplate | null = null
+  $: selectedTemplate = localEditor.notesTemplates.find((t) => t.id === templateSelectedId) ?? null
+
+  const updateSelectedTemplate = (patch: Partial<NotesTemplate>) => {
+    const id = templateSelectedId
+    localEditor = {
+      ...localEditor,
+      notesTemplates: localEditor.notesTemplates.map((t) => (t.id === id ? { ...t, ...patch } : t))
+    }
+  }
+
+  const addNotesTemplate = () => {
+    const id = `tmpl-${createId()}`
+    const next: NotesTemplate = { id, label: 'New template', body: '' }
+    localEditor = { ...localEditor, notesTemplates: [...localEditor.notesTemplates, next] }
+    templateSelectedId = id
+  }
+
+  const deleteNotesTemplate = () => {
+    if (!templateSelectedId) return
+    if (localEditor.notesTemplates.length <= 1) return
+    localEditor = { ...localEditor, notesTemplates: localEditor.notesTemplates.filter((t) => t.id !== templateSelectedId) }
+    templateSelectedId = pickValidTemplateId(localEditor.notesTemplates, '')
+  }
+
+  const restoreDefaultTemplates = () => {
+    localEditor = { ...localEditor, notesTemplates: defaultNotesTemplates() }
+    templateSelectedId = pickValidTemplateId(localEditor.notesTemplates, 'kb_comp')
+  }
+
   const handleSave = () => {
+    let cleanedTemplates = cloneTemplates(localEditor.notesTemplates)
+      .map((t) => ({ ...t, id: t.id.trim(), label: t.label.trim(), body: t.body ?? '' }))
+      .filter((t) => t.id && t.label)
+    if (!cleanedTemplates.length) cleanedTemplates = defaultNotesTemplates()
     setSettings({ openAiKey: localKey.trim(), aiInsightsPrompt: localPrompt.trim(), theme: localTheme })
     setTimerSettings({ ...localTimer })
     setCounterSettings({ ...localCounter })
+    setEditorSettings({
+      vimMode: !!localEditor.vimMode,
+      notesTemplates: cleanedTemplates
+    })
     closeSettingsModal()
     dispatch('saved')
   }
@@ -137,6 +207,61 @@
         ></textarea>
         <small>Used only for insights; workout generation keeps its built-in prompt.</small>
       </label>
+
+      <div class="group">
+        <p class="group__title">Editor settings</p>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={localEditor.vimMode} />
+          <span>Vim keybindings in editors (Markdown + YAML)</span>
+        </label>
+
+        <div class="templates">
+          <div class="templates__head">
+            <p class="templates__title">Workout Journal templates</p>
+            <div class="templates__actions">
+              <button class="ghost small" type="button" on:click={addNotesTemplate}>New</button>
+              <button class="ghost small" type="button" on:click={restoreDefaultTemplates}>Restore defaults</button>
+            </div>
+          </div>
+          <label>
+            <span>Template</span>
+            <select bind:value={templateSelectedId}>
+              {#each localEditor.notesTemplates as tmpl}
+                <option value={tmpl.id}>{tmpl.label}</option>
+              {/each}
+            </select>
+          </label>
+          {#if selectedTemplate}
+            <label>
+              <span>Name</span>
+              <input
+                type="text"
+                value={selectedTemplate.label}
+                on:input={(e) => updateSelectedTemplate({ label: e.currentTarget.value })}
+              />
+            </label>
+            <label>
+              <span>Body (Markdown)</span>
+              <textarea
+                rows="10"
+                value={selectedTemplate.body}
+                on:input={(e) => updateSelectedTemplate({ body: e.currentTarget.value })}
+              ></textarea>
+              <small>Used by History → Notes → “Insert template”.</small>
+            </label>
+            <div class="templates__actions-row">
+              <button
+                class="ghost small"
+                type="button"
+                disabled={localEditor.notesTemplates.length <= 1}
+                on:click={deleteNotesTemplate}
+              >
+                Delete template
+              </button>
+            </div>
+          {/if}
+        </div>
+      </div>
 
       <div class="group">
         <p class="group__title">Timer settings</p>
@@ -349,6 +474,10 @@
     color: var(--color-text-primary);
     cursor: pointer;
   }
+  button.small {
+    padding: 0.45rem 0.7rem;
+    font-size: 0.9rem;
+  }
   .ghost {
     background: transparent;
   }
@@ -356,6 +485,38 @@
     background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
     color: var(--color-text-inverse);
     border: none;
+  }
+  button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .templates {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.35rem;
+  }
+  .templates__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .templates__title {
+    margin: 0;
+    font-weight: 700;
+    color: var(--color-text-primary);
+  }
+  .templates__actions {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .templates__actions-row {
+    display: flex;
+    justify-content: flex-end;
   }
   @media (max-width: 720px) {
     .modal {
