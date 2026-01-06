@@ -179,6 +179,7 @@
   let filterHasHr = false
   let sortBy: 'dateDesc' | 'dateAsc' | 'durationDesc' | 'durationAsc' | 'hrDesc' | 'rpeDesc' = 'dateDesc'
   let expanded: Record<string, boolean> = {}
+  let notesExpanded: Record<string, boolean> = {}
   type HrSparkColors = { bg: string; border: string; line: string; avg: string; max: string }
   const defaultSparkColors: HrSparkColors = {
     bg: 'rgba(255,255,255,0.04)',
@@ -313,6 +314,11 @@
   const toggleExpanded = (id: string, state?: boolean) => {
     const next = { ...expanded, [id]: state ?? !expanded[id] }
     expanded = next
+  }
+
+  const toggleNotesExpanded = (id: string, fallbackOpen = false) => {
+    const open = notesExpanded[id] ?? fallbackOpen
+    notesExpanded = { ...notesExpanded, [id]: !open }
   }
 
   const monthLabel = (ts: number) => {
@@ -3024,14 +3030,25 @@
                   </div>
 	                {:else}
 	                  {#if item.notes}
+	                    {@const noteOpen = notesExpanded[item.id] ?? isExpanded}
 	                    <div class="notes-block">
 	                      <div class="notes-block__head">
 	                        <span class="muted small">Notes</span>
-	                        <button class="ghost small" type="button" on:click={() => openNotesEditor(item)}>
-	                          Edit notes
-	                        </button>
+	                        <div class="notes-block__actions">
+	                          <button
+	                            class="ghost small icon-btn"
+	                            type="button"
+	                            aria-label={noteOpen ? 'Collapse notes' : 'Expand notes'}
+	                            on:click={() => toggleNotesExpanded(item.id, isExpanded)}
+	                          >
+	                            {#if noteOpen}▲{:else}▼{/if}
+	                          </button>
+	                          <button class="ghost small" type="button" on:click={() => openNotesEditor(item)}>
+	                            Edit notes
+	                          </button>
+	                        </div>
 	                      </div>
-	                      <div class="notes-markdown markdown" class:collapsed={!isExpanded}>
+	                      <div class="notes-markdown markdown" class:collapsed={!noteOpen}>
 	                        {@html renderMarkdownToHtml(item.notes ?? '')}
 	                      </div>
 	                    </div>
@@ -3633,21 +3650,32 @@
                 </div>
               </label>
             </div>
-	          {:else}
-	            {#if item.notes}
-	              <div class="notes-block">
-	                <div class="notes-block__head">
-	                  <span class="muted small">Notes</span>
-		                  <button class="ghost small" type="button" on:click={() => openNotesEditor(item)}>
-		                    Edit notes
-		                  </button>
-	                </div>
-	                <div class="notes-markdown markdown" class:collapsed={!isExpanded}>
-	                  {@html renderMarkdownToHtml(item.notes ?? '')}
-	                </div>
-	              </div>
-	            {/if}
-	          {/if}
+		          {:else}
+		            {#if item.notes}
+		              {@const noteOpen = notesExpanded[item.id] ?? isExpanded}
+		              <div class="notes-block">
+		                <div class="notes-block__head">
+		                  <span class="muted small">Notes</span>
+		                  <div class="notes-block__actions">
+		                    <button
+		                      class="ghost small icon-btn"
+		                      type="button"
+		                      aria-label={noteOpen ? 'Collapse notes' : 'Expand notes'}
+		                      on:click={() => toggleNotesExpanded(item.id, isExpanded)}
+		                    >
+		                      {#if noteOpen}▲{:else}▼{/if}
+		                    </button>
+		                    <button class="ghost small" type="button" on:click={() => openNotesEditor(item)}>
+		                      Edit notes
+		                    </button>
+		                  </div>
+		                </div>
+		                <div class="notes-markdown markdown" class:collapsed={!noteOpen}>
+		                  {@html renderMarkdownToHtml(item.notes ?? '')}
+		                </div>
+		              </div>
+		            {/if}
+		          {/if}
           {#if editingId === item.id}
             <div class="sets">
               <div class="set-grid-labels desktop-only">
@@ -5547,17 +5575,25 @@
 	    font-size: 0.95rem;
 	    line-height: 1.35;
 	  }
-	  .notes-block__head {
-	    display: flex;
-	    align-items: center;
-	    justify-content: space-between;
-	    gap: 0.5rem;
-	    margin-bottom: 0.35rem;
-	  }
-	  .notes-markdown.collapsed,
-	  .notes-field__preview.collapsed {
-	    max-height: 110px;
-	    overflow: hidden;
+		  .notes-block__head {
+		    display: flex;
+		    align-items: center;
+		    justify-content: space-between;
+		    gap: 0.5rem;
+		    margin-bottom: 0.35rem;
+		  }
+		  .notes-block__actions {
+		    display: inline-flex;
+		    align-items: center;
+		    gap: 0.35rem;
+		  }
+		  .notes-markdown {
+		    display: flow-root;
+		  }
+		  .notes-markdown.collapsed,
+		  .notes-field__preview.collapsed {
+		    max-height: 110px;
+		    overflow: hidden;
 	    position: relative;
 	  }
 	  .notes-markdown.collapsed::after,
