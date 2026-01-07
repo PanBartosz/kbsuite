@@ -2145,15 +2145,22 @@ Rules:
       const item = data.item
       const source = item.yaml_source ?? ''
       const parsed = tryParsePlan(source)
+      const itemTitle =
+        typeof item.title === 'string' ? item.title.trim() : item.title ? String(item.title).trim() : ''
       editorSource = source
       lastAppliedSource = source
       if (!parsed.error && parsed.plan) {
         plan = parsed.plan
-        plan.title = item.title ?? plan.title ?? 'Planned workout'
+        const planTitle = typeof plan.title === 'string' ? plan.title.trim() : ''
+        const resolvedTitle = itemTitle || planTitle || 'Planned workout'
+        plan.title = resolvedTitle
         summaryNeedsFullRebuild = true
+        saveName = resolvedTitle
       }
       selectedWorkoutId = null
-      saveName = item.title ?? 'Planned workout'
+      if (!saveName) {
+        saveName = itemTitle || 'Planned workout'
+      }
       if (!isTimerRunning) {
         timerStatusMessage = 'Timer idle'
         timerError = null

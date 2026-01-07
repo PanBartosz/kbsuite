@@ -28,6 +28,12 @@ const parsePlanJson = (yamlSource?: string | null) => {
   }
 }
 
+const resolveTitle = (providedTitle: any, planJson: any): string => {
+  const fromBody = typeof providedTitle === 'string' ? providedTitle.trim() : ''
+  const fromPlan = typeof planJson?.title === 'string' ? planJson.title.trim() : ''
+  return fromBody || fromPlan || ''
+}
+
 export const GET = async ({ params, cookies }) => {
   const session = ensureSessionUser(cookies.get(COOKIE_NAME))
   cookies.set(COOKIE_NAME, session.token, {
@@ -80,6 +86,7 @@ export const PUT = async ({ params, request, cookies }) => {
   if (!planned_for) return json({ error: 'plannedFor required' }, { status: 400 })
   const yamlSource = typeof yaml_source === 'string' ? yaml_source : ''
   const planJson = parsePlanJson(yamlSource)
+  const resolvedTitle = resolveTitle(title, planJson)
   const tagList = parseTags(tags)
   const db = getDb()
   const now = Date.now()
@@ -100,7 +107,7 @@ export const PUT = async ({ params, request, cookies }) => {
      WHERE id = ?`
   ).run(
     planned_for,
-    title ?? '',
+    resolvedTitle,
     yamlSource,
     planJson ? JSON.stringify(planJson) : null,
     notes ?? '',

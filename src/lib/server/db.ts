@@ -454,6 +454,10 @@ export const clonePlannedToUser = (
   } catch {
     planJson = null
   }
+  const resolvedTitle =
+    (typeof invite?.title === 'string' ? invite.title.trim() : '') ||
+    (typeof planJson?.title === 'string' ? planJson.title.trim() : '') ||
+    ''
   const tags = safeParseTags(invite?.tags)
 
   const id = crypto.randomUUID()
@@ -464,7 +468,7 @@ export const clonePlannedToUser = (
     id,
     targetUserId,
     plannedFor,
-    invite?.title ?? '',
+    resolvedTitle,
     yamlSource,
     planJson ? JSON.stringify(planJson) : null,
     invite?.notes ?? '',

@@ -82,6 +82,10 @@ export const POST = async ({ params, request, cookies }) => {
     parsedJson = null
   }
   parsedJson = parsePlanJson(planned.yaml_source, parsedJson)
+  const resolvedTitle =
+    (typeof planned.title === 'string' ? planned.title.trim() : '') ||
+    (typeof parsedJson?.title === 'string' ? parsedJson.title.trim() : '') ||
+    ''
 
   const now = Date.now()
   const inviteId = crypto.randomUUID()
@@ -95,7 +99,7 @@ export const POST = async ({ params, request, cookies }) => {
     session.userId,
     recipient.id,
     planned.id,
-    planned.title ?? '',
+    resolvedTitle,
     planned.yaml_source ?? '',
     parsedJson ? JSON.stringify(parsedJson) : null,
     plannedForOverride || planned.planned_for || null,
