@@ -30,6 +30,8 @@
 	  let monacoError: string | null = null
 	  let disposeFns: (() => void)[] = []
 	  let vimMode: any = null
+	  let vimInitSeq = 0
+	  let vimInitPromise: Promise<void> | null = null
 	  let vimEnabled = false
 	  let lastEmitted = value
 	  let schemaIssues: string[] = []
@@ -68,11 +70,13 @@
 	    disposeFns.forEach((fn) => {
 	      try {
 	        fn()
-      } catch {
-        // ignore
-      }
+	      } catch {
+	        // ignore
+	      }
 	    })
 	    disposeFns = []
+	    vimInitSeq += 1
+	    vimInitPromise = null
 	    if (vimMode?.dispose) vimMode.dispose()
 	    vimMode = null
 	    if (vimStatusEl) vimStatusEl.textContent = ''
@@ -86,17 +90,29 @@
 	  const initVim = async () => {
 	    if (!vimEnabled) return
 	    if (!editor || !vimStatusEl || vimMode) return
+	    if (vimInitPromise) return
+	    const seq = ++vimInitSeq
 	    try {
-	      const mod: any = await import('monaco-vim')
-	      if (typeof mod?.initVimMode !== 'function') return
-	      vimMode = mod.initVimMode(editor, vimStatusEl)
+	      vimInitPromise = import('monaco-vim').then((mod: any) => {
+	        if (seq !== vimInitSeq) return
+	        if (!vimEnabled) return
+	        if (!editor || !vimStatusEl || vimMode) return
+	        if (typeof mod?.initVimMode !== 'function') return
+	        vimStatusEl.textContent = ''
+	        vimMode = mod.initVimMode(editor, vimStatusEl)
+	      })
+	      await vimInitPromise
 	    } catch {
 	      // ignore
+	    } finally {
+	      if (seq === vimInitSeq) vimInitPromise = null
 	    }
 	  }
 
 	  const syncVim = () => {
 	    if (!vimEnabled) {
+	      vimInitSeq += 1
+	      vimInitPromise = null
 	      if (vimMode?.dispose) vimMode.dispose()
 	      vimMode = null
 	      if (vimStatusEl) vimStatusEl.textContent = ''
