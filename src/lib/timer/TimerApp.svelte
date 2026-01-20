@@ -3885,6 +3885,28 @@ Rules:
     cursor: not-allowed;
   }
 
+  button.danger {
+    background: transparent;
+    color: var(--color-danger);
+    border: 1px solid var(--color-danger);
+    border-radius: 999px;
+    font-weight: 600;
+    padding: 0.7rem 1.5rem;
+    cursor: pointer;
+    transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+  }
+
+  button.danger:hover {
+    color: var(--color-text-inverse);
+    border-color: var(--color-danger-soft);
+    background: color-mix(in srgb, var(--color-danger) 22%, transparent);
+  }
+
+  button.danger:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
   .layout {
     display: flex;
     flex-direction: column;
