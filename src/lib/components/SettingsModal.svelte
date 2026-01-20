@@ -273,6 +273,11 @@
             {/each}
           </select>
         </label>
+        <label>
+          <span>Skip → Work delay (seconds)</span>
+          <input type="number" min="0" step="1" bind:value={localTimer.skipDelaySeconds} />
+          <small>Applies only when you press Skip and the next phase is Work. Can be overridden per-workout in YAML.</small>
+        </label>
         <label class="toggle">
           <input type="checkbox" bind:checked={localTimer.audioEnabled} />
           <span>Audio cues enabled</span>

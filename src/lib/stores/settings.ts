@@ -20,6 +20,7 @@ interface SettingsState {
     audioEnabled: boolean
     openAiVoice: string
     autoOpenSummaryOnComplete: boolean
+    skipDelaySeconds: number
   }
   counter: {
     lowFpsMode: boolean
@@ -61,7 +62,7 @@ const defaultState = (): SettingsState => ({
   openAiKey: '',
   aiInsightsPrompt: defaultInsightsPrompt,
   editor: { vimMode: false, notesTemplates: defaultNotesTemplates() },
-  timer: { ttsEnabled: false, enableMetronome: false, notificationsEnabled: false, audioEnabled: true, openAiVoice: 'alloy', autoOpenSummaryOnComplete: true },
+  timer: { ttsEnabled: false, enableMetronome: false, notificationsEnabled: false, audioEnabled: true, openAiVoice: 'alloy', autoOpenSummaryOnComplete: true, skipDelaySeconds: 0 },
   counter: {
     lowFpsMode: false,
     voiceEnabled: false,

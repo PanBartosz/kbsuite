@@ -88,6 +88,13 @@ import '$lib/timer/app.css'
     const defaultRepCounterMode = normalizeRepCounterMode(candidate.defaultRepCounterMode)
     const enableRepCounter = normalizeRepCounterScope(candidate.enableRepCounter)
     const enableModeChanging = normalizeBoolean(candidate.enableModeChanging, true)
+    const skipDelaySecondsRaw = candidate.skipDelaySeconds
+    const skipDelaySeconds =
+      skipDelaySecondsRaw === undefined ||
+      skipDelaySecondsRaw === null ||
+      skipDelaySecondsRaw === ''
+        ? undefined
+        : coerceSeconds(skipDelaySecondsRaw)
 
     const rounds = candidate.rounds.map((round, roundIndex) => {
       if (!round || typeof round !== 'object') {
@@ -153,6 +160,7 @@ import '$lib/timer/app.css'
       description,
       preStartSeconds,
       preStartLabel,
+      skipDelaySeconds,
       rounds,
       defaultRepCounterMode,
       enableRepCounter,
@@ -474,6 +482,18 @@ let plan =
     savedDeleteError = ''
     savedDeleteStatus = ''
   }
+  let stopConfirmOpen = false
+  const openStopConfirm = () => {
+    if (!isTimerRunning && !isTimerPaused) return
+    stopConfirmOpen = true
+  }
+  const closeStopConfirm = () => {
+    stopConfirmOpen = false
+  }
+  const confirmStopConfirm = () => {
+    stopConfirmOpen = false
+    stopTimer()
+  }
   let saveName = ''
   let selectedWorkoutId = null
   let fileInputEl
@@ -525,6 +545,10 @@ let plan =
   let latestRepCountValue = null
   let unsubscribeLatestRep = null
   let pendingSkipReset = false
+  let skipDelayActive = false
+  let skipDelayRemainingSeconds = 0
+  let skipDelayEndsAtMs = null
+  let skipDelayHandle = null
   let lastFinalizedPhaseIndex = -1
   let autoOpenedSummaryOnComplete = false
   let sessionStartMs = null
@@ -559,9 +583,50 @@ let plan =
     stopTimer()
   }
 
+  const resolveSkipDelaySeconds = () => {
+    const yamlValue = plan?.skipDelaySeconds
+    if (yamlValue !== undefined && yamlValue !== null) {
+      const numeric = Number(yamlValue)
+      return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0
+    }
+    const globalValue = $settings.timer?.skipDelaySeconds
+    const numeric = Number(globalValue)
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0
+  }
+
+  const clearSkipDelay = () => {
+    skipDelayActive = false
+    skipDelayRemainingSeconds = 0
+    skipDelayEndsAtMs = null
+    if (skipDelayHandle) {
+      clearInterval(skipDelayHandle)
+      skipDelayHandle = null
+    }
+  }
+
+  const beginSkipDelay = (seconds) => {
+    const duration = Math.max(Math.round(Number(seconds) || 0), 0)
+    if (duration <= 0) return false
+    clearSkipDelay()
+    skipDelayActive = true
+    skipDelayRemainingSeconds = duration
+    skipDelayEndsAtMs = Date.now() + duration * 1000
+    skipDelayHandle = setInterval(() => {
+      if (!skipDelayActive || !skipDelayEndsAtMs) return
+      const remainingMs = skipDelayEndsAtMs - Date.now()
+      const remainingSeconds = Math.max(Math.ceil(remainingMs / 1000), 0)
+      skipDelayRemainingSeconds = remainingSeconds
+      if (remainingSeconds <= 0) {
+        clearSkipDelay()
+        resumeTimer()
+      }
+    }, 200)
+    return true
+  }
+
   export function getState() {
     return {
-      status: timerStatusMessage,
+      status: displayStatusMessage,
       isRunning: isTimerRunning,
       isPaused: isTimerPaused,
       activePhase,
@@ -577,7 +642,7 @@ let plan =
 
   const emitState = () => {
     dispatch('state', {
-      status: timerStatusMessage,
+      status: displayStatusMessage,
       isRunning: isTimerRunning,
       isPaused: isTimerPaused,
       activePhase,
@@ -1039,6 +1104,7 @@ let plan =
 
   onDestroy(() => {
     stopAllSpeech()
+    clearSkipDelay()
     ttsStatusMessage = ''
     if (unsubscribeLatestRep) {
       unsubscribeLatestRep()
@@ -1169,7 +1235,7 @@ let plan =
   }
   $: if (!enableMetronome) {
     stopMetronomePlayback()
-  } else if (enableMetronome && isTimerRunning && activePhase?.type === 'work') {
+  } else if (enableMetronome && isTimerRunning && !skipDelayActive && activePhase?.type === 'work') {
     startMetronomeForPhase(activePhase, phaseRemainingMs / 1000)
   }
   $: if (!isTimerRunning && !isTimerPaused) {
@@ -1212,7 +1278,13 @@ let plan =
       : null
   $: canStartTimer = !parseError && timeline.length > 0 && !isTimerRunning && !isTimerPaused
   $: canSkipPhase =
-    (isTimerRunning || isTimerPaused) && activePhaseIndex >= 0 && activePhaseIndex < timeline.length - 1
+    (isTimerRunning || isTimerPaused) &&
+    activePhaseIndex >= 0 &&
+    activePhaseIndex < timeline.length - 1 &&
+    !skipDelayActive
+  $: displayStatusMessage = skipDelayActive
+    ? `Next work in ${skipDelayRemainingSeconds}s…`
+    : timerStatusMessage
 
   let timerWorker
   let isTimerRunning = false
@@ -1225,6 +1297,7 @@ let plan =
   let elapsedMs = 0
   let totalDurationMs = timelineDuration * 1000
   let timerStatusMessage = 'Timer idle'
+  let displayStatusMessage = timerStatusMessage
   let timerError = null
   let showYamlHelp = false
   let libraryModalOpen = false
@@ -1299,12 +1372,12 @@ let plan =
             }
           }
         }
-        if (notificationsEnabled && activePhase) {
+        if (!skipDelayActive && notificationsEnabled && activePhase) {
           maybeNotifyPhase(activePhase)
         }
         stopAllSpeech()
 
-        if (enableMetronome) {
+        if (enableMetronome && !skipDelayActive) {
           const durationSeconds = activePhase?.durationSeconds ?? 0
           startMetronomeForPhase(activePhase, durationSeconds)
         }
@@ -1441,6 +1514,7 @@ let plan =
 
       if (type === 'completed') {
         if (tickId !== lastTickId) return
+        clearSkipDelay()
         if (activePhase && activePhase.type === 'work') {
           finalizeWorkPhase(activePhaseIndex)
         }
@@ -1488,6 +1562,7 @@ let plan =
 
       if (type === 'stopped') {
         if (tickId !== lastTickId) return
+        clearSkipDelay()
         autoOpenedSummaryOnComplete = false
         isTimerRunning = false
         isTimerPaused = false
@@ -1520,6 +1595,7 @@ let plan =
   const startTimer = async () => {
     initWorker()
     if (!timerWorker) return
+    clearSkipDelay()
     autoOpenedSummaryOnComplete = false
     if (parseError) {
       timerError = 'Fix YAML configuration before starting the timer.'
@@ -1576,6 +1652,7 @@ let plan =
 
   const stopTimer = () => {
     if (!timerWorker || (!isTimerRunning && !isTimerPaused)) return
+    clearSkipDelay()
     timerStatusMessage = 'Stopping timer…'
     isTimerRunning = false
     isTimerPaused = false
@@ -1616,6 +1693,7 @@ let plan =
 
   const resumeTimer = () => {
     if (!timerWorker || !isTimerPaused) return
+    clearSkipDelay()
     timerStatusMessage = 'Resuming…'
     isTimerRunning = true
     isTimerPaused = false
@@ -1678,9 +1756,12 @@ let plan =
 
   const skipPhase = () => {
     if (!timerWorker || (!isTimerRunning && !isTimerPaused)) return
+    if (skipDelayActive) return
     if (activePhase && activePhase.type === 'work') {
       finalizeWorkPhase(activePhaseIndex)
     }
+    const delaySeconds = Math.max(Math.round(resolveSkipDelaySeconds()), 0)
+    const shouldDelay = delaySeconds > 0 && isTimerRunning && nextPhase?.type === 'work'
     timerStatusMessage = 'Skipping phase…'
     nextWorkCountdownIndex = null
     workFinishCountdownIndex = null
@@ -1693,6 +1774,12 @@ let plan =
       reason: 'skip'
     })
     timerWorker.postMessage({ type: 'skip' })
+    if (shouldDelay && beginSkipDelay(delaySeconds)) {
+      isTimerRunning = false
+      isTimerPaused = true
+      timerWorker.postMessage({ type: 'pause' })
+      dispatch('pause')
+    }
     emitState()
   }
 
@@ -1703,6 +1790,7 @@ title: string
 description: string (optional, short summary)
 preStartSeconds: number (optional, default 0)
 preStartLabel: string (optional)
+skipDelaySeconds: number (optional, default 0) delay after Skip when next phase is work
 rounds: array of objects
   - id: string (optional)
     label: string (optional)
@@ -2399,7 +2487,7 @@ Rules:
     >
       <div class="timer-panel__status">
         <div class="timer-panel__status-group">
-          <span class="timer-panel__status-pill">{timerStatusMessage}</span>
+          <span class="timer-panel__status-pill">{displayStatusMessage}</span>
           <span class="timer-panel__phase">
             {#if timeline.length}
               {phasePositionLabel}
@@ -2480,7 +2568,7 @@ Rules:
               on:start={startTimer}
               on:pause={pauseTimer}
               on:resume={resumeTimer}
-              on:stop={stopTimer}
+              on:stop={openStopConfirm}
               on:skip={skipPhase}
             />
           {/if}
@@ -2489,6 +2577,23 @@ Rules:
 
       {#if !isFullscreen}
         <PhaseQueue phases={timeline} activeIndex={activePhaseIndex} />
+      {/if}
+      {#if stopConfirmOpen}
+        <div
+          class="modal-backdrop"
+          role="button"
+          tabindex="0"
+          aria-label="Close modal"
+          on:click={closeStopConfirm}
+          on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeStopConfirm()}
+        ></div>
+        <div class="confirm-modal" use:modal={{ onClose: closeStopConfirm }}>
+          <p>Stop the current workout?</p>
+          <div class="confirm-actions">
+            <button class="ghost" type="button" on:click={closeStopConfirm}>Cancel</button>
+            <button class="danger" type="button" on:click={confirmStopConfirm}>Stop</button>
+          </div>
+        </div>
       {/if}
     </section>
 

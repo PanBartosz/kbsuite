@@ -227,7 +227,8 @@ const defaultSettings = () => ({
     enableMetronome: false,
     notificationsEnabled: false,
     audioEnabled: true,
-    openAiVoice: 'alloy'
+    openAiVoice: 'alloy',
+    skipDelaySeconds: 0
   },
   counter: {
     lowFpsMode: false,

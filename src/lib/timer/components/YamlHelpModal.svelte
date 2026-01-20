@@ -42,6 +42,7 @@
         <ul>
           <li><code>preStartSeconds</code> (number, optional, default 0): Countdown before the first set.</li>
           <li><code>preStartLabel</code> (string, optional): Text shown during the pre-start countdown.</li>
+          <li><code>skipDelaySeconds</code> (number, optional): When you press <em>Skip</em> and the next phase is <em>Work</em>, the timer pauses for this many seconds before starting the work interval. Overrides the global setting.</li>
           <li><code>defaultRepCounterMode</code> (string, optional, <code>swing</code> | <code>lockout</code> | <code>disabled</code>, default <code>disabled</code>): Default rep-counter mode applied to sets without an explicit override.</li>
           <li><code>enableRepCounter</code> (string, optional, <code>work</code> | <code>all</code>, default <code>work</code>): Phases where the rep counter should run (<code>work</code> phases only, or every phase).</li>
           <li><code>enableModeChanging</code> (boolean, optional, default <code>true</code>): Allow gesture-based mode changes globally; can be overridden per set.</li>
