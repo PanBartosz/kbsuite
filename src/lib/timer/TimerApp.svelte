@@ -4081,8 +4081,8 @@ Rules:
     top: calc(env(safe-area-inset-top, 0px) + 1rem);
     right: calc(env(safe-area-inset-right, 0px) + 1rem);
     left: auto;
-    width: min(30vw, 420px);
-    max-width: 30vw;
+    width: min(32vw, 480px);
+    max-width: 32vw;
     margin: 0;
     padding: 0;
     z-index: 6;
@@ -4134,8 +4134,8 @@ Rules:
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display) {
     margin: 0;
-    width: min(30vw, 420px);
-    max-width: 30vw;
+    width: min(32vw, 480px);
+    max-width: 32vw;
     margin-left: calc(env(safe-area-inset-left, 0px) + 1rem);
     margin-top: calc(env(safe-area-inset-top, 0px) + 1rem);
     pointer-events: none;
@@ -4222,8 +4222,48 @@ Rules:
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current),
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next) {
-    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
     backdrop-filter: blur(10px);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next) {
+    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
+    border-color: color-mix(in srgb, var(--color-border) 70%, transparent);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current--work) {
+    background: color-mix(in srgb, var(--color-work-bg) 75%, transparent);
+    border-color: color-mix(in srgb, var(--color-work-border) 85%, transparent);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current--rest) {
+    background: color-mix(in srgb, var(--color-rest-bg) 75%, transparent);
+    border-color: color-mix(in srgb, var(--color-rest-border) 85%, transparent);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current--transition),
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current--round-transition) {
+    background: color-mix(in srgb, var(--color-transition-bg) 75%, transparent);
+    border-color: color-mix(in srgb, var(--color-transition-border) 85%, transparent);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current--round-rest) {
+    background: color-mix(in srgb, var(--color-roundrest-bg) 75%, transparent);
+    border-color: color-mix(in srgb, var(--color-roundrest-border) 85%, transparent);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current--prep) {
+    background: color-mix(in srgb, var(--color-roundtransition-bg) 75%, transparent);
+    border-color: color-mix(in srgb, var(--color-accent-hover) 85%, transparent);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current--paused) {
+    background: color-mix(in srgb, var(--color-paused-bg) 75%, transparent);
+    border-color: color-mix(in srgb, var(--color-paused-border) 85%, transparent);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current--idle) {
+    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
+    border-color: color-mix(in srgb, var(--color-border) 70%, transparent);
   }
 
   .timer-panel--fullscreen .timer-panel__status,
