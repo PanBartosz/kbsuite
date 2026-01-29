@@ -528,9 +528,11 @@ let plan =
   let shareMagicString = ''
   let ttsPrefetchAllDone = false
   let enableMetronome = $settings.timer.enableMetronome
+  let enableOverlayBigPictureFullscreen = $settings.timer.enableOverlayBigPictureFullscreen === true
   let timerPanelEl
   let isFullscreenSupported = false
   let isFullscreen = false
+  let fullscreenOverlayActive = false
   let roundEditorOpen = false
   let roundEditorIndex = null
   let roundEditorData = null
@@ -564,7 +566,11 @@ let plan =
   $: if ($settings.timer.notificationsEnabled !== notificationsEnabled) notificationsEnabled = $settings.timer.notificationsEnabled
   $: if ($settings.timer.ttsEnabled !== ttsEnabled) ttsEnabled = $settings.timer.ttsEnabled
   $: if ($settings.timer.enableMetronome !== enableMetronome) enableMetronome = $settings.timer.enableMetronome
+  $: if (($settings.timer.enableOverlayBigPictureFullscreen === true) !== enableOverlayBigPictureFullscreen) {
+    enableOverlayBigPictureFullscreen = $settings.timer.enableOverlayBigPictureFullscreen === true
+  }
   $: if ($settings.timer.openAiVoice && $settings.timer.openAiVoice !== openAiVoice) openAiVoice = $settings.timer.openAiVoice
+  $: fullscreenOverlayActive = Boolean(isFullscreen && showInlineSlot && enableOverlayBigPictureFullscreen)
   $: emitState()
 
   export function start() {
@@ -2484,6 +2490,7 @@ Rules:
       class="timer-panel"
       bind:this={timerPanelEl}
       class:timer-panel--fullscreen={isFullscreen}
+      class:timer-panel--overlay={fullscreenOverlayActive}
     >
       <div class="timer-panel__status">
         <div class="timer-panel__status-group">
@@ -2528,6 +2535,36 @@ Rules:
             </button>
           {/if}
         </div>
+
+        {#if fullscreenOverlayActive}
+          <div class="timer-panel__right-stack">
+            <slot
+              name="hud-right"
+              {activePhase}
+              {nextPhase}
+              {phaseRemainingSeconds}
+              {totalRemainingSeconds}
+              {phaseProgressPercent}
+              {overallProgressPercent}
+              isRunning={isTimerRunning}
+              isPaused={isTimerPaused}
+            />
+
+            {#if !hideControlBar}
+              <ControlBar
+                isRunning={isTimerRunning}
+                isPaused={isTimerPaused}
+                canStart={canStartTimer}
+                canSkip={canSkipPhase}
+                on:start={startTimer}
+                on:pause={pauseTimer}
+                on:resume={resumeTimer}
+                on:stop={openStopConfirm}
+                on:skip={skipPhase}
+              />
+            {/if}
+          </div>
+        {/if}
       </div>
 
       {#if timerError}
@@ -2559,7 +2596,7 @@ Rules:
   </TimerDisplay>
           </div>
 
-          {#if !hideControlBar}
+          {#if !hideControlBar && !fullscreenOverlayActive}
             <ControlBar
               isRunning={isTimerRunning}
               isPaused={isTimerPaused}
@@ -4030,6 +4067,163 @@ Rules:
     grid-template-rows: auto 1fr auto;
     gap: clamp(1.5rem, 4vh, 2.8rem);
     background: color-mix(in srgb, var(--color-surface-deep) 94%, transparent);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay {
+    padding: 0;
+    background: #000;
+    overflow: hidden;
+    display: block;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay .timer-panel__status {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 1rem);
+    right: calc(env(safe-area-inset-right, 0px) + 1rem);
+    left: auto;
+    width: min(30vw, 420px);
+    max-width: 30vw;
+    margin: 0;
+    padding: 0;
+    z-index: 6;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    grid-template-areas: 'group actions' 'stack stack';
+    gap: 0.75rem;
+    align-items: start;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay .timer-inline {
+    padding: 0;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay .timer-panel__phase {
+    display: none;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay .timer-panel__status-group {
+    grid-area: group;
+    justify-content: flex-end;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay .status-actions {
+    grid-area: actions;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay .timer-panel__right-stack {
+    grid-area: stack;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: stretch;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay .timer-panel__right-stack :global(.control-bar) {
+    display: flex !important;
+    flex-direction: column;
+    margin: 0;
+    width: 100%;
+    max-width: none;
+    gap: 0.7rem;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay .timer-panel__right-stack :global(.control-bar__button) {
+    width: 100%;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display) {
+    margin: 0;
+    width: min(30vw, 420px);
+    max-width: 30vw;
+    margin-left: calc(env(safe-area-inset-left, 0px) + 1rem);
+    margin-top: calc(env(safe-area-inset-top, 0px) + 1rem);
+    pointer-events: none;
+    gap: 0.9rem;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__header) {
+    display: none;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__body) {
+    grid-template-columns: 1fr !important;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current) {
+    pointer-events: auto;
+    padding: clamp(1.25rem, 2.5vw, 1.75rem);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__time) {
+    font-size: clamp(3.2rem, 6.5vw, 6rem);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__label) {
+    font-size: clamp(1.05rem, 2.4vw, 1.7rem);
+    min-height: unset;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next) {
+    min-height: unset;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__bars) {
+    position: fixed;
+    left: 50%;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+    transform: translateX(-50%);
+    width: min(55vw, 900px);
+    max-width: 55vw;
+    z-index: 6;
+    pointer-events: none;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot) {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot .rep-badge),
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot .mode-badge) {
+    display: none !important;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot .widget),
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot .session),
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot .video-panel) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot .session) {
+    display: block;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot video),
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot canvas),
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot img),
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot .inline-content) {
+    max-width: none;
+    max-height: none;
+    width: 100%;
+    height: 100%;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot .video-panel) {
+    border: none;
+    border-radius: 0;
+    background: #000;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current),
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next) {
+    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
+    backdrop-filter: blur(10px);
   }
 
   .timer-panel--fullscreen .timer-panel__status,

@@ -228,6 +228,7 @@ const defaultSettings = () => ({
     notificationsEnabled: false,
     audioEnabled: true,
     openAiVoice: 'alloy',
+    enableOverlayBigPictureFullscreen: false,
     skipDelaySeconds: 0
   },
   counter: {

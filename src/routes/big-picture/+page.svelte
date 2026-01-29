@@ -3,6 +3,9 @@
   export const prerender = false
   import TimerApp from '$lib/timer/TimerApp.svelte'
   import CounterWidget from '$lib/counter/CounterWidget.svelte'
+  import HudRepBadge from '$lib/counter/components/HudRepBadge.svelte'
+  import HudRpmBadge from '$lib/counter/components/HudRpmBadge.svelte'
+  import HudModeBadge from '$lib/counter/components/HudModeBadge.svelte'
   import { page } from '$app/stores'
 
   let counterRef: any
@@ -47,6 +50,13 @@
     on:stop={handleStop}
     on:phaseChange={handlePhaseChange}
   >
+    <div slot="hud-right" class="hud-right">
+      <div class="hud-stats-row">
+        <HudRepBadge />
+        <HudRpmBadge />
+      </div>
+      <HudModeBadge />
+    </div>
     <div slot="inline" class="side-counter">
       <CounterWidget bind:this={counterRef} />
     </div>
@@ -74,5 +84,22 @@
   }
   .side-counter :global(.session) {
     grid-template-columns: 1fr;
+  }
+
+  .hud-right {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .hud-stats-row {
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  .hud-stats-row :global(.rep-badge),
+  .hud-stats-row :global(.rpm-badge) {
+    flex: 1;
+    min-width: 0;
   }
 </style>

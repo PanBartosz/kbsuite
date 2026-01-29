@@ -298,6 +298,10 @@
           <input type="checkbox" bind:checked={localTimer.autoOpenSummaryOnComplete} />
           <span>Auto-open summary when workout completes</span>
         </label>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={localTimer.enableOverlayBigPictureFullscreen} />
+          <span>Enable Big Picture overlay in fullscreen</span>
+        </label>
       </div>
 
       <div class="group">

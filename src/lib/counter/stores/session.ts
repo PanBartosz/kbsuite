@@ -3,6 +3,7 @@ import type { DerivedThresholds, LockoutConfig } from '../pose/repCounter'
 import { settings } from '$lib/stores/settings'
 
 export type ExerciseId = 'swing' | 'lockout'
+export type ExerciseMode = ExerciseId | 'disabled'
 
 export interface PoseStats {
   fps: number
@@ -12,7 +13,14 @@ export interface PoseStats {
 }
 
 export const exercise = writable<ExerciseId>('swing')
+export const countingEnabled = writable(true)
+export const gesturesEnabled = writable(true)
+export const effectiveMode = derived(
+  [exercise, countingEnabled],
+  ([$exercise, $countingEnabled]) => ($countingEnabled ? $exercise : 'disabled') as ExerciseMode
+)
 export const repCount = writable(0)
+export const rpm = writable<number | null>(null)
 export const runState = writable<'idle' | 'running' | 'paused'>('idle')
 export const feedback = writable<string | null>(null)
 export const poseStats = writable<PoseStats>({

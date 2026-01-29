@@ -1,12 +1,23 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import type { Pose } from '@tensorflow-models/pose-detection'
-  import { exercise, feedback, poseStats, repCount, runState, thresholds, type ExerciseId } from '../stores/session'
+  import {
+    exercise,
+    feedback,
+    poseStats,
+    repCount,
+    rpm as rpmStore,
+    runState,
+    thresholds,
+    countingEnabled as countingEnabledStore,
+    gesturesEnabled as gesturesEnabledStore,
+    type ExerciseId
+  } from '../stores/session'
   import { PoseClient } from '../pose/poseClient'
   import { drawPose } from '../pose/drawing'
   import { createCounterForExercise, getExerciseOption } from '../exercises/config'
   import type { RepCounter } from '../pose/repCounter'
-import { extractFrameSignals, type FrameSignals } from '../pose/signals'
+  import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   import { initAudio, playRepSound } from '../audio/counterSound'
   import {
     getVoiceOptions,
@@ -41,6 +52,8 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   let lastExerciseId: ExerciseId | null = null
   const gestureEngine = new GestureEngine()
   let lastCount = 0
+  let repTimestamps: number[] = []
+  const RPM_WINDOW_REPS = 5
   const voiceOptions = getVoiceOptions()
   let voiceSelected = $settings.counter.voiceSelected ?? voiceOptions[0]?.id ?? 'alloy'
   let voiceEnabled = $settings.counter.voiceEnabled
@@ -57,6 +70,30 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   const LOCKOUT_HEAD_THRESH = 0.5
   const LOCKOUT_HOLD_MS = 75
 
+  function clearRpm() {
+    repTimestamps = []
+    rpmStore.set(null)
+  }
+
+  function updateRpm(ts: number) {
+    repTimestamps.push(ts)
+    if (repTimestamps.length > RPM_WINDOW_REPS) {
+      repTimestamps.splice(0, repTimestamps.length - RPM_WINDOW_REPS)
+    }
+    if (repTimestamps.length < 2) {
+      rpmStore.set(null)
+      return
+    }
+    const durationMs = repTimestamps[repTimestamps.length - 1] - repTimestamps[0]
+    if (durationMs <= 0) {
+      rpmStore.set(null)
+      return
+    }
+    const intervals = repTimestamps.length - 1
+    const estimate = Math.round((60000 * intervals) / durationMs)
+    rpmStore.set(Number.isFinite(estimate) ? estimate : null)
+  }
+
   $: currentThresholds = $thresholds
   $: currentExercise = getExerciseOption($exercise)
   $: counter = createCounterForExercise(currentExercise.id, currentThresholds)
@@ -65,6 +102,7 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   $: if (currentExercise.id !== lastExerciseId && counter) {
     repCount.set(0)
     lastCount = 0
+    clearRpm()
     counter.reset()
     lastExerciseId = currentExercise.id
     gestureEngine.reset()
@@ -205,6 +243,7 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
     if (update) {
       repCount.set(update.count)
       if (update.count > lastCount) {
+        updateRpm(ts)
         let voiced = false
         if (voiceEnabled && voicePackLoaded && update.count <= voiceMaxNumber) {
           voiced = playNumberFromPack(voiceSelected, update.count)
@@ -295,11 +334,14 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   export const startSession = async () => {
     repCount.set(0)
     lastCount = 0
+    clearRpm()
     counter?.reset()
     feedback.set(null)
     gestureEngine.reset()
     gesturesEnabled = true
     countingEnabled = true
+    gesturesEnabledStore.set(true)
+    countingEnabledStore.set(true)
     overlayMode = $exercise
     lastSendTs = 0
     initAudio()
@@ -318,6 +360,7 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   const resetCount = (message: string | null = null, announce = false) => {
     repCount.set(0)
     lastCount = 0
+    clearRpm()
     counter?.reset()
     feedback.set(message)
     if (announce) {
@@ -332,7 +375,10 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
     runState.set('idle')
     gesturesEnabled = true
     countingEnabled = true
+    gesturesEnabledStore.set(true)
+    countingEnabledStore.set(true)
     overlayMode = $exercise
+    clearRpm()
     stopCamera()
   }
 
@@ -342,7 +388,9 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
   ) => {
     if (mode === 'disabled') {
       countingEnabled = false
+      countingEnabledStore.set(false)
       overlayMode = 'disabled'
+      clearRpm()
       return
     }
     overlayMode = mode
@@ -352,10 +400,13 @@ import { extractFrameSignals, type FrameSignals } from '../pose/signals'
 
   export const setGesturesEnabled = (enabled: boolean) => {
     gesturesEnabled = !!enabled
+    gesturesEnabledStore.set(gesturesEnabled)
   }
 
   export const setCountingEnabled = (enabled: boolean) => {
     countingEnabled = !!enabled
+    countingEnabledStore.set(countingEnabled)
+    clearRpm()
   }
 
   $: effectiveMode = countingEnabled ? overlayMode : 'disabled'

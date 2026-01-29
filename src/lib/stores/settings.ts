@@ -21,6 +21,7 @@ interface SettingsState {
     openAiVoice: string
     autoOpenSummaryOnComplete: boolean
     skipDelaySeconds: number
+    enableOverlayBigPictureFullscreen: boolean
   }
   counter: {
     lowFpsMode: boolean
@@ -62,7 +63,7 @@ const defaultState = (): SettingsState => ({
   openAiKey: '',
   aiInsightsPrompt: defaultInsightsPrompt,
   editor: { vimMode: false, notesTemplates: defaultNotesTemplates() },
-  timer: { ttsEnabled: false, enableMetronome: false, notificationsEnabled: false, audioEnabled: true, openAiVoice: 'alloy', autoOpenSummaryOnComplete: true, skipDelaySeconds: 0 },
+  timer: { ttsEnabled: false, enableMetronome: false, notificationsEnabled: false, audioEnabled: true, openAiVoice: 'alloy', autoOpenSummaryOnComplete: true, skipDelaySeconds: 0, enableOverlayBigPictureFullscreen: false },
   counter: {
     lowFpsMode: false,
     voiceEnabled: false,
