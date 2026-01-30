@@ -4152,20 +4152,33 @@ Rules:
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__current) {
     pointer-events: auto;
-    padding: clamp(1.25rem, 2.5vw, 1.75rem);
+    padding: clamp(0.9rem, 1.8vw, 1.25rem);
   }
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__time) {
-    font-size: clamp(3.2rem, 6.5vw, 6rem);
+    font-size: clamp(3.6rem, 7.2vw, 6.8rem);
   }
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__label) {
-    font-size: clamp(1.05rem, 2.4vw, 1.7rem);
+    font-size: clamp(1.35rem, 3vw, 2.25rem);
     min-height: unset;
   }
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next) {
     min-height: unset;
+    padding: 0.95rem;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next-label) {
+    font-size: 0.9rem;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next-meta) {
+    font-size: clamp(1.05rem, 2.2vw, 1.25rem);
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next-meta strong) {
+    font-size: clamp(1.25rem, 2.5vw, 1.55rem);
   }
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__bars) {

@@ -24,7 +24,7 @@
     background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
     color: var(--color-text-inverse);
     border-radius: 14px;
-    padding: 0.5rem 1rem 0.7rem;
+    padding: 0.4rem 0.9rem 0.55rem;
     min-width: 180px;
     text-align: center;
     border: none;
@@ -46,7 +46,7 @@
     opacity: 0.8;
   }
   .mode-value {
-    font-size: 1.9rem;
+    font-size: 2.2rem;
     font-weight: 900;
     line-height: 1.05;
   }
