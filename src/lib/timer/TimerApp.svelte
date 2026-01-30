@@ -4074,6 +4074,10 @@ Rules:
     background: #000;
     overflow: hidden;
     display: block;
+    --hud-blur: 12px;
+    --hud-surface-bg: color-mix(in srgb, var(--color-surface-2) 62%, transparent);
+    --hud-surface-bg-strong: color-mix(in srgb, var(--color-surface-2) 74%, transparent);
+    --hud-surface-border: color-mix(in srgb, var(--color-border) 65%, transparent);
   }
 
   .timer-panel--fullscreen.timer-panel--overlay .timer-panel__status {
@@ -4081,8 +4085,8 @@ Rules:
     top: calc(env(safe-area-inset-top, 0px) + 1rem);
     right: calc(env(safe-area-inset-right, 0px) + 1rem);
     left: auto;
-    width: min(32vw, 480px);
-    max-width: 32vw;
+    width: min(34vw, 520px);
+    max-width: 34vw;
     margin: 0;
     padding: 0;
     z-index: 6;
@@ -4126,10 +4130,28 @@ Rules:
     width: 100%;
     max-width: none;
     gap: 0.7rem;
+    background: var(--hud-surface-bg-strong);
+    border-color: var(--hud-surface-border);
+    backdrop-filter: blur(var(--hud-blur));
+    -webkit-backdrop-filter: blur(var(--hud-blur));
   }
 
   .timer-panel--fullscreen.timer-panel--overlay .timer-panel__right-stack :global(.control-bar__button) {
     width: 100%;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay .timer-panel__status-pill {
+    background: color-mix(in srgb, var(--color-accent) 16%, var(--hud-surface-bg));
+    border-color: color-mix(in srgb, var(--color-accent) 40%, var(--hud-surface-border));
+    backdrop-filter: blur(var(--hud-blur));
+    -webkit-backdrop-filter: blur(var(--hud-blur));
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay .timer-panel__fullscreen-button {
+    background: var(--hud-surface-bg);
+    border-color: var(--hud-surface-border);
+    backdrop-filter: blur(var(--hud-blur));
+    -webkit-backdrop-filter: blur(var(--hud-blur));
   }
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display) {
@@ -4166,19 +4188,19 @@ Rules:
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next) {
     min-height: unset;
-    padding: 0.95rem;
+    padding: 0.75rem;
   }
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next-label) {
-    font-size: 0.9rem;
+    font-size: 1rem;
   }
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next-meta) {
-    font-size: clamp(1.05rem, 2.2vw, 1.25rem);
+    font-size: clamp(1.15rem, 2.6vw, 1.55rem);
   }
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__next-meta strong) {
-    font-size: clamp(1.25rem, 2.5vw, 1.55rem);
+    font-size: clamp(1.35rem, 3vw, 1.85rem);
   }
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__bars) {
@@ -4190,6 +4212,13 @@ Rules:
     max-width: 55vw;
     z-index: 6;
     pointer-events: none;
+  }
+
+  .timer-panel--fullscreen.timer-panel--overlay :global(.timer-display__bars .bar) {
+    background: var(--hud-surface-bg);
+    border-color: var(--hud-surface-border);
+    backdrop-filter: blur(var(--hud-blur));
+    -webkit-backdrop-filter: blur(var(--hud-blur));
   }
 
   .timer-panel--fullscreen.timer-panel--overlay :global(.inline-slot) {

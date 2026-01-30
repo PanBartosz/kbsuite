@@ -653,7 +653,6 @@
     border-radius: 12px;
     padding: 0.6rem 1rem;
     color: var(--color-text-primary);
-    backdrop-filter: blur(4px);
   }
   .rep-badge .rep-label {
     font-size: 0.9rem;
@@ -829,7 +828,6 @@
       gap: 0.5rem;
       padding: 0.65rem 0.4rem 0.75rem;
       background: linear-gradient(180deg, rgba(5, 9, 20, 0.2), #050914);
-      backdrop-filter: blur(6px);
       border-top: 1px solid #1f2937;
       z-index: 10;
     }

@@ -12,12 +12,22 @@
 
 <style>
   .rpm-badge {
-    background: color-mix(in srgb, var(--color-success) 18%, var(--color-surface-2));
-    border: 1px solid color-mix(in srgb, var(--color-success) 35%, var(--color-border));
+    background: color-mix(
+      in srgb,
+      var(--color-success) 12%,
+      var(--hud-surface-bg, var(--color-surface-2))
+    );
+    border: 1px solid
+      color-mix(
+        in srgb,
+        var(--color-success) 45%,
+        var(--hud-surface-border, var(--color-border))
+      );
     border-radius: 16px;
     padding: 0.55rem;
     color: var(--color-text-primary);
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--hud-blur, 0px));
+    -webkit-backdrop-filter: blur(var(--hud-blur, 0px));
     aspect-ratio: 1 / 1;
     display: grid;
     grid-template-rows: auto 1fr;

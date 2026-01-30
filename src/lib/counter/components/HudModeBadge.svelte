@@ -21,29 +21,41 @@
 
 <style>
   .mode-badge {
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
-    border-radius: 14px;
+    --mode-tint: var(--color-accent);
+    background: color-mix(
+      in srgb,
+      var(--mode-tint) 12%,
+      var(--hud-surface-bg, var(--color-surface-2))
+    );
+    color: var(--color-text-primary);
+    border-radius: 16px;
     padding: 0.4rem 0.9rem 0.55rem;
     min-width: 180px;
     text-align: center;
-    border: none;
+    border: 1px solid
+      color-mix(
+        in srgb,
+        var(--mode-tint) 45%,
+        var(--hud-surface-border, var(--color-border))
+      );
     box-shadow: none;
+    backdrop-filter: blur(var(--hud-blur, 0px));
+    -webkit-backdrop-filter: blur(var(--hud-blur, 0px));
   }
   .mode-badge.lockout {
-    background: linear-gradient(135deg, #f97316, #fb923c);
-    color: #0a0a0a;
+    --mode-tint: var(--color-danger);
   }
   .mode-badge.disabled {
-    background: linear-gradient(135deg, #1f2937, #111827);
-    color: #e5e7eb;
-    border: 1px solid #374151;
+    --mode-tint: var(--color-border);
+    background: var(--hud-surface-bg, var(--color-surface-2));
+    border-color: var(--hud-surface-border, var(--color-border));
+    color: var(--color-text-secondary);
   }
   .mode-label {
     font-size: 0.85rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    opacity: 0.8;
+    color: color-mix(in srgb, var(--mode-tint) 55%, var(--color-text-secondary));
   }
   .mode-value {
     font-size: 2.2rem;
