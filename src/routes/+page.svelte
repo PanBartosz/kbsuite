@@ -49,6 +49,7 @@
 
   const modules = [
     { href: '/plan', label: 'Planner', desc: 'Schedule and edit sessions', icon: 'ri-calendar-check-line' },
+    { href: '/programs', label: 'Programs', desc: 'Generate and compare training blocks', icon: 'ri-git-branch-line' },
     { href: '/timer', label: 'Timer', desc: 'Run voice-guided timers', icon: 'ri-timer-2-line' },
     { href: '/counter', label: 'Rep Counter', desc: 'Swing / lockout tracking', icon: 'ri-focus-3-line' },
     { href: '/big-picture', label: 'Big Picture', desc: 'Timer + counter combo', icon: 'ri-layout-right-line' },

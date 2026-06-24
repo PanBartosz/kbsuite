@@ -66,11 +66,12 @@
 			const res = await fetch('/api/completed-workouts', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					workoutId: meta.workoutId ?? null,
-					title: meta.title ?? 'Workout',
-					startedAt: meta.startedAt ?? null,
-					finishedAt: meta.finishedAt ?? Date.now(),
+					body: JSON.stringify({
+						workoutId: meta.workoutId ?? null,
+						plannedWorkoutId: meta.plannedWorkoutId ?? null,
+						title: meta.title ?? 'Workout',
+						startedAt: meta.startedAt ?? null,
+						finishedAt: meta.finishedAt ?? Date.now(),
 					durationSeconds: meta.durationSeconds ?? null,
 					entries
 				})
@@ -125,13 +126,14 @@
 	</button>
 	<nav class:open={menuOpen}>
 		<a href="/" onclick={closeMenu}>Home</a>
-		<a href="/plan" onclick={closeMenu}>
-			Planner
-			{#if pendingShareCount > 0}
-				<span class="pill">{pendingShareCount}</span>
-			{/if}
-		</a>
-		<a href="/timer" onclick={closeMenu}>Timer</a>
+			<a href="/plan" onclick={closeMenu}>
+				Planner
+				{#if pendingShareCount > 0}
+					<span class="pill">{pendingShareCount}</span>
+				{/if}
+			</a>
+			<a href="/programs" onclick={closeMenu}>Programs</a>
+			<a href="/timer" onclick={closeMenu}>Timer</a>
 		<a href="/counter" onclick={closeMenu}>Rep Counter</a>
 		<a href="/big-picture" onclick={closeMenu}>Big Picture</a>
 		<a href="/workouts" onclick={closeMenu}>Workouts</a>

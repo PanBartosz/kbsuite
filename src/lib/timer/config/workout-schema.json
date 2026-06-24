@@ -49,6 +49,11 @@
                 "repetitions": { "type": "integer", "minimum": 1 },
                 "transitionSeconds": { "type": "number", "minimum": 0 },
                 "targetRpm": { "type": "number", "minimum": 0 },
+                "weight": { "type": ["number", "null"], "minimum": 0 },
+                "load": { "type": ["number", "null"], "minimum": 0 },
+                "plannedReps": { "type": ["number", "null"], "minimum": 0 },
+                "targetReps": { "type": ["number", "null"], "minimum": 0 },
+                "exercise": { "type": ["string", "null"] },
                 "announcements": {
                   "type": "array",
                   "items": {

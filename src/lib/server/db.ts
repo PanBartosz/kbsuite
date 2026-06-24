@@ -8,7 +8,9 @@ import { defaultInsightsPrompt } from '$lib/ai/prompts'
 
 let db: Database.Database | null = null
 
-const dataDir = path.join(process.cwd(), 'data')
+const dataDir = process.env.KB_SUITE_DATA_DIR
+  ? path.resolve(process.env.KB_SUITE_DATA_DIR)
+  : path.join(process.cwd(), 'data')
 const dbFile = path.join(dataDir, 'kb_suite.db')
 
 const ensureDir = () => {
@@ -91,6 +93,7 @@ const initDb = () => {
   migrateHrIntervalAnalysis()
   migratePlannedWorkouts()
   migrateSharedWorkoutInvites()
+  migrateProgramming()
   seedTemplates()
 }
 
@@ -129,7 +132,7 @@ const migrateCompletedSets = () => {
   }
   if (!names.has('type')) {
     database.prepare('ALTER TABLE completed_sets ADD COLUMN type TEXT').run()
-    database.prepare('UPDATE completed_sets SET type = "work" WHERE type IS NULL').run()
+    database.prepare("UPDATE completed_sets SET type = 'work' WHERE type IS NULL").run()
   }
   if (!names.has('rpe')) {
     database.prepare('ALTER TABLE completed_sets ADD COLUMN rpe INTEGER').run()
@@ -150,8 +153,14 @@ const migrateCompletedWorkouts = () => {
   }
   if (!names.has('tags')) {
     database.prepare('ALTER TABLE completed_workouts ADD COLUMN tags TEXT').run()
-    database.prepare('UPDATE completed_workouts SET tags = "[]" WHERE tags IS NULL').run()
+    database.prepare("UPDATE completed_workouts SET tags = '[]' WHERE tags IS NULL").run()
   }
+  if (!names.has('planned_workout_id')) {
+    database.prepare('ALTER TABLE completed_workouts ADD COLUMN planned_workout_id TEXT').run()
+  }
+  database.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_completed_planned ON completed_workouts(planned_workout_id)'
+  ).run()
 }
 
 const migratePlannedWorkouts = () => {
@@ -216,6 +225,52 @@ const migrateSharedWorkoutInvites = () => {
     );
     CREATE INDEX IF NOT EXISTS idx_shared_invites_recipient_status ON shared_workout_invites(recipient_id, status);
     CREATE INDEX IF NOT EXISTS idx_shared_invites_sender ON shared_workout_invites(sender_id);
+  `)
+}
+
+const migrateProgramming = () => {
+  const database = db!
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS program_runs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      spec_json TEXT NOT NULL,
+      state_json TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      started_at INTEGER,
+      ended_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_program_runs_user ON program_runs(user_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS program_workouts (
+      id TEXT PRIMARY KEY,
+      program_run_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      planned_workout_id TEXT,
+      completed_workout_id TEXT,
+      cycle_index INTEGER NOT NULL,
+      day_index INTEGER NOT NULL,
+      role TEXT,
+      title TEXT NOT NULL,
+      planned_for INTEGER,
+      planned_metrics_json TEXT,
+      actual_metrics_json TEXT,
+      status TEXT NOT NULL DEFAULT 'generated',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (program_run_id) REFERENCES program_runs(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (planned_workout_id) REFERENCES planned_workouts(id) ON DELETE SET NULL,
+      FOREIGN KEY (completed_workout_id) REFERENCES completed_workouts(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_program_workouts_run ON program_workouts(program_run_id, cycle_index, day_index);
+    CREATE INDEX IF NOT EXISTS idx_program_workouts_planned ON program_workouts(planned_workout_id);
+    CREATE INDEX IF NOT EXISTS idx_program_workouts_completed ON program_workouts(completed_workout_id);
   `)
 }
 

@@ -1,6 +1,8 @@
 import { json } from '@sveltejs/kit'
 import { ensureSessionUser, getDb } from '$lib/server/db'
 import crypto from 'node:crypto'
+import { computeCompletedProgramMetrics } from '$lib/programming/metrics'
+import { syncProgramWorkoutCompletion } from '$lib/server/programming'
 
 const COOKIE_NAME = 'kb_session'
 
@@ -27,6 +29,7 @@ const safeParseTags = (value: any): string[] => {
 const serializeCompleted = (row: any, sets: any[]) => ({
   id: row.id,
   workout_id: row.workout_id ?? null,
+  planned_workout_id: row.planned_workout_id ?? null,
   title: row.title ?? '',
   started_at: row.started_at ?? null,
   finished_at: row.finished_at ?? null,
@@ -82,6 +85,7 @@ export const POST = async ({ request, cookies }) => {
   const body = await request.json().catch(() => ({}))
   const {
     workoutId,
+    plannedWorkoutId,
     title,
     startedAt,
     finishedAt,
@@ -96,15 +100,26 @@ export const POST = async ({ request, cookies }) => {
   const db = getDb()
   const now = Date.now()
   const tagList = safeParseTags(tags)
+  const plannedId =
+    typeof plannedWorkoutId === 'string' && plannedWorkoutId.trim().length
+      ? plannedWorkoutId.trim()
+      : null
+  if (plannedId) {
+    const planned = db
+      .prepare('SELECT id FROM planned_workouts WHERE id = ? AND user_id = ?')
+      .get(plannedId, session.userId)
+    if (!planned) return json({ error: 'Planned workout not found' }, { status: 404 })
+  }
 
   db.prepare(
     `INSERT INTO completed_workouts
-      (id, user_id, workout_id, title, started_at, finished_at, duration_s, notes, rpe, tags, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      (id, user_id, workout_id, planned_workout_id, title, started_at, finished_at, duration_s, notes, rpe, tags, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     session.userId,
     workoutId ?? null,
+    plannedId,
     title ?? '',
     startedAt ?? null,
     finishedAt ?? null,
@@ -156,6 +171,13 @@ export const POST = async ({ request, cookies }) => {
       )
     })
   }
+
+  syncProgramWorkoutCompletion({
+    plannedWorkoutId: plannedId,
+    completedWorkoutId: id,
+    userId: session.userId,
+    actualMetrics: computeCompletedProgramMetrics(Array.isArray(entries) ? entries : [])
+  })
 
   const workout = db.prepare('SELECT * FROM completed_workouts WHERE id = ?').get(id)
   const sets = db

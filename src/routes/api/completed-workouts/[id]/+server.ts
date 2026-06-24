@@ -1,6 +1,8 @@
 import { json } from '@sveltejs/kit'
 import { ensureSessionUser, getDb } from '$lib/server/db'
 import crypto from 'node:crypto'
+import { computeCompletedProgramMetrics } from '$lib/programming/metrics'
+import { syncProgramWorkoutCompletion } from '$lib/server/programming'
 
 const COOKIE_NAME = 'kb_session'
 
@@ -54,8 +56,8 @@ export const PUT = async ({ params, request, cookies }) => {
 
   const db = getDb()
   const owner = db
-    .prepare('SELECT id FROM completed_workouts WHERE id = ? AND user_id = ?')
-    .get(id, session.userId) as { id: string } | undefined
+    .prepare('SELECT id, planned_workout_id FROM completed_workouts WHERE id = ? AND user_id = ?')
+    .get(id, session.userId) as { id: string; planned_workout_id?: string | null } | undefined
   if (!owner) return json({ error: 'Not found' }, { status: 404 })
 
   const body = await request.json().catch(() => ({}))
@@ -128,6 +130,13 @@ export const PUT = async ({ params, request, cookies }) => {
         )
       })
     }
+
+    syncProgramWorkoutCompletion({
+      plannedWorkoutId: owner?.planned_workout_id ?? null,
+      completedWorkoutId: id,
+      userId: session.userId,
+      actualMetrics: computeCompletedProgramMetrics(entries)
+    })
   }
 
   const workout = db.prepare('SELECT * FROM completed_workouts WHERE id = ?').get(id) as any

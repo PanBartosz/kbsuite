@@ -20,6 +20,7 @@ const summaryPlanKey = writable<string | null>(null)
 const summaryMetadata = writable<{
   title?: string
   workoutId?: string | null
+  plannedWorkoutId?: string | null
   startedAt?: number | null
   finishedAt?: number | null
   durationSeconds?: number | null
@@ -76,6 +77,7 @@ export const applyRepCountToPhase = (
 export const setSummaryMetadata = (meta: {
   title?: string
   workoutId?: string | null
+  plannedWorkoutId?: string | null
   startedAt?: number | null
   finishedAt?: number | null
   durationSeconds?: number | null

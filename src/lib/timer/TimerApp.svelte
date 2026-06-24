@@ -345,10 +345,10 @@ import '$lib/timer/app.css'
         phaseIndex: idx,
         type: phase.type,
         durationSeconds: phase.durationSeconds ?? phase.duration ?? 0,
-        plannedReps: phase.type === 'work' ? null : null,
+        plannedReps: phase.type === 'work' ? (phase.metadata?.plannedReps ?? null) : null,
         loggedReps: null,
         autoFilled: false,
-        weight: null
+        weight: phase.type === 'work' ? (phase.metadata?.weight ?? null) : null
       }
     }).filter(Boolean)
   }
@@ -496,6 +496,7 @@ let plan =
   }
   let saveName = ''
   let selectedWorkoutId = null
+  let selectedPlannedWorkoutId = null
   let fileInputEl
   let audioEnabled = audioSupported && $settings.timer.audioEnabled
   let audioAvailable = false
@@ -1143,6 +1144,7 @@ let plan =
         saveName = derived
       }
       selectedWorkoutId = null
+      selectedPlannedWorkoutId = null
     } catch (error) {
       console.warn('Failed to read YAML file', error)
     } finally {
@@ -1195,6 +1197,7 @@ let plan =
       activePhaseIndex = -1
     }
     selectedWorkoutId = null
+    selectedPlannedWorkoutId = null
     saveName = workout.name ?? ''
     libraryModalOpen = false
     aiError = ''
@@ -1650,6 +1653,7 @@ let plan =
     setSummaryMetadata({
       title: getSummaryTitle(),
       workoutId: selectedWorkoutId,
+      plannedWorkoutId: selectedPlannedWorkoutId,
       startedAt: sessionStartMs,
       durationSeconds: timelineDuration
     })
@@ -1670,6 +1674,7 @@ let plan =
     setSummaryMetadata({
       title: getSummaryTitle(),
       workoutId: selectedWorkoutId,
+      plannedWorkoutId: selectedPlannedWorkoutId,
       startedAt: sessionStartMs,
       finishedAt: Date.now(),
       durationSeconds: timelineDuration
@@ -1690,6 +1695,7 @@ let plan =
     setSummaryMetadata({
       title: getSummaryTitle(),
       workoutId: selectedWorkoutId,
+      plannedWorkoutId: selectedPlannedWorkoutId,
       startedAt: sessionStartMs,
       finishedAt: Date.now(),
       durationSeconds: timelineDuration
@@ -1753,6 +1759,7 @@ let plan =
     setSummaryMetadata({
       title: getSummaryTitle(),
       workoutId: selectedWorkoutId,
+      plannedWorkoutId: selectedPlannedWorkoutId,
       startedAt: sessionStartMs,
       finishedAt: Date.now(),
       durationSeconds: timelineDuration
@@ -2005,6 +2012,7 @@ Rules:
   const resetEditorToDefault = () => {
     editorSource = initialSource
     selectedWorkoutId = null
+    selectedPlannedWorkoutId = null
     saveName = ''
     if (!isTimerRunning) {
       timerStatusMessage = 'Timer idle'
@@ -2197,6 +2205,7 @@ Rules:
       summaryNeedsFullRebuild = true
     }
     selectedWorkoutId = workout.id
+    selectedPlannedWorkoutId = null
     saveName = workout.name
     pushToast('Workout loaded.', 'success')
     if (!isTimerRunning) {
@@ -2252,6 +2261,7 @@ Rules:
         saveName = resolvedTitle
       }
       selectedWorkoutId = null
+      selectedPlannedWorkoutId = id
       if (!saveName) {
         saveName = itemTitle || 'Planned workout'
       }

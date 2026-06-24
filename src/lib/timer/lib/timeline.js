@@ -157,6 +157,15 @@ export const buildTimeline = (plan) => {
         const transitionSeconds = toSeconds(set.transitionSeconds)
         const repetitions = Math.max(Math.round(Number(set.repetitions) || 1), 1)
         const targetRpm = Number(set.targetRpm) || null
+        const rawWeight = set.weight ?? set.load
+        const weight = rawWeight === null || rawWeight === undefined || rawWeight === ''
+          ? null
+          : Number(rawWeight)
+        const rawPlannedReps = set.plannedReps ?? set.targetReps
+        const plannedReps =
+          rawPlannedReps === null || rawPlannedReps === undefined || rawPlannedReps === ''
+            ? null
+            : Number(rawPlannedReps)
         const workAnnouncements = cleanAnnouncements(set.announcements)
         const restAnnouncements = cleanAnnouncements(set.restAnnouncements)
         const setMode = normalizeRepCounterMode(set.repCounterMode)
@@ -198,6 +207,9 @@ export const buildTimeline = (plan) => {
                   roundLabel,
                   setLabel,
                   targetRpm,
+                  exercise: set.exercise ?? round.exercise ?? null,
+                  weight: Number.isFinite(weight) ? weight : null,
+                  plannedReps: Number.isFinite(plannedReps) ? plannedReps : null,
                   ...repCounterMeta,
                   repCounterEnabled: repCounterEnabledWork
                 },
