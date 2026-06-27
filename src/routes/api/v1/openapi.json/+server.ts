@@ -1,5 +1,4 @@
 import { json } from '@sveltejs/kit'
-import { authorizeApiRequest } from '$lib/server/api-v1'
 
 const resourceList = (name: string, tag: string, schema: string) => ({
   get: {
@@ -92,11 +91,26 @@ const openapi = {
     description: 'Bearer-token API for trusted agents, scripts, and local integrations. Generate per-user tokens from the Account page.'
   },
   paths: {
+    '/api/v1': {
+      get: {
+        tags: ['Discovery'],
+        summary: 'Get API discovery summary',
+        responses: { '200': { description: 'API discovery summary' } }
+      }
+    },
     '/api/v1/openapi.json': {
       get: {
         tags: ['Discovery'],
         summary: 'Get this OpenAPI document',
-        security: [{ bearerAuth: [] }],
+        security: [],
+        responses: { '200': { description: 'OpenAPI document' } }
+      }
+    },
+    '/api/v1/openapi': {
+      get: {
+        tags: ['Discovery'],
+        summary: 'Alias for this OpenAPI document',
+        security: [],
         responses: { '200': { description: 'OpenAPI document' } }
       }
     },
@@ -429,8 +443,4 @@ const openapi = {
   }
 }
 
-export const GET = async ({ request }) => {
-  const auth = authorizeApiRequest(request)
-  if ('response' in auth) return auth.response
-  return json(openapi)
-}
+export const GET = async () => json(openapi)
