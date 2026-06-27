@@ -44,6 +44,19 @@ API (server):
 - Similarity search: `GET /api/completed-workouts/[id]/similar`.
 - HR files: `GET/POST/DELETE /api/completed-workouts/[id]/hr`.
 - Auth: `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`.
+- API tokens: `GET/POST /api/api-tokens`, `DELETE /api/api-tokens/[id]`.
+
+External API (server):
+
+- V1 base path: `/api/v1/**`.
+- Auth: every v1 route requires `Authorization: Bearer <token>`.
+- Tokens are generated per registered user from `/auth` and stored hashed in `api_tokens`.
+- Identity: generated tokens operate as the user who created them; revoked tokens stop working immediately.
+- Optional fallback: `KB_SUITE_API_TOKEN` with `KB_SUITE_API_USERNAME` or `KB_SUITE_API_USER_ID` is still supported for deployments that want a single configured token.
+- Discovery: `GET /api/v1/openapi.json` returns an authenticated OpenAPI document for agents and scripts.
+- V1 resources: `me`, `settings`, `workouts`, `planned-workouts`, `completed-workouts`, `completed-workouts/[id]/hr`, and `program-runs`.
+- Response shape: collection routes return `{ items, total? }`, item routes return `{ item }`, actions/deletes return `{ ok: true }`, and errors return `{ error }`.
+- Browser/UI routes under `/api/**` continue using the `kb_session` cookie and are intentionally separate from `/api/v1/**`.
 
 Shared UI/state:
 
@@ -165,6 +178,11 @@ Validation/editor experience:
 - Docker build/run:
   - `Dockerfile` installs dependencies, runs `npm run build`, then serves via `npm run preview -- --host 0.0.0.0 --port 4173`.
   - `docker-compose.yml` runs the image and mounts the external volume `kb_suite_data` to `/app/data`.
+- External API env:
+  - `KB_SUITE_API_TOKEN`: optional single fallback bearer token.
+  - `KB_SUITE_API_USERNAME`: preferred configured user for the fallback token.
+  - `KB_SUITE_API_USER_ID`: fallback configured user when username is not set.
+  - `KB_SUITE_DATA_DIR`: optional data directory override used by SQLite and v1 HR attachment storage.
 
 ## Commands
 
@@ -172,4 +190,3 @@ Validation/editor experience:
 - Typecheck: `npm run check`
 - Build: `npm run build`
 - Preview: `npm run preview`
-

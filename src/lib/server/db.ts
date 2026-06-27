@@ -94,6 +94,7 @@ const initDb = () => {
   migratePlannedWorkouts()
   migrateSharedWorkoutInvites()
   migrateProgramming()
+  migrateApiTokens()
   seedTemplates()
 }
 
@@ -274,6 +275,25 @@ const migrateProgramming = () => {
   `)
 }
 
+const migrateApiTokens = () => {
+  const database = db!
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS api_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      token_prefix TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER,
+      revoked_at INTEGER,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
+  `)
+}
+
 const defaultSettings = () => ({
   theme: 'dark',
   aiInsightsPrompt: defaultInsightsPrompt,
@@ -306,6 +326,17 @@ const hashPassword = (password: string, salt: string) => {
   const derived = crypto.scryptSync(password, salt, 64)
   return derived.toString('hex')
 }
+
+const hashApiToken = (token: string) =>
+  crypto.createHash('sha256').update(token, 'utf8').digest('hex')
+
+const serializeApiToken = (row: any) => ({
+  id: row.id,
+  name: row.name ?? '',
+  token_prefix: row.token_prefix ?? '',
+  created_at: row.created_at ?? null,
+  last_used_at: row.last_used_at ?? null
+})
 
 const safeParseTags = (value: any): string[] => {
   if (!value) return []
@@ -431,6 +462,79 @@ export const createSessionForUser = (userId: string) => createSession(userId)
 
 export const deleteSession = (token: string) => {
   getDb().prepare('DELETE FROM sessions WHERE token = ?').run(token)
+}
+
+export const listApiTokensForUser = (userId: string) => {
+  return getDb()
+    .prepare(
+      `SELECT id, name, token_prefix, created_at, last_used_at
+       FROM api_tokens
+       WHERE user_id = ? AND revoked_at IS NULL
+       ORDER BY created_at DESC`
+    )
+    .all(userId)
+    .map(serializeApiToken)
+}
+
+export const createApiTokenForUser = (userId: string, nameInput: string) => {
+  const db = getDb()
+  const token = `kb_${crypto.randomBytes(32).toString('base64url')}`
+  const now = Date.now()
+  const id = crypto.randomUUID()
+  const name = nameInput.trim().slice(0, 80) || 'API token'
+  const tokenPrefix = token.slice(0, 12)
+  db.prepare(
+    `INSERT INTO api_tokens
+      (id, user_id, name, token_hash, token_prefix, created_at, last_used_at, revoked_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)`
+  ).run(id, userId, name, hashApiToken(token), tokenPrefix, now)
+
+  const row = db
+    .prepare(
+      `SELECT id, name, token_prefix, created_at, last_used_at
+       FROM api_tokens
+       WHERE id = ? AND user_id = ?`
+    )
+    .get(id, userId)
+  return { token, item: serializeApiToken(row) }
+}
+
+export const revokeApiTokenForUser = (userId: string, tokenId: string) => {
+  const result = getDb()
+    .prepare(
+      `UPDATE api_tokens
+       SET revoked_at = ?
+       WHERE id = ? AND user_id = ? AND revoked_at IS NULL`
+    )
+    .run(Date.now(), tokenId, userId)
+  return result.changes > 0
+}
+
+export const getUserForApiToken = (token: string) => {
+  if (!token) return null
+  const db = getDb()
+  const row = db
+    .prepare(
+      `SELECT
+         t.id AS token_id,
+         u.id AS user_id,
+         u.username AS username,
+         u.is_anonymous AS is_anonymous
+       FROM api_tokens t
+       JOIN users u ON u.id = t.user_id
+       WHERE t.token_hash = ? AND t.revoked_at IS NULL`
+    )
+    .get(hashApiToken(token)) as
+    | { token_id: string; user_id: string; username?: string | null; is_anonymous?: number }
+    | undefined
+
+  if (!row) return null
+  db.prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').run(Date.now(), row.token_id)
+  return {
+    userId: row.user_id,
+    username: row.username ?? null,
+    isAnonymous: row.is_anonymous === 1
+  }
 }
 
 const seedTemplates = () => {
