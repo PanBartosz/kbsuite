@@ -7,6 +7,8 @@ const dataDir = process.env.KB_SUITE_DATA_DIR
   ? path.resolve(process.env.KB_SUITE_DATA_DIR)
   : path.join(process.cwd(), 'data')
 const hrDir = path.join(dataDir, 'hr')
+const legacyHrDir = path.join(process.cwd(), 'data', 'hr')
+const hrDirs = Array.from(new Set([hrDir, legacyHrDir]))
 const HR_SAMPLE_PREVIEW_LIMIT = 200
 
 type HrSample = { t: number; hr: number }
@@ -33,6 +35,26 @@ const listHrFiles = async (dir: string) => {
   return entries.filter(isHrFile)
 }
 
+const summaryExists = async (dir: string) => {
+  try {
+    await fs.access(path.join(dir, 'summary.json'))
+    return true
+  } catch {
+    return false
+  }
+}
+
+const candidateDirs = (completedWorkoutId: string) =>
+  hrDirs.map((baseDir) => path.join(baseDir, completedWorkoutId))
+
+const resolveAttachmentDir = async (completedWorkoutId: string) => {
+  for (const dir of candidateDirs(completedWorkoutId)) {
+    const files = await listHrFiles(dir).catch(() => [] as string[])
+    if (files.length || (await summaryExists(dir))) return { dir, files }
+  }
+  return { dir: path.join(hrDir, completedWorkoutId), files: [] as string[] }
+}
+
 const writeSummary = async (dir: string, summary: HrSummary) => {
   await fs.writeFile(path.join(dir, 'summary.json'), JSON.stringify(summary, null, 2))
 }
@@ -52,10 +74,9 @@ export const readHrAttachment = async (
   const wantDetails = options.details === true
   const wantFullSamples = options.full === true
   const maxSamples = wantDetails ? (wantFullSamples ? 0 : HR_SAMPLE_PREVIEW_LIMIT) : 0
-  const dir = path.join(hrDir, completedWorkoutId)
 
   try {
-    const files = await listHrFiles(dir)
+    const { dir, files } = await resolveAttachmentDir(completedWorkoutId)
     const summaryPath = path.join(dir, 'summary.json')
     let summary: HrSummary | null = null
     let parsedFromFile = false
@@ -99,8 +120,7 @@ export const readHrAttachment = async (
 }
 
 export const rebuildHrAttachmentSummary = async (completedWorkoutId: string) => {
-  const dir = path.join(hrDir, completedWorkoutId)
-  const files = await listHrFiles(dir).catch(() => [] as string[])
+  const { dir, files } = await resolveAttachmentDir(completedWorkoutId)
   if (!files[0]) {
     return { attached: false, files, filename: null, summary: null, updated: false }
   }
@@ -153,7 +173,9 @@ export const saveHrAttachment = async (completedWorkoutId: string, file: File) =
 }
 
 export const deleteHrAttachment = async (completedWorkoutId: string) => {
-  await fs.rm(path.join(hrDir, completedWorkoutId), { recursive: true, force: true })
+  await Promise.all(
+    candidateDirs(completedWorkoutId).map((dir) => fs.rm(dir, { recursive: true, force: true }))
+  )
 }
 
 const parseHrFile = (

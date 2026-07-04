@@ -3,7 +3,7 @@ import { ensureSessionUser, getDb } from '$lib/server/db'
 import { deleteHrAttachment, readHrAttachment, saveHrAttachment } from '$lib/server/hr'
 
 const COOKIE_NAME = 'kb_session'
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const SAFE_CLIENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 
 const withSession = (cookies: any) => {
   const session = ensureSessionUser(cookies.get(COOKIE_NAME))
@@ -53,7 +53,7 @@ const validateRequest = (cookies: any, id: string | undefined): ValidationResult
       response: json({ attached: false, files: [], error: 'Missing id' }, { status: 400 })
     }
   }
-  if (!UUID_RE.test(id)) {
+  if (!SAFE_CLIENT_ID_RE.test(id)) {
     return {
       ok: false,
       response: json({ attached: false, files: [], error: 'Invalid id' }, { status: 400 })
