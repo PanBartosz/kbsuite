@@ -22,6 +22,8 @@ export const GET = async () =>
       workouts: '/api/v1/workouts',
       planned_workouts: '/api/v1/planned-workouts',
       completed_workouts: '/api/v1/completed-workouts',
+      completed_workout_hr: '/api/v1/completed-workouts/{id}/hr',
+      hr_backfill_sparklines: '/api/v1/hr/backfill-sparklines',
       program_runs: '/api/v1/program-runs'
     },
     example: {

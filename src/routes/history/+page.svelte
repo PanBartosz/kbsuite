@@ -693,6 +693,24 @@
     return null
   }
 
+  const downsampleHrPreview = (samples: { t: number; hr: number }[], target = 200) => {
+    if (!samples.length) return []
+    const maxSamples = Math.max(1, Math.trunc(target))
+    if (samples.length <= maxSamples) return samples
+
+    const bucketSize = Math.ceil(samples.length / maxSamples)
+    const result: { t: number; hr: number }[] = []
+    for (let index = 0; index < samples.length; index += bucketSize) {
+      const bucket = samples.slice(index, index + bucketSize)
+      const midpoint = bucket[Math.floor(bucket.length / 2)]
+      result.push({
+        t: midpoint.t,
+        hr: Math.round(bucket.reduce((sum, sample) => sum + sample.hr, 0) / bucket.length)
+      })
+    }
+    return result
+  }
+
   const closeIntervalsModal = () => {
     intervalsModalOpen = false
     intervalsItem = null
@@ -731,7 +749,18 @@
         data?.summary?.durationSeconds !== undefined && data?.summary?.durationSeconds !== null
           ? Number(data.summary.durationSeconds)
           : null
-      intervalsSamples = normalizeHrSamples(raw, Number.isFinite(dur ?? NaN) ? dur : null)
+      const normalized = normalizeHrSamples(raw, Number.isFinite(dur ?? NaN) ? dur : null)
+      intervalsSamples = normalized
+      hrDetails = {
+        ...hrDetails,
+        [item.id]: {
+          avgHr: data.summary.avgHr ?? null,
+          maxHr: data.summary.maxHr ?? null,
+          startTime: data.summary.startTime ?? null,
+          durationSeconds: data.summary.durationSeconds ?? null,
+          samples: downsampleHrPreview(normalized)
+        }
+      }
       intervalsStatus = ''
     } catch (err) {
       console.warn('Failed to load HR interval samples', err)

@@ -7,12 +7,43 @@ const dataDir = process.env.KB_SUITE_DATA_DIR
   ? path.resolve(process.env.KB_SUITE_DATA_DIR)
   : path.join(process.cwd(), 'data')
 const hrDir = path.join(dataDir, 'hr')
+const HR_SAMPLE_PREVIEW_LIMIT = 200
+
+type HrSample = { t: number; hr: number }
+type HrSummary = {
+  avgHr: number | null
+  maxHr: number | null
+  startTime: number | null
+  durationSeconds: number | null
+  samples?: HrSample[]
+}
 
 const ensureDir = async (dir: string) => {
   await fs.mkdir(dir, { recursive: true }).catch(() => undefined)
 }
 
 const safeFilename = (filename: string) => filename.replace(/[^a-zA-Z0-9._-]/g, '_')
+const isHrFile = (filename: string) => {
+  const lower = filename.toLowerCase()
+  return lower.endsWith('.fit') || lower.endsWith('.tcx')
+}
+
+const listHrFiles = async (dir: string) => {
+  const entries = await fs.readdir(dir)
+  return entries.filter(isHrFile)
+}
+
+const writeSummary = async (dir: string, summary: HrSummary) => {
+  await fs.writeFile(path.join(dir, 'summary.json'), JSON.stringify(summary, null, 2))
+}
+
+const withSamplePreview = (summary: HrSummary): HrSummary => {
+  if (!summary.samples?.length) {
+    const { samples: _samples, ...rest } = summary
+    return rest
+  }
+  return { ...summary, samples: downsampleSeconds(summary.samples, HR_SAMPLE_PREVIEW_LIMIT) }
+}
 
 export const readHrAttachment = async (
   completedWorkoutId: string,
@@ -20,14 +51,13 @@ export const readHrAttachment = async (
 ) => {
   const wantDetails = options.details === true
   const wantFullSamples = options.full === true
-  const maxSamples = wantDetails ? (wantFullSamples ? 0 : 200) : 0
+  const maxSamples = wantDetails ? (wantFullSamples ? 0 : HR_SAMPLE_PREVIEW_LIMIT) : 0
   const dir = path.join(hrDir, completedWorkoutId)
 
   try {
-    const entries = await fs.readdir(dir)
-    const files = entries.filter((file) => file.endsWith('.fit') || file.endsWith('.tcx'))
+    const files = await listHrFiles(dir)
     const summaryPath = path.join(dir, 'summary.json')
-    let summary = null
+    let summary: HrSummary | null = null
     let parsedFromFile = false
 
     try {
@@ -38,8 +68,8 @@ export const readHrAttachment = async (
         summary = await parseHrFile(buffer, files[0], wantDetails, maxSamples)
         parsedFromFile = true
         if (summary) {
-          const persistable = wantFullSamples ? { ...summary, samples: undefined } : summary
-          await fs.writeFile(summaryPath, JSON.stringify(persistable, null, 2))
+          const persistable = wantFullSamples ? withSamplePreview(summary) : summary
+          await writeSummary(dir, persistable)
         }
       }
     }
@@ -47,19 +77,42 @@ export const readHrAttachment = async (
     if (wantDetails && wantFullSamples && files[0] && !parsedFromFile) {
       const buffer = await fs.readFile(path.join(dir, files[0]))
       const detailed = await parseHrFile(buffer, files[0], true, 0)
-      if (detailed) summary = detailed
+      if (detailed) {
+        summary = detailed
+        await writeSummary(dir, withSamplePreview(detailed))
+      }
     }
 
     if (wantDetails && !wantFullSamples && summary && !summary.samples && files[0]) {
       const buffer = await fs.readFile(path.join(dir, files[0]))
-      const detailed = await parseHrFile(buffer, files[0], true, 200)
-      if (detailed) summary = detailed
+      const detailed = await parseHrFile(buffer, files[0], true, HR_SAMPLE_PREVIEW_LIMIT)
+      if (detailed) {
+        summary = detailed
+        await writeSummary(dir, detailed)
+      }
     }
 
     return { attached: files.length > 0, files, summary }
   } catch {
     return { attached: false, files: [] as string[], summary: null }
   }
+}
+
+export const rebuildHrAttachmentSummary = async (completedWorkoutId: string) => {
+  const dir = path.join(hrDir, completedWorkoutId)
+  const files = await listHrFiles(dir).catch(() => [] as string[])
+  if (!files[0]) {
+    return { attached: false, files, filename: null, summary: null, updated: false }
+  }
+
+  const buffer = await fs.readFile(path.join(dir, files[0]))
+  const summary = await parseHrFile(buffer, files[0], true, HR_SAMPLE_PREVIEW_LIMIT)
+  if (!summary) {
+    return { attached: true, files, filename: files[0], summary: null, updated: false }
+  }
+
+  await writeSummary(dir, summary)
+  return { attached: true, files, filename: files[0], summary, updated: true }
 }
 
 export const saveHrAttachment = async (completedWorkoutId: string, file: File) => {
@@ -92,9 +145,9 @@ export const saveHrAttachment = async (completedWorkoutId: string, file: File) =
 
   if (!buffer) throw new Error('Failed to read file')
   await fs.writeFile(path.join(dir, chosenName), buffer)
-  const summary = await parseHrFile(buffer, chosenName)
+  const summary = await parseHrFile(buffer, chosenName, true, HR_SAMPLE_PREVIEW_LIMIT)
   if (summary) {
-    await fs.writeFile(path.join(dir, 'summary.json'), JSON.stringify(summary, null, 2))
+    await writeSummary(dir, summary)
   }
   return { filename: chosenName, summary }
 }
@@ -103,8 +156,13 @@ export const deleteHrAttachment = async (completedWorkoutId: string) => {
   await fs.rm(path.join(hrDir, completedWorkoutId), { recursive: true, force: true })
 }
 
-const parseHrFile = (buffer: Buffer, filename: string, includeSamples = false, maxSamples = 200) =>
-  new Promise<any | null>((resolve) => {
+const parseHrFile = (
+  buffer: Buffer,
+  filename: string,
+  includeSamples = false,
+  maxSamples = HR_SAMPLE_PREVIEW_LIMIT
+) =>
+  new Promise<HrSummary | null>((resolve) => {
     const lower = filename.toLowerCase()
     if (lower.endsWith('.tcx')) {
       resolve(parseTcx(buffer, includeSamples, maxSamples))
@@ -121,7 +179,7 @@ const parseHrFile = (buffer: Buffer, filename: string, includeSamples = false, m
       try {
         const records = data.records ?? []
         const hrValues: number[] = []
-        const samples: { t: number; hr: number }[] = []
+        const samples: HrSample[] = []
         let startTime: number | null = null
         let endTime: number | null = null
 
@@ -155,17 +213,38 @@ const parseHrFile = (buffer: Buffer, filename: string, includeSamples = false, m
     })
   })
 
-const parseTcx = (buffer: Buffer, includeSamples = false, maxSamples = 200) => {
+const parseTcx = (
+  buffer: Buffer,
+  includeSamples = false,
+  maxSamples = HR_SAMPLE_PREVIEW_LIMIT
+): HrSummary | null => {
   try {
     const xml = buffer.toString('utf-8')
-    const timeMatches = [...xml.matchAll(/<Time>([^<]+)<\/Time>/g)].map((match) => match[1])
-    const hrMatches = [...xml.matchAll(/<HeartRateBpm>\s*<Value>(\d+)<\/Value>/g)].map(
-      (match) => Number(match[1])
-    )
+    const trackpoints = [...xml.matchAll(/<Trackpoint\b[\s\S]*?<\/Trackpoint>/g)]
+    const parsedTrackpoints = trackpoints
+      .map((match) => {
+        const block = match[0]
+        const time = block.match(/<Time>([^<]+)<\/Time>/)?.[1] ?? null
+        const hr = block.match(/<HeartRateBpm>\s*<Value>(\d+)<\/Value>/)?.[1] ?? null
+        return {
+          t: time ? Date.parse(time) : NaN,
+          hr: hr !== null ? Number(hr) : null
+        }
+      })
+      .filter((sample) => Number.isFinite(sample.t))
+    const timeMatches =
+      parsedTrackpoints.length > 0
+        ? parsedTrackpoints.map((sample) => sample.t)
+        : [...xml.matchAll(/<Time>([^<]+)<\/Time>/g)]
+            .map((match) => Date.parse(match[1]))
+            .filter(Number.isFinite)
+    const hrMatches = parsedTrackpoints
+      .map((sample) => sample.hr)
+      .filter((hr): hr is number => hr !== null && Number.isFinite(hr))
     if (!timeMatches.length) return null
 
-    const startTime = Date.parse(timeMatches[0])
-    const endTime = Date.parse(timeMatches[timeMatches.length - 1])
+    const startTime = timeMatches[0]
+    const endTime = timeMatches[timeMatches.length - 1]
     const durationSeconds = Math.max(0, Math.round((endTime - startTime) / 1000))
     const avgHr = hrMatches.length
       ? Math.round(hrMatches.reduce((sum, value) => sum + value, 0) / hrMatches.length)
@@ -174,9 +253,9 @@ const parseTcx = (buffer: Buffer, includeSamples = false, maxSamples = 200) => {
     let samples: { t: number; hr: number }[] = []
 
     if (includeSamples) {
-      samples = timeMatches
-        .map((time, index) => ({ t: Date.parse(time), hr: hrMatches[index] ?? null }))
-        .filter((sample) => Number.isFinite(sample.t) && sample.hr !== null) as any
+      samples = parsedTrackpoints.filter(
+        (sample): sample is HrSample => sample.hr !== null && Number.isFinite(sample.hr)
+      )
       samples = downsample(samples, maxSamples, Number.isFinite(startTime) ? startTime : null)
     }
 
@@ -193,8 +272,8 @@ const parseTcx = (buffer: Buffer, includeSamples = false, maxSamples = 200) => {
 }
 
 const downsample = (
-  samples: { t: number; hr: number }[],
-  target = 200,
+  samples: HrSample[],
+  target = HR_SAMPLE_PREVIEW_LIMIT,
   start: number | null = null
 ) => {
   if (!samples.length) return []
@@ -211,6 +290,26 @@ const downsample = (
     const hr = Math.round(bucket.reduce((sum, sample) => sum + sample.hr, 0) / bucket.length)
     const t = Math.round((bucket[Math.floor(bucket.length / 2)].t - base) / 1000)
     result.push({ t, hr })
+  }
+  return result
+}
+
+const downsampleSeconds = (samples: HrSample[], target = HR_SAMPLE_PREVIEW_LIMIT) => {
+  if (!samples.length) return []
+  const maxSamples = Number(target)
+  if (!Number.isFinite(maxSamples) || maxSamples <= 0 || samples.length <= maxSamples) {
+    return samples
+  }
+
+  const bucketSize = Math.ceil(samples.length / maxSamples)
+  const result: HrSample[] = []
+  for (let index = 0; index < samples.length; index += bucketSize) {
+    const bucket = samples.slice(index, index + bucketSize)
+    const midpoint = bucket[Math.floor(bucket.length / 2)]
+    result.push({
+      t: midpoint.t,
+      hr: Math.round(bucket.reduce((sum, sample) => sum + sample.hr, 0) / bucket.length)
+    })
   }
   return result
 }

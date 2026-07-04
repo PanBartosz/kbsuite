@@ -181,9 +181,27 @@ const openapi = {
       'Completed Workouts',
       'CompletedWorkout'
     ),
+    '/api/v1/hr/backfill-sparklines': {
+      post: {
+        tags: ['HR'],
+        summary: 'Generate missing HR sparkline samples',
+        description:
+          'Scans the authenticated user completed workouts and rebuilds HR summary files that have an attached FIT/TCX file but no persisted sparkline preview samples.',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          '200': {
+            description: 'Backfill result',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/HrBackfillResult' } }
+            }
+          },
+          '401': { $ref: '#/components/responses/Error' }
+        }
+      }
+    },
     '/api/v1/completed-workouts/{id}/hr': {
       get: {
-        tags: ['Completed Workouts'],
+        tags: ['HR'],
         summary: 'Get HR attachment summary',
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -191,11 +209,20 @@ const openapi = {
           { name: 'details', in: 'query', schema: { type: 'string', enum: ['1'] } },
           { name: 'full', in: 'query', schema: { type: 'string', enum: ['1'] } }
         ],
-        responses: { '200': { description: 'HR attachment state' } }
+        responses: {
+          '200': {
+            description: 'HR attachment state',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/HrAttachment' } }
+            }
+          }
+        }
       },
       post: {
-        tags: ['Completed Workouts'],
+        tags: ['HR'],
         summary: 'Upload FIT, TCX, or ZIP HR attachment',
+        description:
+          'Stores the HR file and returns an HR summary with preview samples suitable for History sparklines.',
         security: [{ bearerAuth: [] }],
         parameters: [idParameter],
         requestBody: {
@@ -210,10 +237,27 @@ const openapi = {
             }
           }
         },
-        responses: { '200': { $ref: '#/components/responses/Ok' } }
+        responses: {
+          '200': {
+            description: 'Uploaded HR attachment',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ok: { type: 'boolean' },
+                    filename: { type: 'string' },
+                    summary: { $ref: '#/components/schemas/HrSummary' }
+                  },
+                  required: ['ok', 'filename']
+                }
+              }
+            }
+          }
+        }
       },
       delete: {
-        tags: ['Completed Workouts'],
+        tags: ['HR'],
         summary: 'Delete HR attachment',
         security: [{ bearerAuth: [] }],
         parameters: [idParameter],
@@ -418,6 +462,58 @@ const openapi = {
           tags: { type: 'array', items: { type: 'string' } },
           entries: { type: 'array', items: { $ref: '#/components/schemas/CompletedSet' } }
         }
+      },
+      HrSample: {
+        type: 'object',
+        properties: {
+          t: { type: 'number', description: 'Seconds from HR file start' },
+          hr: { type: 'number', description: 'Heart rate in bpm' }
+        },
+        required: ['t', 'hr']
+      },
+      HrSummary: {
+        type: ['object', 'null'],
+        properties: {
+          avgHr: { type: ['number', 'null'] },
+          maxHr: { type: ['number', 'null'] },
+          startTime: { type: ['number', 'null'], description: 'Unix timestamp in milliseconds' },
+          durationSeconds: { type: ['number', 'null'] },
+          samples: { type: 'array', items: { $ref: '#/components/schemas/HrSample' } }
+        }
+      },
+      HrAttachment: {
+        type: 'object',
+        properties: {
+          attached: { type: 'boolean' },
+          files: { type: 'array', items: { type: 'string' } },
+          summary: { $ref: '#/components/schemas/HrSummary' }
+        },
+        required: ['attached', 'files']
+      },
+      HrBackfillItem: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          status: {
+            type: 'string',
+            enum: ['missing_hr', 'already_present', 'updated', 'failed']
+          },
+          samples: { type: 'integer' },
+          error: { type: 'string' }
+        },
+        required: ['id', 'status']
+      },
+      HrBackfillResult: {
+        type: 'object',
+        properties: {
+          ok: { type: 'boolean' },
+          scanned: { type: 'integer' },
+          updated: { type: 'integer' },
+          skipped: { type: 'integer' },
+          failed: { type: 'integer' },
+          items: { type: 'array', items: { $ref: '#/components/schemas/HrBackfillItem' } }
+        },
+        required: ['ok', 'scanned', 'updated', 'skipped', 'failed', 'items']
       },
       ProgramRun: {
         type: 'object',
