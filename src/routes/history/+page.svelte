@@ -884,6 +884,7 @@
     compareTargetTotals = null
     compareSuggestions = []
     compareSearch = ''
+    if (!hrDetails[item.id]?.samples?.length) void loadHrDetails(item.id)
     loadCompareSuggestions(item)
   }
 
@@ -901,6 +902,7 @@
   const chooseCompareTarget = (workout: CompletedWorkout, totals?: CompareTotals | null) => {
     compareTarget = workout
     compareTargetTotals = ensureCompareTotals(workout, totals)
+    if (!hrDetails[workout.id]?.samples?.length) void loadHrDetails(workout.id)
   }
 
   const swapCompareSides = () => {
