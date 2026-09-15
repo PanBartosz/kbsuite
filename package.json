@@ -9,15 +9,21 @@
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"test": "node scripts/test.mjs",
+		"test:browser": "playwright test",
+		"profile:counter": "KB_PROFILE=1 playwright test tests/browser/profile.spec.ts",
+		"test:pose": "KB_REAL_POSE=1 playwright test tests/browser/real-pose.spec.ts"
 	},
 	"devDependencies": {
+		"@playwright/test": "^1.63.0",
 		"@sveltejs/adapter-auto": "^7.0.0",
 		"@sveltejs/kit": "^2.48.5",
 		"@sveltejs/vite-plugin-svelte": "^6.2.1",
 		"@types/better-sqlite3": "^7.6.12",
 		"@types/markdown-it": "^14.1.2",
 		"@types/node": "^22.10.1",
+		"esbuild": "^0.28.2",
 		"svelte": "^5.43.8",
 		"svelte-check": "^4.3.4",
 		"typescript": "^5.9.3",

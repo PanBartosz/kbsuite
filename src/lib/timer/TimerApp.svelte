@@ -11,11 +11,7 @@ import { libraryTemplates } from '$lib/timer/library/index.js'
 import TimerDisplay from '$lib/timer/components/TimerDisplay.svelte'
 import PhaseQueue from '$lib/timer/components/PhaseQueue.svelte'
 import ControlBar from '$lib/timer/components/ControlBar.svelte'
-  import YamlHelpModal from '$lib/timer/components/YamlHelpModal.svelte'
   import LibraryModal from '$lib/timer/components/LibraryModal.svelte'
-  import PlanEditorModal from '$lib/timer/components/PlanEditorModal.svelte'
-  import RoundEditorModal from '$lib/timer/components/RoundEditorModal.svelte'
-  import SetEditorModal from '$lib/timer/components/SetEditorModal.svelte'
   import TimerWorker from '$lib/timer/workers/timerWorker.js?worker'
   import { settings, openSettingsModal, setTimerSettings } from '$lib/stores/settings'
   import { pushToast } from '$lib/stores/toasts'
@@ -30,7 +26,7 @@ import {
   summaryLatestRepCount
 } from '$lib/stats/summaryStore'
 import { get } from 'svelte/store'
-import '$lib/timer/app.css'
+import '$lib/timer/mobile-workout.css'
 
   const dispatch = createEventDispatcher()
 
@@ -534,6 +530,8 @@ let plan =
   let isFullscreenSupported = false
   let isFullscreen = false
   let fullscreenOverlayActive = false
+  let mobileWorkout = false
+  let removeViewportListener = () => {}
   let roundEditorOpen = false
   let roundEditorIndex = null
   let roundEditorData = null
@@ -571,7 +569,7 @@ let plan =
     enableOverlayBigPictureFullscreen = $settings.timer.enableOverlayBigPictureFullscreen === true
   }
   $: if ($settings.timer.openAiVoice && $settings.timer.openAiVoice !== openAiVoice) openAiVoice = $settings.timer.openAiVoice
-  $: fullscreenOverlayActive = Boolean(isFullscreen && showInlineSlot && enableOverlayBigPictureFullscreen)
+  $: fullscreenOverlayActive = Boolean(isFullscreen && showInlineSlot && enableOverlayBigPictureFullscreen && !mobileWorkout)
   $: emitState()
 
   export function start() {
@@ -1110,6 +1108,7 @@ let plan =
   }
 
   onDestroy(() => {
+    removeViewportListener()
     stopAllSpeech()
     clearSkipDelay()
     ttsStatusMessage = ''
@@ -1310,6 +1309,7 @@ let plan =
   let timerError = null
   let showYamlHelp = false
   let libraryModalOpen = false
+  let editorOpen = false
   let nextWorkCountdownIndex = null
   let workFinishCountdownIndex = null
 
@@ -1536,6 +1536,7 @@ let plan =
         elapsedMs = totalDurationMs
         nextWorkCountdownIndex = null
         workFinishCountdownIndex = null
+        dispatch('stop', { reason: 'completed' })
         const shouldAutoOpen = $settings.timer.autoOpenSummaryOnComplete !== false
         if (isBrowser && shouldAutoOpen && !autoOpenedSummaryOnComplete) {
           autoOpenedSummaryOnComplete = true
@@ -2376,6 +2377,12 @@ Rules:
   }
 
   onMount(() => {
+    const workoutViewport = window.matchMedia('(max-width: 900px), (max-height: 600px) and (max-width: 1200px)')
+    const updateWorkoutViewport = () => { mobileWorkout = showInlineSlot && workoutViewport.matches }
+    updateWorkoutViewport()
+    workoutViewport.addEventListener('change', updateWorkoutViewport)
+    removeViewportListener = () => workoutViewport.removeEventListener('change', updateWorkoutViewport)
+
     unsubscribeLatestRep = summaryLatestRepCount.subscribe((value) => {
       latestRepCountValue = value
     })
@@ -2478,8 +2485,8 @@ Rules:
 
 </script>
 
-<main class="page" class:compact-page={compact}>
-  {#if !compact && !hideHeader}
+<main class="page" class:compact-page={compact} class:mobile-workout-page={mobileWorkout}>
+  {#if !compact && !hideHeader && !mobileWorkout}
     <header class="page__header">
       <div>
         <p class="page__eyebrow">Workout plan</p>
@@ -2501,6 +2508,7 @@ Rules:
       bind:this={timerPanelEl}
       class:timer-panel--fullscreen={isFullscreen}
       class:timer-panel--overlay={fullscreenOverlayActive}
+      class:mobile-workout={mobileWorkout}
     >
       <div class="timer-panel__status">
         <div class="timer-panel__status-group">
@@ -2588,14 +2596,18 @@ Rules:
     {activePhase}
     {phaseRemainingSeconds}
     {phaseProgressPercent}
-    {nextPhase}
+    nextPhase={activePhaseIndex < 0 && timerStatusMessage !== 'Workout complete' ? timeline[0] : nextPhase}
     totalRemainingSeconds={totalRemainingSeconds}
     overallProgressPercent={overallProgressPercent}
     isRunning={isTimerRunning}
     isPaused={isTimerPaused}
     showInlineSlot={showInlineSlot}
+    {mobileWorkout}
     on:toggleTimer={handleTimerTap}
   >
+    <svelte:fragment slot="stats">
+      <slot name="hud-right" />
+    </svelte:fragment>
     <svelte:fragment slot="inline">
       {#if showInlineSlot}
         <div class="inline-content">
@@ -2608,6 +2620,7 @@ Rules:
 
           {#if !hideControlBar && !fullscreenOverlayActive}
             <ControlBar
+              compact={mobileWorkout}
               isRunning={isTimerRunning}
               isPaused={isTimerPaused}
               canStart={canStartTimer}
@@ -2622,8 +2635,11 @@ Rules:
         </div>
       </div>
 
-      {#if !isFullscreen}
-        <PhaseQueue phases={timeline} activeIndex={activePhaseIndex} />
+      {#if !isFullscreen && !mobileWorkout}
+        <details class="timeline-details">
+          <summary>Workout timeline · {timeline.length} phases</summary>
+          <PhaseQueue phases={timeline} activeIndex={activePhaseIndex} />
+        </details>
       {/if}
       {#if stopConfirmOpen}
         <div
@@ -2645,6 +2661,8 @@ Rules:
     </section>
 
     {#if !compact}
+    <details class="workout-editor" bind:open={editorOpen}>
+      <summary><span>{editorOpen ? 'Close workout editor' : 'Edit workout'}</span><span class="editor-hint">Library, plan & settings</span></summary>
     <section class="planner-panel">
       <section class="saved-workouts">
         <div class="saved-workouts__header">
@@ -3127,12 +3145,15 @@ Rules:
         </div>
       </section>
     </section>
+    </details>
     {/if}
   </div>
 
 </main>
 
-<PlanEditorModal
+{#if planEditorOpen}
+  {#await import('$lib/timer/components/PlanEditorModal.svelte') then module}
+    <svelte:component this={module.default}
   open={planEditorOpen}
   title={plan.title}
   description={plan.description}
@@ -3141,16 +3162,24 @@ Rules:
   on:close={closePlanEditor}
   on:save={handlePlanSave}
 />
+  {/await}
+{/if}
 
-<RoundEditorModal
+{#if roundEditorOpen}
+  {#await import('$lib/timer/components/RoundEditorModal.svelte') then module}
+    <svelte:component this={module.default}
   open={roundEditorOpen}
   round={roundEditorData}
   roundIndex={roundEditorIndex ?? 0}
   on:close={closeRoundEditor}
   on:save={handleRoundSave}
 />
+  {/await}
+{/if}
 
-<SetEditorModal
+{#if setEditorOpen}
+  {#await import('$lib/timer/components/SetEditorModal.svelte') then module}
+    <svelte:component this={module.default}
   open={setEditorOpen}
   roundIndex={setEditorRoundIndex ?? 0}
   setIndex={setEditorSetIndex ?? 0}
@@ -3158,6 +3187,8 @@ Rules:
   on:close={closeSetEditor}
   on:save={handleSetSave}
 />
+  {/await}
+{/if}
 
 <LibraryModal
   open={libraryModalOpen}
@@ -3166,16 +3197,22 @@ Rules:
   on:select={handleLibraryTemplateSelect}
 />
 
-<YamlHelpModal open={showYamlHelp} on:close={() => (showYamlHelp = false)} />
+{#if showYamlHelp}
+  {#await import('$lib/timer/components/YamlHelpModal.svelte') then module}
+    <svelte:component this={module.default} open={showYamlHelp} on:close={() => (showYamlHelp = false)} />
+  {/await}
+{/if}
 
 <style>
   .page {
+    width: 100%;
+    min-width: 0;
     max-width: 960px;
     margin: 0 auto;
-    padding: 2.5rem 1.25rem 3.5rem;
+    padding: 1rem 0 2rem;
     display: flex;
     flex-direction: column;
-    gap: 2.25rem;
+    gap: 1.25rem;
   }
   .page.compact-page {
     max-width: none;
@@ -3901,7 +3938,7 @@ Rules:
   }
 
   button.ghost:hover {
-    color: var(--color-text-inverse);
+    color: var(--color-text-primary);
     border-color: var(--color-border-hover);
   }
 
@@ -4716,5 +4753,25 @@ Rules:
     .set__meta {
       align-items: flex-start;
     }
+  }
+  .workout-editor { min-width: 0; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface-1); }
+  .workout-editor > summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 1rem; min-height: 56px; cursor: pointer; font-weight: 600; }
+  .workout-editor > summary::after { content: '+'; font-size: 1.35rem; }
+  .workout-editor[open] > summary::after { content: '−'; }
+  .workout-editor[open] > summary { border-bottom: 1px solid var(--color-border); }
+  .workout-editor > summary::-webkit-details-marker { display: none; }
+  .workout-editor .planner-panel { padding: 1rem; }
+  .editor-hint { margin-left: auto; font-size: 0.85rem; color: var(--color-text-muted); font-weight: 400; }
+  @media (max-width: 640px) { .editor-hint { display: none; } .workout-editor .planner-panel { padding: 0.5rem; } }
+  .timeline-details > summary { min-height: 44px; padding: 0.6rem 0; cursor: pointer; color: var(--color-text-muted); }
+  @media (max-width: 640px) {
+    .page:not(.mobile-workout-page):not(.compact-page) { padding: 0.25rem 0 1rem; gap: 0.75rem; }
+    .page:not(.mobile-workout-page):not(.compact-page) .timer-panel { padding: 0.75rem; gap: 0.75rem; border-radius: 16px; }
+    .page:not(.mobile-workout-page):not(.compact-page) .timer-panel__phase { display: none; }
+    .page:not(.mobile-workout-page):not(.compact-page) .status-actions .ghost { padding: 0.45rem 0.65rem; }
+    .page:not(.mobile-workout-page):not(.compact-page) .timer-panel__status { gap: 0.5rem; }
+    .page:not(.mobile-workout-page):not(.compact-page) :global(.timer-display) { gap: 0.75rem; }
+    .page:not(.mobile-workout-page):not(.compact-page) :global(.control-bar) { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0.5rem; gap: 0.35rem; }
+    .page:not(.mobile-workout-page):not(.compact-page) :global(.control-bar__button) { min-height: 48px; padding: 0.5rem 0.2rem; }
   }
 </style>

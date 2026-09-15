@@ -1,7 +1,7 @@
 <script lang="ts">
   import { effectiveMode, repCount, runState } from '$lib/counter/stores/session'
 
-  $: display = $runState !== 'running' || $effectiveMode === 'disabled' ? '—' : String($repCount)
+  $: display = $runState === 'idle' || $effectiveMode === 'disabled' ? '—' : String($repCount)
 </script>
 
 <div class="rep-badge" aria-label="Repetition count">

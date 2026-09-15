@@ -244,11 +244,45 @@
     <p class="error">{error}</p>
   {/if}
 
-  <div class="program-grid">
-    <section class="panel wizard">
+  <section class="panel runs runs-bar">
+    <div class="section-head">
+      <div>
+        <h2>Saved Runs</h2>
+        <p class="muted small">Select a saved run, generate planner entries, or compare completed blocks.</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="ghost small" on:click={loadPrograms} disabled={loading}>
+          Refresh
+        </button>
+        <button type="button" class="ghost small" on:click={createRun} disabled={saving}>
+          {saving ? 'Saving...' : 'Save draft'}
+        </button>
+      </div>
+    </div>
+    {#if loading}
+      <p class="muted">Loading...</p>
+    {:else if runs.length === 0}
+      <p class="muted compact-empty">No saved runs yet. Build the wizard below, then preview or save the run.</p>
+    {:else}
+      <div class="run-list">
+        {#each runs as run}
+          <button
+            type="button"
+            class:active={selectedRun?.id === run.id}
+            on:click={() => selectRun(run)}
+          >
+            <strong>{run.title}</strong>
+            <span>{run.status} · {run.workouts?.length ?? 0} days</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </section>
+
+  <section class="panel wizard">
       <div class="section-head">
         <h2>DEP Total Work Wizard</h2>
-        <p class="muted small">Adapter: {spec.kind}</p>
+
       </div>
 
       <div class="form-grid">
@@ -357,85 +391,56 @@
       </div>
 
       <h3>Secondary Work</h3>
+      <div class="secondary-scroller">
       <div class="secondary-list">
         {#each spec.secondary as slot, idx}
           <div class="secondary-row">
-            <div class="day-label">D{idx + 1}</div>
+            <div class="day-label">Day {idx + 1}</div>
             <label class="check">
               <input type="checkbox" bind:checked={slot.enabled} />
               On
             </label>
-            <input aria-label="Secondary exercise" bind:value={slot.exercise} />
-            <select aria-label="Secondary format" bind:value={slot.format}>
+            <label class="secondary-exercise">Exercise<input aria-label="Secondary exercise" bind:value={slot.exercise} /></label>
+            <label class="secondary-format">Format<select aria-label="Secondary format" bind:value={slot.format}>
               <option value="none">none</option>
               <option value="lr-emom">left/right EMOM</option>
               <option value="timed">timed block</option>
               <option value="regular-sets">regular sets</option>
-            </select>
+            </select></label>
             <label>
-              kg
+              Load (kg)
               <input type="number" step="0.5" bind:value={slot.load} />
             </label>
             <label>
-              min
+              Minutes
               <input type="number" min="1" bind:value={slot.minutes} />
             </label>
             <label>
-              rounds
+              Rounds
               <input type="number" min="1" bind:value={slot.rounds} />
             </label>
             <label>
-              sets
+              Sets
               <input type="number" min="1" bind:value={slot.sets} />
             </label>
             <label>
-              work s
+              Work (seconds)
               <input type="number" min="10" bind:value={slot.workSeconds} />
             </label>
             <label>
-              rest s
+              Rest (seconds)
               <input type="number" min="0" bind:value={slot.restSeconds} />
             </label>
-            <select aria-label="Secondary counter mode" bind:value={slot.repCounterMode}>
+            <label class="secondary-counter">Rep counter<select aria-label="Secondary counter mode" bind:value={slot.repCounterMode}>
               <option value="disabled">counter off</option>
               <option value="lockout">lockout</option>
               <option value="swing">swing</option>
-            </select>
+            </select></label>
           </div>
         {/each}
       </div>
-    </section>
-
-    <aside class="panel runs">
-      <div class="section-head">
-        <h2>Saved Runs</h2>
-        <button type="button" class="ghost small" on:click={loadPrograms} disabled={loading}>
-          Refresh
-        </button>
       </div>
-      {#if loading}
-        <p class="muted">Loading...</p>
-      {:else if runs.length === 0}
-        <p class="muted">No program runs yet.</p>
-      {:else}
-        <div class="run-list">
-          {#each runs as run}
-            <button
-              type="button"
-              class:active={selectedRun?.id === run.id}
-              on:click={() => selectRun(run)}
-            >
-              <strong>{run.title}</strong>
-              <span>{run.status} · {run.workouts?.length ?? 0} days</span>
-            </button>
-          {/each}
-        </div>
-      {/if}
-      <button type="button" class="ghost" on:click={createRun} disabled={saving}>
-        {saving ? 'Saving...' : 'Save without generating'}
-      </button>
-    </aside>
-  </div>
+  </section>
 
   {#if previewWorkouts.length}
     <section class="panel">
@@ -513,7 +518,7 @@
               </span>
               <span class="row-actions">
                 <button type="button" class="ghost small" on:click={() => openTimer(workout.planned_workout_id)} disabled={!workout.planned_workout_id}>Timer</button>
-                <button type="button" class="ghost small" on:click={() => openBigPicture(workout.planned_workout_id)} disabled={!workout.planned_workout_id}>Big</button>
+                <button type="button" class="ghost small" on:click={() => openBigPicture(workout.planned_workout_id)} disabled={!workout.planned_workout_id}>Big Picture</button>
               </span>
             </div>
           {/each}
@@ -526,7 +531,7 @@
     <section class="panel">
       <div class="section-head">
         <h2>Run Comparison</h2>
-        <p class="muted small">Same adapter, newest first</p>
+        <p class="muted small">Same program type, newest first</p>
       </div>
       <div class="compare-grid">
         {#each compareCandidates as candidate}
@@ -553,9 +558,11 @@
 
 <style>
   .programs-page {
-    max-width: 1440px;
+    max-width: 1680px;
+    width: 100%;
+    min-width: 0;
     margin: 0 auto;
-    padding: 1rem;
+    padding: clamp(0.8rem, 1.6vw, 1.5rem);
   }
 
   .programs-header,
@@ -571,16 +578,10 @@
     margin-bottom: 1rem;
   }
 
-  .program-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
-    gap: 1rem;
-  }
-
   .panel {
     background: var(--color-surface-1);
     border: 1px solid var(--color-border);
-    border-radius: 8px;
+    border-radius: 14px;
     padding: 1rem;
     margin-bottom: 1rem;
   }
@@ -603,6 +604,7 @@
   }
 
   label {
+    min-width: 0;
     display: grid;
     gap: 0.35rem;
     font-size: 0.85rem;
@@ -613,9 +615,11 @@
   select {
     width: 100%;
     min-width: 0;
-    padding: 0.5rem 0.6rem;
+    padding: 0.65rem 0.7rem;
+    min-height: 44px;
+    font: inherit;
     border: 1px solid var(--color-border);
-    border-radius: 6px;
+    border-radius: 10px;
     background: var(--color-surface-2);
     color: var(--color-text-primary);
   }
@@ -623,8 +627,8 @@
   button {
     border: 1px solid var(--color-accent);
     background: var(--color-accent);
-    color: var(--color-accent-contrast);
-    border-radius: 6px;
+    color: var(--color-on-accent);
+    border-radius: 10px;
     padding: 0.55rem 0.8rem;
     cursor: pointer;
     font-weight: 700;
@@ -662,6 +666,14 @@
     color: var(--color-danger);
   }
 
+  .runs-bar {
+    padding-bottom: 0.85rem;
+  }
+
+  .compact-empty {
+    margin-bottom: 0;
+  }
+
   .rest-days {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -676,24 +688,34 @@
   }
 
   .check input {
-    width: auto;
+    width: 20px;
+    height: 20px;
+    min-height: 0;
   }
 
   .secondary-list {
     display: grid;
     gap: 0.6rem;
+    min-width: 0;
+  }
+
+  .secondary-scroller {
+    min-width: 0;
+    padding-bottom: 0.2rem;
   }
 
   .secondary-row {
     display: grid;
-    grid-template-columns: 40px 70px minmax(150px, 1.5fr) minmax(130px, 1fr) repeat(6, minmax(72px, 0.7fr)) minmax(110px, 1fr);
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 0.45rem;
     align-items: end;
     padding: 0.55rem;
     border: 1px solid var(--color-border);
-    border-radius: 8px;
+    border-radius: 14px;
   }
 
+  .secondary-exercise, .secondary-format { grid-column: span 2; }
+  .secondary-counter { grid-column: span 2; }
   .day-label {
     font-weight: 800;
     color: var(--color-accent);
@@ -701,14 +723,17 @@
   }
 
   .run-list {
-    display: grid;
+    display: flex;
     gap: 0.5rem;
-    margin-bottom: 0.75rem;
+    overflow-x: auto;
+    padding-bottom: 0.15rem;
   }
 
   .run-list button {
     display: grid;
     gap: 0.2rem;
+    min-width: 230px;
+    max-width: 340px;
     text-align: left;
     background: var(--color-surface-2);
     color: var(--color-text-primary);
@@ -748,7 +773,7 @@
 
   .table-row.static {
     border: 1px solid var(--color-border);
-    border-radius: 6px;
+    border-radius: 10px;
     padding: 0.55rem 0.8rem;
   }
 
@@ -766,7 +791,7 @@
     max-height: 420px;
     overflow: auto;
     padding: 0.8rem;
-    border-radius: 8px;
+    border-radius: 14px;
     background: var(--color-surface-2);
     border: 1px solid var(--color-border);
   }
@@ -783,7 +808,7 @@
     gap: 0.2rem;
     padding: 0.75rem;
     border: 1px solid var(--color-border);
-    border-radius: 8px;
+    border-radius: 14px;
     background: var(--color-surface-2);
   }
 
@@ -804,7 +829,7 @@
 
   .compare-grid article {
     border: 1px solid var(--color-border);
-    border-radius: 8px;
+    border-radius: 14px;
     padding: 0.85rem;
     background: var(--color-surface-2);
   }
@@ -818,11 +843,6 @@
   }
 
   @media (max-width: 1050px) {
-    .program-grid,
-    .secondary-row {
-      grid-template-columns: 1fr;
-    }
-
     .programs-header,
     .section-head {
       align-items: flex-start;
@@ -841,5 +861,40 @@
     .metric-strip {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+  }
+
+  @media (max-width: 760px) {
+    .header-actions {
+      width: 100%;
+      flex-wrap: wrap;
+      justify-content: flex-start;
+    }
+
+    .run-list {
+      display: grid;
+      overflow-x: visible;
+    }
+
+    .run-list button {
+      max-width: none;
+      min-width: 0;
+    }
+
+    .metric-strip {
+      grid-template-columns: 1fr;
+    }
+  }
+  @media (max-width: 760px) {
+    .programs-page { padding: 0; }
+    .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .secondary-row { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0.75rem; gap: 0.75rem; }
+    .secondary-exercise, .secondary-format, .secondary-counter { grid-column: 1 / -1; }
+    .check { min-height: 44px; }
+    .header-actions button { min-height: 44px; }
+    .header-actions { gap: 0.5rem; }
+    .compare-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 420px) {
+    .form-grid { grid-template-columns: minmax(0, 1fr); }
   }
 </style>

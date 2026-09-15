@@ -10,6 +10,7 @@
   export let isRunning = false
   export let isPaused = false
   export let showInlineSlot = false
+  export let mobileWorkout = false
 
   const dispatch = createEventDispatcher()
 
@@ -23,6 +24,8 @@
 
   const labelForPhaseType = (type) => {
     switch (type) {
+      case 'prep':
+        return 'Get ready'
       case 'work':
         return 'Work'
       case 'rest':
@@ -54,7 +57,7 @@
     : activePhase?.type ?? 'idle'
 </script>
 
-<section class="timer-display" aria-live="assertive">
+<section class="timer-display" class:mobile-display={mobileWorkout} aria-label="Workout timer">
   <header class="timer-display__header">
     <span class="timer-display__phase-type">
       {#if activePhase}
@@ -101,6 +104,9 @@
         {/if}
       </p>
     </div>
+    {#if mobileWorkout}
+      <div class="mobile-stats"><slot name="stats" /></div>
+    {/if}
     {#if showInlineSlot}
       <div class="inline-slot">
         <slot name="inline" />
@@ -118,7 +124,7 @@
   </div>
 
   <div class="timer-display__next">
-    <p class="timer-display__next-label">Next phase</p>
+    <p class="timer-display__next-label">{activePhase ? 'Next phase' : 'First phase'}</p>
     {#if nextPhase}
       <div class="timer-display__next-meta">
         <strong>{nextPhase.label}</strong>
@@ -131,6 +137,8 @@
 </section>
 
 <style>
+  .mobile-stats { min-width: 0; }
+
   .timer-display {
     display: flex;
     flex-direction: column;

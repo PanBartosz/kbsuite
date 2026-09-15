@@ -102,4 +102,9 @@
     flex: 1;
     min-width: 0;
   }
+  @media (max-width: 900px), (max-height: 600px) and (max-width: 1200px) {
+    .big-shell { padding: 0; }
+    :global(main.page:has(> .big-shell)) { padding: 0.25rem; }
+    :global(.big-shell .page) { padding: 0.25rem; }
+  }
 </style>

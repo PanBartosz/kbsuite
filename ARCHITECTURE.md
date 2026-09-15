@@ -150,7 +150,12 @@ Validation/editor experience:
 - Main UI: `src/lib/counter/CounterApp.svelte` + `src/lib/counter/components/PoseSession.svelte`.
 - State: `src/lib/counter/stores/session.ts` stores run state, rep count, pose stats, and selected mode.
 - Core logic: `src/lib/counter/pose/*` (repCounter, tracking, calibration, gestures).
-- Uses TFJS + pose detection, with a worker (`src/lib/counter/pose/pose.worker.ts`) for heavier processing.
+- Uses TFJS + MoveNet Lightning in a lazily initialized worker (`src/lib/counter/pose/pose.worker.ts`).
+- `PoseClient` owns one frame slot through capture and inference; the protocol carries frame ID, capture timestamp and session/phase generation. Late responses cannot update another phase. Backend selection includes detector warm-up and fallback.
+- `PoseSession` requests 640×480 video at up to 30 FPS, transfers proportionally resized frames (640-pixel long edge), and retains the existing 20/10 FPS inference ceilings. New-video-frame callbacks have an animation-frame fallback.
+- Pause, hidden documents and inactive phase directives suspend inference. Stop, natural completion and route teardown release camera, worker and voice buffers. Observation gaps preserve counts but require motion to rearm.
+- Mobile Big Picture uses `mobile-workout.css` and shared TimerDisplay stats/controls, retaining a single mounted camera across rotation/fullscreen changes. The shared navigation collapses on narrow or short landscape viewports. Desktop overlay settings remain supported.
+- Voice packs use bounded look-ahead decoding; editor dialogs load on demand. See `docs/mobile-refinement.md` for tests, profiling and outstanding A35 validation.
 - In “Big Picture”, the timer controls the rep counter per phase (enable/disable, allow gestures, set mode).
 
 ## Completed Workouts and Summary Logging
@@ -170,11 +175,22 @@ Validation/editor experience:
 
 ## PWA / Service Worker
 
-- `src/service-worker.ts` caches the SvelteKit build output and static assets and serves them from cache for same-origin `GET` requests.
+- `src/service-worker.ts` precaches entry scripts, CSS and basic static assets. Other build assets and voice audio are cached on request, avoiding a full editor/ML/voice download on install. It handles only known same-origin asset GET requests and removes only obsolete KB Suite caches.
 - Manifest: `static/manifest.webmanifest` (see `src/app.html`).
+
+## Shared interface behavior
+
+- `src/lib/components/ActionMenu.svelte` provides the native disclosure used by card actions and the Train navigation group. It retains ordinary button/link keyboard behavior, dismisses on selection/Escape/outside click, and positions its options within the viewport.
+- Navigation exposes the active route; the summary draft is available contextually from the timer or Train group.
+- `WorkoutSummaryModal` uses a scrolling table on desktop and labeled set cards with a persistent footer on phones. `actions/modal.ts` gives only the top modal ownership of focus trapping.
+- Programs secondary-work forms use responsive labeled grids; Home session details and movement analysis, and TimerApp editing/timeline, use native disclosures. Collapsing the timer editor does not unmount it or the timer/camera.
+- `src/app.css` owns shared font/focus behavior and separate accent foreground tokens. `src/lib/format/date.ts` formats readable timestamps without seconds.
+- See `docs/interface-refinement.md` and `tests/browser/design.spec.ts` for the workflow and responsive checks.
 
 ## Deployment
 
+- Pushes to `main` run typechecking, counter tests, a production build, and browser regressions on Node 24. The workflow then builds and loads the Docker image, verifies startup and SQLite read/write behavior using `scripts/smoke-container.mjs`, and only publishes its commit tag and `latest` after these checks pass. OCI labels identify the source revision. Only the newest run for a branch remains active.
+- `.dockerignore` excludes local databases and browser artifacts. The runtime storage mount remains `/app/data`.
 - Docker build/run:
   - `Dockerfile` installs dependencies, runs `npm run build`, then serves via `npm run preview -- --host 0.0.0.0 --port 4173`.
   - `docker-compose.yml` runs the image and mounts the external volume `kb_suite_data` to `/app/data`.

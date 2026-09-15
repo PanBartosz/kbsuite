@@ -17,14 +17,13 @@
 		summaryModalOpen
 	} from '$lib/stats/summaryStore';
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
+	import ActionMenu from '$lib/components/ActionMenu.svelte';
 
 	let { children } = $props();
 	let menuOpen = $state(false);
-	let pendingShareCount = $state(0);
-
-	shares.subscribe((value) => {
-		pendingShareCount = value.count ?? 0;
-	});
+	let pendingShareCount = $derived($shares.count ?? 0);
+	let trainActive = $derived(['/timer', '/counter', '/big-picture'].includes(page.url.pathname));
 
 	const openSettings = () => {
 		openSettingsModal();
@@ -46,6 +45,10 @@
 	};
 
 	onMount(() => {
+		const outside = (event: PointerEvent) => {
+			if (!(event.target as HTMLElement).closest('.topbar')) closeMenu();
+		};
+		document.addEventListener('pointerdown', outside);
 		// ensure session cookie exists
 		fetch('/api/session').catch(() => {});
 		loadPendingCount();
@@ -57,6 +60,7 @@
 					console.warn('Service worker registration failed', err);
 				});
 		}
+		return () => document.removeEventListener('pointerdown', outside);
 	});
 
 	const saveCompleted = async (entries: any[]): Promise<string | null> => {
@@ -108,43 +112,44 @@
 	/>
 </svelte:head>
 
+<svelte:window onkeydown={(event) => {
+	if (event.key === 'Escape' && menuOpen && !event.defaultPrevented) {
+		closeMenu();
+		document.querySelector<HTMLButtonElement>('.menu-toggle')?.focus();
+	}
+}} />
+
 <div class="app-shell">
 	<header class="topbar">
-	<div class="brand">
-		<span class="dot"></span>
-		<div>
-			<p class="eyebrow">KB Suite</p>
-		</div>
-	</div>
-	<button class="menu-toggle" type="button" onclick={toggleMenu}>
+	<a class="brand" href="/" onclick={closeMenu} aria-label="KB Suite home">
+		<span class="dot" aria-hidden="true"></span>
+		<span class="brand-name">KB Suite</span>
+	</a>
+	<button class="menu-toggle" type="button" onclick={toggleMenu} aria-expanded={menuOpen} aria-controls="main-navigation">
 		<span class="sr-only">Toggle navigation</span>
-		<div class="menu-icon" aria-hidden="true">
-			<span></span>
-			<span></span>
-			<span></span>
-		</div>
+		<span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
 	</button>
-	<nav class:open={menuOpen}>
-		<a href="/" onclick={closeMenu}>Home</a>
-			<a href="/plan" onclick={closeMenu}>
-				Planner
-				{#if pendingShareCount > 0}
-					<span class="pill">{pendingShareCount}</span>
-				{/if}
-			</a>
-			<a href="/programs" onclick={closeMenu}>Programs</a>
-			<a href="/timer" onclick={closeMenu}>Timer</a>
-		<a href="/counter" onclick={closeMenu}>Rep Counter</a>
-		<a href="/big-picture" onclick={closeMenu}>Big Picture</a>
-		<a href="/workouts" onclick={closeMenu}>Workouts</a>
-		<a href="/history" onclick={closeMenu}>History</a>
-		<a href="/auth" onclick={closeMenu}>Account</a>
-		<button class="settings-btn" type="button" onclick={openSummary}>
-			Summary
-		</button>
-		<button class="settings-btn" type="button" onclick={openSettings}>
-			Settings
-		</button>
+	<nav id="main-navigation" aria-label="Main navigation" class:open={menuOpen}>
+		<a href="/" aria-current={page.url.pathname === '/' ? 'page' : undefined} onclick={closeMenu}>Home</a>
+		<a href="/plan" aria-current={page.url.pathname === '/plan' ? 'page' : undefined} onclick={closeMenu}>
+			Planner
+			{#if pendingShareCount > 0}<span class="pill">{pendingShareCount}</span>{/if}
+		</a>
+		<a href="/programs" aria-current={page.url.pathname === '/programs' ? 'page' : undefined} onclick={closeMenu}>Programs</a>
+		<a href="/workouts" aria-current={page.url.pathname === '/workouts' ? 'page' : undefined} onclick={closeMenu}>Workouts</a>
+		<a href="/history" aria-current={page.url.pathname === '/history' ? 'page' : undefined} onclick={closeMenu}>History</a>
+		<div class="train-nav" class:active={trainActive}>
+			<ActionMenu label="Train">
+				<a href="/timer" aria-current={page.url.pathname === '/timer' ? 'page' : undefined} onclick={closeMenu}>Timer</a>
+				<a href="/counter" aria-current={page.url.pathname === '/counter' ? 'page' : undefined} onclick={closeMenu}>Rep Counter</a>
+				<a href="/big-picture" aria-current={page.url.pathname === '/big-picture' ? 'page' : undefined} onclick={closeMenu}>Big Picture</a>
+				{#if $summaryEntries.length > 0}<button type="button" onclick={openSummary}>Workout summary</button>{/if}
+			</ActionMenu>
+		</div>
+		<div class="nav-utilities">
+			<a href="/auth" aria-current={page.url.pathname === '/auth' ? 'page' : undefined} onclick={closeMenu}>Account</a>
+			<button class="settings-btn" type="button" onclick={openSettings}>Settings</button>
+		</div>
 	</nav>
 	</header>
 
@@ -178,7 +183,7 @@
 		padding: 0.75rem 1rem;
 		position: sticky;
 		top: 0;
-		z-index: 100;
+		z-index: 9;
 		background: color-mix(in srgb, var(--color-surface-1) 85%, transparent);
 		backdrop-filter: blur(10px);
 		border-bottom: 1px solid var(--color-border);
@@ -202,11 +207,20 @@
 	nav {
 		display: flex;
 		align-items: center;
-		gap: 0.85rem;
+		gap: 0.2rem;
 		font-weight: 600;
-		flex-wrap: wrap;
+		flex-wrap: nowrap;
 	}
 
+	.brand-name { font-weight: 700; white-space: nowrap; }
+	.nav-utilities { display: flex; align-items: center; gap: 0.2rem; margin-left: 0.65rem; padding-left: 0.65rem; border-left: 1px solid var(--color-border); }
+	.nav-utilities a { color: var(--color-text-muted); }
+	.settings-btn, nav a { min-height: 44px; }
+	nav a[aria-current="page"], .train-nav.active :global(summary) {
+		background: color-mix(in srgb, var(--color-accent) 14%, var(--color-surface-1));
+		border-color: var(--color-accent);
+		color: var(--color-text-primary);
+	}
 	nav a {
 		color: var(--color-text-primary);
 		padding: 0.4rem 0.65rem;
@@ -224,16 +238,17 @@
 	}
 
 	.settings-btn {
-		background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-		color: var(--color-text-inverse);
-		border: none;
+		background: transparent;
+		color: var(--color-text-muted);
+		border: 1px solid transparent;
 		padding: 0.4rem 0.8rem;
 		border-radius: 10px;
 		cursor: pointer;
 		font-weight: 700;
 	}
 	.settings-btn:hover {
-		transform: translateY(-1px);
+		color: var(--color-text-primary);
+		background: var(--color-surface-2);
 	}
 	.pill {
 		display: inline-flex;
@@ -248,14 +263,20 @@
 		padding: 0 0.4rem;
 	}
 
-	@media (max-width: 720px) {
+	@media (max-width: 900px), (max-height: 600px) and (max-width: 1200px) {
 		.topbar {
-			flex-direction: column;
-			align-items: stretch;
+			flex-direction: row;
+			flex-wrap: wrap;
+			align-items: center;
 			gap: 0.5rem;
+			padding: 0.35rem 0.75rem;
+			background: var(--color-surface-1);
+			backdrop-filter: none;
 		}
 
 		.menu-toggle {
+			min-width: 48px;
+			min-height: 48px;
 			display: inline-flex;
 			align-items: center;
 			justify-content: center;
@@ -289,6 +310,10 @@
 			display: none;
 		}
 
+		nav { max-height: calc(100dvh - 64px); overflow-y: auto; }
+		.nav-utilities { width: 100%; margin: 0.35rem 0 0; padding: 0.5rem 0 0; border-left: 0; border-top: 1px solid var(--color-border); }
+		.train-nav { width: 100%; }
+		.train-nav :global(.action-options) { position: static; width: 100%; max-width: none; box-shadow: none; margin-top: 0.3rem; }
 		nav.open {
 			display: flex;
 		}
@@ -303,7 +328,7 @@
 		}
 	}
 
-	@media (min-width: 721px) {
+	@media (min-width: 901px) and (min-height: 601px), (min-width: 1201px) {
 		.menu-toggle {
 			display: none;
 		}

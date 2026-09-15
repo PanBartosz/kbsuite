@@ -40,7 +40,7 @@ const getFocusable = (root: HTMLElement) => {
   ].join(',')
   return Array.from(root.querySelectorAll<HTMLElement>(selector)).filter((el) => {
     const style = window.getComputedStyle(el)
-    return style.display !== 'none' && style.visibility !== 'hidden'
+    return el.getClientRects().length > 0 && style.display !== 'none' && style.visibility !== 'hidden'
   })
 }
 
@@ -107,7 +107,7 @@ export const modal = (node: HTMLElement, opts: ModalBehaviorOptions = {}) => {
   }
 
   const handleTabTrap = (event: KeyboardEvent) => {
-    if (!wantsFocusTrap) return
+    if (!wantsFocusTrap || stack.at(-1)?.id !== id) return
     if (event.key !== 'Tab') return
     const focusables = getFocusable(node)
     if (!focusables.length) {
@@ -133,7 +133,7 @@ export const modal = (node: HTMLElement, opts: ModalBehaviorOptions = {}) => {
   }
 
   const handleFocusIn = (event: FocusEvent) => {
-    if (!wantsFocusTrap) return
+    if (!wantsFocusTrap || stack.at(-1)?.id !== id) return
     const target = event.target as HTMLElement | null
     if (!target) return
     if (node.contains(target)) return
@@ -170,4 +170,3 @@ export const modal = (node: HTMLElement, opts: ModalBehaviorOptions = {}) => {
     destroy
   }
 }
-

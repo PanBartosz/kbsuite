@@ -5,6 +5,7 @@
   export let isPaused = false
   export let canStart = true
   export let canSkip = false
+  export let compact = false
 
   const dispatch = createEventDispatcher()
 
@@ -13,7 +14,14 @@
   }
 </script>
 
-<nav class="control-bar" aria-label="Timer controls">
+<nav class="control-bar" class:compact aria-label="Timer controls">
+  {#if compact}
+    <button class="control-bar__button control-bar__button--primary" type="button"
+      disabled={!isRunning && !isPaused && !canStart}
+      on:click={handle(isPaused ? 'resume' : isRunning ? 'pause' : 'start')}>
+      {isPaused ? 'Resume' : isRunning ? 'Pause' : 'Start'}
+    </button>
+  {:else}
   <button
     class="control-bar__button control-bar__button--primary"
     type="button"
@@ -36,6 +44,8 @@
     {/if}
   </button>
 
+  {/if}
+
   <button
     class="control-bar__button control-bar__button--ghost"
     type="button"
@@ -56,6 +66,17 @@
 </nav>
 
 <style>
+  .control-bar.compact {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    grid-template-columns: 1.4fr 1fr 1fr;
+    padding: 0.5rem 0.5rem max(0.5rem, env(safe-area-inset-bottom));
+    background: var(--color-surface-1);
+    gap: 0.5rem;
+  }
+  .control-bar.compact .control-bar__button { min-height: 48px; font-size: 1rem; padding: 0.5rem; }
+
   .control-bar {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -91,11 +112,12 @@
 
   .control-bar__button--primary {
     background: var(--color-accent);
-    color: var(--color-text-inverse);
+    color: var(--color-on-accent);
   }
 
   .control-bar__button--primary:not(:disabled):hover {
     background: var(--color-accent-hover);
+    color: var(--color-on-accent-hover);
     transform: translateY(-1px);
     box-shadow: 0 8px 16px rgba(15, 23, 42, 0.25);
   }

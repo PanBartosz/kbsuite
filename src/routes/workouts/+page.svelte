@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import ActionMenu from '$lib/components/ActionMenu.svelte'
+  import { formatDateTime } from '$lib/format/date'
   import { pushToast } from '$lib/stores/toasts'
   import { modal } from '$lib/actions/modal'
 
@@ -183,20 +185,18 @@
               <p class="muted">{workout.description}</p>
             {/if}
             {#if workout.updated_at}
-              <p class="muted small">Updated {new Date(workout.updated_at).toLocaleString()}</p>
+              <p class="muted small">Updated {formatDateTime(workout.updated_at)}</p>
             {/if}
           </div>
           <div class="actions">
-            <button class="primary" on:click={() => startInTimer(workout.id)}>Start (Timer)</button>
-            <button class="ghost" on:click={() => startInBigPicture(workout.id)}>Start (Big Picture)</button>
-            <button class="ghost" on:click={() => copyYaml(workout.yaml_source)}>Copy YAML</button>
-            <button
-              class="danger destructive"
-              disabled={workout.is_template}
-              on:click={() => requestDeleteWorkout(workout.id, workout.is_template)}
-            >
-              Delete
-            </button>
+            <button class="primary" on:click={() => startInTimer(workout.id)}>Start workout</button>
+            <button class="ghost" on:click={() => startInBigPicture(workout.id)}>Big Picture</button>
+            <ActionMenu context={workout.name}>
+              <button type="button" on:click={() => copyYaml(workout.yaml_source)}>Copy YAML</button>
+              {#if !workout.is_template}
+                <button class="danger" type="button" on:click={() => requestDeleteWorkout(workout.id)}>Delete</button>
+              {/if}
+            </ActionMenu>
           </div>
         </article>
       {/each}
@@ -301,11 +301,12 @@
     padding: 0.9rem;
     background: var(--color-surface-2);
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 0.75rem;
     align-items: center;
   }
   .title-row {
+    flex-wrap: wrap;
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -335,10 +336,10 @@
     flex-wrap: wrap;
     justify-content: flex-end;
   }
-  .actions .destructive {
-    margin-left: auto;
-  }
+  h3 { margin: 0; }
+  .meta { min-width: 0; overflow-wrap: anywhere; }
   button {
+    min-height: 44px;
     padding: 0.45rem 0.8rem;
     border-radius: 10px;
     border: 1px solid var(--color-border);
@@ -348,8 +349,8 @@
     white-space: nowrap;
   }
   button.primary {
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
     border: none;
   }
   button.danger {

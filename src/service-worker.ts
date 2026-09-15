@@ -2,10 +2,16 @@ import { build, files, version } from '$service-worker';
 
 const CACHE_NAME = `kb-suite-${version}`;
 const ASSETS = new Set([...build, ...files]);
+// Route/editor/ML code and voice audio are cached on demand, not downloaded
+// together on first install. Visited assets remain available offline.
+const PRECACHE = [
+  ...build.filter((path) => path.includes('/immutable/entry/') || path.endsWith('.css')),
+  ...files.filter((path) => !path.startsWith('/voices/') || path.endsWith('/metadata.json'))
+];
 
 const addAssetsToCache = async () => {
 	const cache = await caches.open(CACHE_NAME);
-	await cache.addAll([...ASSETS]);
+	await cache.addAll(PRECACHE);
 };
 
 self.addEventListener('install', (event) => {
@@ -18,7 +24,7 @@ self.addEventListener('activate', (event) => {
 		caches.keys().then((keys) =>
 			Promise.all(
 				keys
-					.filter((key) => key !== CACHE_NAME)
+					.filter((key) => key.startsWith('kb-suite-') && key !== CACHE_NAME)
 					.map((key) => caches.delete(key))
 			)
 		)

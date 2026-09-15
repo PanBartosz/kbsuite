@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ActionMenu from '$lib/components/ActionMenu.svelte'
   import { onMount } from 'svelte'
   import YAML from 'yaml'
   import defaultPlanSource from '$lib/timer/config/default-plan.yaml?raw'
@@ -1002,12 +1003,14 @@
             {#if todayPlan.notes}<p class="muted small">{todayPlan.notes}</p>{/if}
           </div>
           <div class="today-actions">
-            <button class="primary" on:click={() => openTimer(todayPlan!, 'timer')}>Start in Timer</button>
-            <button class="ghost" on:click={() => openTimer(todayPlan!, 'big')}>Start in Big Picture</button>
+            <button class="primary" on:click={() => openTimer(todayPlan!, 'timer')}>Start workout</button>
+            <button class="ghost" on:click={() => openTimer(todayPlan!, 'big')}>Big Picture</button>
             <button class="ghost" on:click={() => openEdit(todayPlan!)}>Edit</button>
-            <button class="ghost" on:click={() => openShare(todayPlan!)}>Share</button>
-            <button class="text-button" on:click={() => openDuplicate(todayPlan!)}>Duplicate</button>
-            <button class="ghost danger destructive" on:click={() => requestDeletePlan(todayPlan!.id)}>Delete</button>
+            <ActionMenu context={todayPlan.title || 'Planned workout'}>
+              <button type="button" on:click={() => openShare(todayPlan!)}>Share</button>
+              <button type="button" on:click={() => openDuplicate(todayPlan!)}>Duplicate</button>
+              <button class="danger" type="button" on:click={() => requestDeletePlan(todayPlan!.id)}>Delete</button>
+            </ActionMenu>
           </div>
         </div>
       {:else}
@@ -1357,13 +1360,15 @@
                   {#if item.notes}<p class="muted small">{item.notes}</p>{/if}
                 </div>
                 <div class="actions">
-                  <button class="primary" on:click={() => openTimer(item, 'timer')}>Timer</button>
-                  <button class="ghost" on:click={() => openTimer(item, 'big')}>Big Picture</button>
-                  <button class="ghost" on:click={() => openEdit(item)}>Edit</button>
-                  <button class="ghost" on:click={() => openShare(item)}>Share</button>
-                  <button class="text-button" on:click={() => openDuplicate(item)}>Duplicate</button>
-                  <button class="ghost danger destructive" on:click={() => requestDeletePlan(item.id)}>Delete</button>
-                </div>
+            <button class="primary" on:click={() => openTimer(item, 'timer')}>Start workout</button>
+            <button class="ghost" on:click={() => openTimer(item, 'big')}>Big Picture</button>
+            <button class="ghost" on:click={() => openEdit(item)}>Edit</button>
+            <ActionMenu context={item.title || 'Planned workout'}>
+              <button type="button" on:click={() => openShare(item)}>Share</button>
+              <button type="button" on:click={() => openDuplicate(item)}>Duplicate</button>
+              <button class="danger" type="button" on:click={() => requestDeletePlan(item.id)}>Delete</button>
+            </ActionMenu>
+          </div>
               </div>
               {#if timelineForYaml(item.yaml_source).length}
                 {@const parsedPlan = planFromYaml(item.yaml_source)}
@@ -1670,9 +1675,6 @@
     align-items: center;
     justify-content: flex-end;
   }
-  .today-actions .destructive {
-    margin-left: auto;
-  }
   .calendar-shell {
     display: flex;
     flex-direction: column;
@@ -1816,23 +1818,27 @@
     min-width: 0;
   }
   .day-row-title {
-    display: block;
+    display: -webkit-box;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
     color: var(--color-text-primary);
-    font-size: 0.62rem;
+    font-size: 0.85rem;
     text-align: left;
   }
   .day-row-meta {
     display: flex;
     align-items: center;
     gap: 0.35rem;
-    font-size: 0.55rem;
+    font-size: 0.75rem;
     color: var(--color-text-muted);
   }
   .day-row-hr {
-    font-size: 0.55rem;
+    font-size: 0.75rem;
     padding: 0.08rem 0.3rem;
     border-radius: 6px;
     border: 1px solid color-mix(in srgb, var(--color-accent) 60%, var(--color-border));
@@ -1879,9 +1885,6 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
-  }
-  .actions .destructive {
-    margin-left: auto;
   }
   .confirm-modal {
     position: fixed;
@@ -2261,8 +2264,8 @@
     cursor: pointer;
   }
   button.primary {
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
     border: none;
   }
   button.ghost {
@@ -2277,5 +2280,16 @@
   }
   .error {
     color: var(--color-danger);
+  }
+  .today-head h3 { margin: 0; font-size: 1rem; }
+  .today-card h4 { margin: 0 0 0.4rem; font-size: 1.2rem; }
+  .today-card { align-items: center; gap: 1rem; }
+  .today-card > div { min-width: 0; }
+  .today-actions { flex-shrink: 0; }
+  .today-actions button, .card-header .actions button { min-height: 44px; }
+  .calendar-grid { padding: 0.65rem; }
+  @media (min-width: 721px) and (max-width: 1100px) {
+    .today-card { flex-direction: column; align-items: stretch; }
+    .today-actions { justify-content: flex-start; }
   }
 </style>

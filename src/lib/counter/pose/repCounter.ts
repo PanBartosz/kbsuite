@@ -36,6 +36,7 @@ export interface CounterUpdate {
 
 export interface RepCounter {
   reset(): void
+  resetTracking(): void
   update(signals: FrameSignals, now?: number): CounterUpdate | null
   getActiveHand?(): 'left' | 'right' | 'both' | null
 }
@@ -69,6 +70,13 @@ export class SwingRepCounter implements RepCounter {
       ready: { left: true, right: true },
       readyFrames: { left: 0, right: 0 }
     }
+  }
+
+  resetTracking() {
+    const count = this.state.count
+    this.reset()
+    this.state.count = count
+    this.state.ready = { left: false, right: false }
   }
 
   update(frame: FrameSignals, now = Date.now()): CounterUpdate | null {
@@ -180,6 +188,7 @@ interface LockoutState {
 }
 
 abstract class LockoutRepCounter implements RepCounter {
+  private rearm = { left: false, right: false }
   protected state: LockoutState = {
     phase: 'ready',
     count: 0,
@@ -193,6 +202,7 @@ abstract class LockoutRepCounter implements RepCounter {
   constructor(protected config: LockoutConfig) {}
 
   reset() {
+    this.rearm = { left: false, right: false }
     this.state = {
       phase: 'ready',
       count: 0,
@@ -202,6 +212,13 @@ abstract class LockoutRepCounter implements RepCounter {
       resetFrames: { left: 0, right: 0 },
       activeHand: null
     }
+  }
+
+  resetTracking() {
+    const count = this.state.count
+    this.reset()
+    this.state.count = count
+    this.rearm = { left: true, right: true }
   }
 
   getActiveHand() {
@@ -224,6 +241,14 @@ abstract class LockoutRepCounter implements RepCounter {
 
       const low = this.isLow(hand)
       const lockout = this.isLockout(hand, frame.hipAngle)
+      if (this.rearm[side]) {
+        resetFrames[side] = low ? resetFrames[side] + 1 : 0
+        if (resetFrames[side] >= RESET_FRAMES) {
+          this.rearm[side] = false
+          resetFrames[side] = 0
+        }
+        continue
+      }
 
       if (activeHand === null) {
         if (lockout && hand.confidence > MIN_CONF) {

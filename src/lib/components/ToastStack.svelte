@@ -38,20 +38,23 @@
 <style>
   .toast-stack {
     position: fixed;
-    top: calc(env(safe-area-inset-top, 0px) + 1rem);
+    top: calc(env(safe-area-inset-top, 0px) + 4.5rem);
     right: calc(env(safe-area-inset-right, 0px) + 1rem);
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
     z-index: 2000;
     pointer-events: none;
+    max-width: min(440px, calc(100vw - 2rem));
+    max-height: 40dvh;
+    overflow-y: auto;
   }
 
   @media (max-width: 600px) {
     .toast-stack {
-      top: auto;
+      top: calc(env(safe-area-inset-top, 0px) + 4.5rem);
       right: 50%;
-      bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+      bottom: auto;
       transform: translateX(50%);
       width: min(520px, calc(100vw - 2rem));
     }
@@ -61,8 +64,8 @@
     padding: 0.7rem 0.85rem;
     border-radius: 12px;
     border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
+    background: var(--color-surface-1);
+    color: var(--color-text-primary);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
     display: flex;
     align-items: center;
@@ -72,15 +75,15 @@
   }
 
   .toast.error {
-    background: color-mix(in srgb, var(--color-danger) 85%, var(--color-surface-1) 15%);
+    background: var(--color-surface-1);
     border-color: var(--color-danger);
-    color: var(--color-text-inverse);
+    color: var(--color-text-primary);
   }
 
   .toast.success {
-    background: color-mix(in srgb, var(--color-success) 65%, var(--color-surface-1) 35%);
+    background: var(--color-surface-1);
     border-color: color-mix(in srgb, var(--color-success) 70%, var(--color-border));
-    color: var(--color-text-inverse);
+    color: var(--color-text-primary);
   }
 
   .message {
@@ -88,7 +91,8 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   @media (max-width: 600px) {
@@ -106,9 +110,10 @@
   button {
     border: 1px solid color-mix(in srgb, var(--color-text-inverse) 30%, transparent);
     background: transparent;
-    color: var(--color-text-inverse);
+    color: var(--color-text-primary);
     border-radius: 10px;
     padding: 0.45rem 0.7rem;
+    min-height: 44px;
     cursor: pointer;
     line-height: 1;
     font-weight: 700;
@@ -116,7 +121,7 @@
 
   .icon-btn {
     padding: 0.45rem 0.55rem;
-    min-width: 2.25rem;
+    min-width: 44px;
     min-height: 2.25rem;
     display: inline-flex;
     align-items: center;

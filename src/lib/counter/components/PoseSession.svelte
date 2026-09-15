@@ -13,15 +13,18 @@
     gesturesEnabled as gesturesEnabledStore,
     type ExerciseId
   } from '../stores/session'
-  import { PoseClient } from '../pose/poseClient'
+  import type { PoseClient } from '../pose/poseClient'
+  import { frameSize } from '../pose/protocol'
   import { drawPose } from '../pose/drawing'
   import { createCounterForExercise, getExerciseOption } from '../exercises/config'
   import type { RepCounter } from '../pose/repCounter'
   import { extractFrameSignals, type FrameSignals } from '../pose/signals'
-  import { initAudio, playRepSound } from '../audio/counterSound'
+  import { initAudio, playRepSound, releaseAudio } from '../audio/counterSound'
   import {
     getVoiceOptions,
     loadVoicePack,
+    preloadVoiceNumbers,
+    releaseVoicePack,
     playNumberFromPack,
     playVoiceCue,
     type VoiceCueKey
@@ -39,7 +42,17 @@
   let stream: MediaStream | null = null
   let client: PoseClient | null = null
   let detectorReady = false
-  let processingFrame = false
+  let mounted = false
+  let visible = true
+  let cameraPreparing = false
+  let cameraAttempt = 0
+  let preparingDetector = false
+  let detectorError: string | null = null
+  let tracking = false
+  let lastStatsTs = 0
+  let videoCallback: number | null = null
+  let lastVideoTime = -1
+  let staleTimer: ReturnType<typeof setTimeout> | undefined
   let lastSendTs = 0
   let cameraError: string | null = null
   let raf = 0
@@ -112,11 +125,19 @@
     detectorReady = true
     backend = backendName
     poseStats.update((s) => ({ ...s, ready: true, backend: backendName }))
+    syncLoop()
   }
 
   const handleError = (message: string) => {
     console.error(message)
+    detectorError = message
+    detectorReady = false
+    preparingDetector = false
+    client = null
     feedback.set(message)
+    cancelLoop()
+    clearOverlay()
+    poseStats.update((s) => ({ ...s, ready: false, fps: 0 }))
   }
 
   const handleGestureEvents = (events: GestureEvent[]) => {
@@ -137,6 +158,7 @@
     if (id === $exercise) {
       return
     }
+    invalidateTracking()
     exercise.set(id)
     overlayMode = id
     const opt = getExerciseOption(id)
@@ -163,7 +185,11 @@
   }
 
   const loadVoiceSelected = async () => {
-    const pack = await loadVoicePack(voiceSelected)
+    if (!voiceEnabled || !mounted || $runState === 'idle') return
+    const selected = voiceSelected
+    const attempt = cameraAttempt
+    const pack = await loadVoicePack(selected)
+    if (!mounted || attempt !== cameraAttempt || selected !== voiceSelected || !stream && !cameraPreparing) return
     voicePackLoaded = pack.loaded
     voicePackError = pack.error ?? null
     voiceMaxNumber = pack.maxNumber
@@ -220,16 +246,24 @@
   }
 
   const handlePoses = (poses: Pose[], ts: number) => {
-    if (!poses.length || !ctx) return
-    const pose = poses[0]
+    if (!shouldInfer() || !ctx) return
     ctx.clearRect(0, 0, canvasEl.width, canvasEl.height)
+    if (!poses.length) {
+      clearOverlay()
+      return
+    }
+    if (lastPoseTs && ts - lastPoseTs > 1000) invalidateTracking()
+    const pose = poses[0]
     drawPose(ctx, pose)
+    tracking = true
+    clearTimeout(staleTimer)
+    staleTimer = setTimeout(clearOverlay, 1000)
 
     const delta = lastPoseTs ? ts - lastPoseTs : 0
     const fps = delta ? Math.round(1000 / delta) : 0
     lastPoseTs = ts
 
-    const frameSignals = extractFrameSignals(pose)
+    const frameSignals = extractFrameSignals(pose, canvasEl.width / 1920)
     lastSignals = frameSignals
     const gestureEvents = gesturesEnabled
       ? gestureEngine.update(frameSignals, currentThresholds.swing, ts)
@@ -259,109 +293,211 @@
       }
     }
 
-    poseStats.update((s) => ({
-      ...s,
-      fps,
-      confidence: frameSignals.confidence,
-      backend
-    }))
+    if (ts - lastStatsTs >= 500) {
+      lastStatsTs = ts
+      poseStats.update((s) => ({ ...s, fps, confidence: frameSignals.confidence, backend }))
+    }
 
     if (debugOverlay && lastSignals) {
       drawDebugOverlay(ctx, lastSignals, lastActiveHand, lastPhase, lastCount)
     }
   }
 
-  const startCamera = async () => {
+  const clearOverlay = () => {
+    ctx?.clearRect(0, 0, canvasEl?.width ?? 0, canvasEl?.height ?? 0)
+    tracking = false
+    clearTimeout(staleTimer)
+    if (Date.now() - lastStatsTs >= 500) {
+      lastStatsTs = Date.now()
+      poseStats.update((stats) => ({ ...stats, fps: 0, confidence: 0 }))
+    }
+  }
+
+  const invalidateTracking = () => {
+    client?.invalidate()
+    counter?.resetTracking()
+    gestureEngine.reset()
+    lastPoseTs = 0
+    lastVideoTime = -1
+    lastSendTs = 0
+    clearRpm()
+    clearOverlay()
+  }
+
+  const shouldInfer = () => mounted && visible && $runState === 'running' &&
+    (countingEnabled || gesturesEnabled) && !!stream && !cameraPreparing
+
+  const cancelLoop = () => {
+    if (videoCallback !== null) videoEl?.cancelVideoFrameCallback(videoCallback)
+    videoCallback = null
+    cancelAnimationFrame(raf)
+    raf = 0
+  }
+
+  const scheduleFrame = () => {
+    if (!shouldInfer() || !detectorReady || videoCallback !== null || raf) return
+    if (typeof videoEl.requestVideoFrameCallback === 'function') {
+      videoCallback = videoEl.requestVideoFrameCallback(() => {
+        videoCallback = null
+        sampleFrame()
+      })
+    } else {
+      raf = requestAnimationFrame(() => { raf = 0; sampleFrame() })
+    }
+  }
+
+  const sampleFrame = () => {
+    if (!shouldInfer() || !detectorReady) return
+    const now = performance.now()
+    if (videoEl.readyState >= 2 && videoEl.videoWidth &&
+      now - lastSendTs >= (lowFpsMode ? 100 : 50) && videoEl.currentTime !== lastVideoTime) {
+      lastSendTs = now
+      lastVideoTime = videoEl.currentTime
+      const size = frameSize(videoEl.videoWidth, videoEl.videoHeight)
+      if (canvasEl.width !== size.width || canvasEl.height !== size.height) {
+        canvasEl.width = size.width
+        canvasEl.height = size.height
+      }
+      videoAspect = videoEl.videoWidth / videoEl.videoHeight
+      void client?.capture(() => createImageBitmap(videoEl, {
+        resizeWidth: size.width, resizeHeight: size.height, resizeQuality: 'low'
+      }))
+    }
+    scheduleFrame()
+  }
+
+  const canPrepareDetector = () => mounted && visible && $runState === 'running' && !!stream && !cameraPreparing
+
+  const prepareDetector = async () => {
+    if (client || preparingDetector || detectorError || !canPrepareDetector()) return
+    preparingDetector = true
+    const attempt = cameraAttempt
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 1920, max: 3840 },
-          height: { ideal: 1080, max: 2160 },
-          aspectRatio: 16 / 9
-        },
+      const { PoseClient } = await import('../pose/poseClient')
+      if (!mounted || attempt !== cameraAttempt || !canPrepareDetector()) return
+      client = new PoseClient({
+        onReady: handleReady,
+        onPoses: handlePoses,
+        onError: handleError,
+        onMetrics: (import.meta.env.DEV || import.meta.env.VITE_COUNTER_DIAGNOSTICS === '1') ? (metrics) => {
+          // Opt in from DevTools; retain only a bounded sample window.
+          const diagnostics = (window as any).__kbPoseMetrics
+          if (Array.isArray(diagnostics)) {
+            diagnostics.push({ ...metrics, at: Date.now(), width: canvasEl.width, height: canvasEl.height, backend })
+            if (diagnostics.length > 1200) diagnostics.shift()
+          }
+        } : undefined
+      })
+      client.init()
+    } catch (error) {
+      handleError(String(error))
+    } finally {
+      preparingDetector = false
+    }
+  }
+
+  const syncLoop = () => {
+    // Warm up during the workout's preparation phase, before the first reps.
+    if (canPrepareDetector()) void prepareDetector()
+    if (!shouldInfer()) { cancelLoop(); return }
+    scheduleFrame()
+  }
+
+  const startCamera = async () => {
+    const attempt = ++cameraAttempt
+    cameraPreparing = true
+    cameraError = null
+    try {
+      const acquired = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, max: 30 } },
         audio: false
       })
-      videoEl.srcObject = stream
+      if (!mounted || attempt !== cameraAttempt || $runState === 'idle') {
+        acquired.getTracks().forEach((track) => track.stop())
+        return
+      }
+      stream = acquired
+      for (const track of acquired.getVideoTracks()) track.onended = () => {
+        if (stream === acquired) {
+          cameraError = 'Camera disconnected. Retry the camera.'
+          invalidateTracking()
+          stopCamera()
+          syncLoop()
+        }
+      }
+      videoEl.srcObject = acquired
       await videoEl.play()
-      videoAspect = videoEl.videoWidth && videoEl.videoHeight ? videoEl.videoWidth / videoEl.videoHeight : 16 / 9
-      canvasEl.width = videoEl.videoWidth
-      canvasEl.height = videoEl.videoHeight
+      if (attempt !== cameraAttempt) return
+      videoAspect = videoEl.videoWidth / videoEl.videoHeight || 4 / 3
       ctx = canvasEl.getContext('2d')
-      cameraError = null
-    } catch (err) {
-      cameraError = err instanceof Error ? err.message : 'Unable to access camera'
+    } catch (error) {
+      if (attempt !== cameraAttempt || !mounted) return
+      cameraError = error instanceof Error ? error.message : 'Unable to access camera'
+      stopCamera()
+    } finally {
+      if (attempt === cameraAttempt) {
+        cameraPreparing = false
+        syncLoop()
+      }
     }
   }
 
   const stopCamera = () => {
     stream?.getTracks().forEach((track) => track.stop())
     stream = null
+    if (videoEl) videoEl.srcObject = null
   }
 
-  const startLoop = () => {
-    const loop = async () => {
-      if ($runState !== 'running' || !detectorReady || !videoEl?.videoWidth) {
-        raf = requestAnimationFrame(loop)
-        return
-      }
-
-      const now = performance.now()
-      const minGapMs = lowFpsMode ? 100 : 50 // ~10 FPS in low mode, ~20 FPS default
-      if (now - lastSendTs < minGapMs) {
-        raf = requestAnimationFrame(loop)
-        return
-      }
-
-      if (!processingFrame) {
-        processingFrame = true
-        try {
-          const bitmap = await createImageBitmap(videoEl, 0, 0, videoEl.videoWidth, videoEl.videoHeight)
-          client?.sendFrame(bitmap)
-          lastSendTs = now
-        } catch (err) {
-          console.error(err)
-        } finally {
-          processingFrame = false
-        }
-      }
-
-      raf = requestAnimationFrame(loop)
-    }
-    raf = requestAnimationFrame(loop)
+  const retryCamera = async () => {
+    invalidateTracking()
+    client?.destroy()
+    client = null
+    detectorReady = false
+    detectorError = null
+    stopCamera()
+    await startCamera()
   }
 
   export const startSession = async () => {
-    repCount.set(0)
-    lastCount = 0
-    clearRpm()
-    counter?.reset()
+    if ($runState === 'running' || cameraPreparing) return
+    invalidateTracking()
+    resetCount()
     feedback.set(null)
-    gestureEngine.reset()
-    gesturesEnabled = true
-    countingEnabled = true
-    gesturesEnabledStore.set(true)
-    countingEnabledStore.set(true)
-    overlayMode = $exercise
-    lastSendTs = 0
+    detectorError = null
+    // The host owns phase directives; do not overwrite them after async startup.
+    if (showControls !== false) {
+      gesturesEnabled = true
+      countingEnabled = true
+      gesturesEnabledStore.set(true)
+      countingEnabledStore.set(true)
+      overlayMode = $exercise
+    }
     initAudio()
-    await startCamera()
-    $runState !== 'running' && runState.set('running')
+    runState.set('running')
+    const cameraStarted = startCamera()
+    void loadVoiceSelected()
+    await cameraStarted
   }
 
   export const pauseSession = () => {
     runState.set('paused')
+    invalidateTracking()
+    syncLoop()
   }
 
   export const resumeSession = () => {
+    invalidateTracking()
     runState.set('running')
+    syncLoop()
   }
 
   const resetCount = (message: string | null = null, announce = false) => {
+    invalidateTracking()
     repCount.set(0)
     lastCount = 0
     clearRpm()
     counter?.reset()
+    preloadVoiceNumbers(voiceSelected, 0)
     feedback.set(message)
     if (announce) {
       playResetCue()
@@ -372,7 +508,19 @@
   export const resetReps = () => resetCount(null, false)
 
   export const stopSession = () => {
+    cameraAttempt += 1
+    cameraPreparing = false
     runState.set('idle')
+    invalidateTracking()
+    cancelLoop()
+    client?.destroy()
+    client = null
+    detectorReady = false
+    detectorError = null
+    releaseVoicePack()
+    releaseAudio()
+    voicePackLoaded = false
+    poseStats.set({ fps: 0, ready: false, backend: '', confidence: 0 })
     gesturesEnabled = true
     countingEnabled = true
     gesturesEnabledStore.set(true)
@@ -386,6 +534,7 @@
     mode: ExerciseId | 'disabled',
     options: { silent?: boolean } = {}
   ) => {
+    invalidateTracking()
     if (mode === 'disabled') {
       countingEnabled = false
       countingEnabledStore.set(false)
@@ -399,11 +548,13 @@
   }
 
   export const setGesturesEnabled = (enabled: boolean) => {
+    if (gesturesEnabled !== !!enabled) invalidateTracking()
     gesturesEnabled = !!enabled
     gesturesEnabledStore.set(gesturesEnabled)
   }
 
   export const setCountingEnabled = (enabled: boolean) => {
+    if (countingEnabled !== !!enabled) invalidateTracking()
     countingEnabled = !!enabled
     countingEnabledStore.set(countingEnabled)
     clearRpm()
@@ -417,22 +568,34 @@
         ? 'Lockout mode'
         : 'Swing mode'
 
+  const visibilityChanged = () => {
+    visible = document.visibilityState === 'visible'
+    invalidateTracking()
+    syncLoop()
+  }
+
+  // Dependencies must be explicit for Svelte's legacy reactive statements.
+  $: if (mounted) {
+    visible; countingEnabled; gesturesEnabled; $runState; detectorReady; cameraPreparing
+    syncLoop()
+  }
+  $: if (mounted && voiceEnabled && $runState !== 'idle') {
+    voiceSelected
+    void loadVoiceSelected()
+  }
+  $: if (mounted && !voiceEnabled) { releaseVoicePack(); voicePackLoaded = false }
+
   onMount(() => {
-    client = new PoseClient({
-      onReady: handleReady,
-      onPoses: handlePoses,
-      onError: handleError
-    })
-    client.init()
-    loadVoiceSelected()
-    startLoop()
-    if (autoStart) startSession()
+    mounted = true
+    visible = document.visibilityState === 'visible'
+    document.addEventListener('visibilitychange', visibilityChanged)
+    if (autoStart) void startSession()
   })
 
   onDestroy(() => {
+    mounted = false
     stopSession()
-    cancelAnimationFrame(raf)
-    client?.destroy()
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', visibilityChanged)
     if (countdownTimer) clearInterval(countdownTimer)
   })
 
@@ -464,6 +627,18 @@
   <div class="video-panel" style={`aspect-ratio: ${videoAspect}`}>
     <video bind:this={videoEl} muted playsinline></video>
     <canvas bind:this={canvasEl}></canvas>
+    {#if cameraError || detectorError}
+      <div class="camera-status" role="status">
+        <span>{cameraError || detectorError}</span>
+        {#if $runState !== 'idle'}<button type="button" on:click={retryCamera}>Retry camera</button>{/if}
+      </div>
+    {:else if $runState === 'idle' || cameraPreparing || !detectorReady || !tracking || $runState === 'paused'}
+      <div class="camera-status" role="status">
+        {$runState === 'idle' ? 'Camera starts with your workout' : cameraPreparing ? 'Opening camera…' :
+          $runState === 'paused' ? 'Counter paused' : !countingEnabled && !gesturesEnabled ? 'Counter off for this phase' :
+          !detectorReady ? 'Preparing counter…' : 'Position your full body in view'}
+      </div>
+    {/if}
     <div class="mode-badge" class:lockout={effectiveMode === 'lockout'} class:disabled={effectiveMode === 'disabled'}>
       <div class="mode-label">Mode</div>
       <div class="mode-value">{modeBadgeLabel}</div>
@@ -495,8 +670,8 @@
       </div>
 
       <div class="row">
-        <button class="primary large" on:click={startSession} disabled={$runState === 'running'}>
-          {$runState === 'running' ? 'Running' : 'Start'}
+        <button class="primary large" on:click={$runState === 'paused' ? resumeSession : startSession} disabled={$runState === 'running'}>
+          {$runState === 'running' ? 'Running' : $runState === 'paused' ? 'Resume' : 'Start'}
         </button>
         <button class="large" on:click={pauseSession} disabled={$runState !== 'running'}>Pause</button>
         <button class="large" on:click={stopSession}>Stop</button>
@@ -588,6 +763,20 @@
 {/if}
 
 <style>
+  .camera-status {
+    position: absolute;
+    inset: auto 0.5rem 0.5rem;
+    z-index: 2;
+    background: var(--color-surface-1);
+    color: var(--color-text-primary);
+    border-radius: 8px;
+    padding: 0.5rem;
+    font-size: 0.85rem;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  .camera-status button { min-height: 48px; display: block; margin: 0.25rem auto 0; }
+
   .session {
     display: grid;
     grid-template-columns: 1fr 1fr;

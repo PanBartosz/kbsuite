@@ -123,7 +123,7 @@ export const extractMotionSignals = (
   }
 }
 
-export const extractFrameSignals = (pose: Pose): FrameSignals => {
+export const extractFrameSignals = (pose: Pose, coordinateScale = 1): FrameSignals => {
   const named = byName(pose)
   const leftHip = named['left_hip']
   const rightHip = named['right_hip']
@@ -141,7 +141,7 @@ export const extractFrameSignals = (pose: Pose): FrameSignals => {
 
   const torsoLeft = distance(leftShoulder, leftHip)
   const torsoRight = distance(rightShoulder, rightHip)
-  const torso = Math.max(10, (torsoLeft + torsoRight) / 2)
+  const torso = Math.max(10 * coordinateScale, (torsoLeft + torsoRight) / 2)
 
   const hips = averagePoint(leftHip, rightHip)
   const shoulders = averagePoint(leftShoulder, rightShoulder)

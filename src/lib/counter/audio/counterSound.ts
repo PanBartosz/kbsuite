@@ -26,4 +26,10 @@ export const playRepSound = () => {
   osc.connect(gain).connect(audio.destination)
   osc.start(now)
   osc.stop(now + 0.25)
+  osc.onended = () => { osc.disconnect(); gain.disconnect() }
+}
+
+export const releaseAudio = () => {
+  void ctx?.close().catch(() => {})
+  ctx = null
 }

@@ -193,7 +193,7 @@
     on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleClose()}
     aria-label="Close summary"
   ></div>
-  <div class="modal" role="dialog" aria-label="Workout summary" use:modal={{ onClose: handleClose }}>
+  <div class="modal" role="dialog" aria-label="Workout summary" aria-modal="true" use:modal={{ onClose: handleClose }}>
     <header>
       <div>
         <p class="eyebrow">Workout summary</p>
@@ -231,8 +231,8 @@
             </div>
           </div>
         {:else}
-          <div class="row">
-            <div>
+          <div class="row work-row">
+            <div class="phase-meta">
               <strong>{entry.roundLabel}</strong>
               <div class="muted">{entry.setLabel}</div>
               {#if entry.durationSeconds}
@@ -240,7 +240,8 @@
               {/if}
             </div>
             <div class="muted type">{entry.type ?? 'phase'}</div>
-            <div class="input-cell">
+            <label class="input-cell">
+              <span class="field-label">Logged reps</span>
               <input
                 type="number"
                 min="0"
@@ -253,9 +254,11 @@
                   updateEntry(entry.id, value === '' ? null : Number(value))
                 }}
                 placeholder="0"
+                aria-label={`Logged reps: ${entry.roundLabel}, ${entry.setLabel}`}
               />
-            </div>
-            <div class="input-cell">
+            </label>
+            <label class="input-cell">
+              <span class="field-label">Weight (kg / lb)</span>
               <input
                 type="number"
                 min="0"
@@ -268,8 +271,9 @@
                   updateWeight(entry.id, value === '' ? null : Number(value))
                 }}
                 placeholder="kg / lb"
+                aria-label={`Weight: ${entry.roundLabel}, ${entry.setLabel}`}
               />
-            </div>
+            </label>
             <div class="row-actions">
               {#if !isRest}
                 {@const targetCount = countMatchingTargets(entry)}
@@ -277,7 +281,7 @@
                 <button
                   class="ghost small copy-btn"
                   type="button"
-                  disabled={!hasSourceData}
+                  disabled={!hasSourceData || !targetCount}
                   on:click={() => openCopyConfirm(entry)}
                   title={targetCount ? `Copy to ${targetCount} matching set(s)` : 'Copy to matching sets'}
                 >
@@ -302,9 +306,9 @@
         tabindex="0"
         aria-label="Close modal"
         on:click={(e) => e.target === e.currentTarget && (pendingCopy = null)}
-        on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (pendingCopy = null)}
+        on:keydown={(e) => e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ') && (pendingCopy = null)}
       >
-        <div class="copy-modal" use:modal={{ onClose: () => (pendingCopy = null) }}>
+        <div class="copy-modal" role="dialog" aria-modal="true" aria-label="Copy reps and weight" use:modal={{ onClose: () => (pendingCopy = null) }}>
           <h3>Copy reps & weight?</h3>
           <p>
             Copy values from <strong>{pendingCopy.setLabel || 'this set'}</strong> to
@@ -338,7 +342,7 @@
     inset: 0;
     background: rgba(5, 9, 20, 0.55);
     backdrop-filter: blur(6px);
-    z-index: 80;
+    z-index: 180;
   }
   .modal {
     position: fixed;
@@ -346,11 +350,12 @@
     left: 50%;
     transform: translate(-50%, -50%);
     width: min(900px, 94vw);
+    max-height: calc(100dvh - 2rem);
     background: var(--color-surface-2);
     border: 1px solid var(--color-border);
     border-radius: 16px;
     padding: 1rem;
-    z-index: 81;
+    z-index: 181;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
@@ -376,12 +381,14 @@
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
-    max-height: 60vh;
+    min-height: 0;
+    max-height: 60dvh;
+    overscroll-behavior: contain;
     overflow: auto;
   }
   .row {
     display: grid;
-    grid-template-columns: 1.3fr 0.5fr 0.9fr 0.9fr 1fr;
+    grid-template-columns: minmax(0, 1.3fr) 0.5fr minmax(0, 0.9fr) minmax(0, 0.9fr) 1fr;
     gap: 0.5rem;
     align-items: center;
     padding: 0.65rem;
@@ -411,6 +418,8 @@
   }
   input {
     width: 100%;
+    min-width: 0;
+    min-height: 48px;
     border-radius: 10px;
     border: 1px solid var(--color-border);
     background: var(--color-surface-1);
@@ -419,8 +428,8 @@
     font-size: 1rem;
   }
   .input-cell {
-    display: flex;
-    align-items: center;
+    min-width: 0;
+    display: grid;
     gap: 0.35rem;
   }
   .row-actions {
@@ -448,6 +457,7 @@
     font-size: 0.85rem;
   }
   button {
+    min-height: 44px;
     padding: 0.6rem 0.8rem;
     border-radius: 10px;
     border: 1px solid var(--color-border);
@@ -459,8 +469,8 @@
     background: transparent;
   }
   .primary {
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
     border: none;
   }
   .small {
@@ -471,6 +481,10 @@
     color: var(--color-text-muted);
     font-size: 0.9rem;
   }
+  .field-label { display: none; }
+  .phase-meta { min-width: 0; overflow-wrap: anywhere; }
+  header, footer, .toolbar { flex-shrink: 0; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
   .copy-btn {
     border: 1px dashed var(--color-border);
   }
@@ -516,5 +530,30 @@
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
+  }
+  @media (max-width: 640px) {
+    .modal {
+      inset: 0;
+      transform: none;
+      width: 100%;
+      height: 100dvh;
+      max-height: 100dvh;
+      border: 0;
+      border-radius: 0;
+      padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem max(0.75rem, env(safe-area-inset-bottom));
+    }
+    h2 { font-size: 1.35rem; }
+    .table { flex: 1; max-height: none; gap: 0.65rem; }
+    .row.header { display: none; }
+    .work-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; padding: 0.85rem; }
+    .phase-meta { grid-column: 1 / -1; }
+    .type { display: none; }
+    .field-label { display: block; font-size: 0.85rem; color: var(--color-text-muted); }
+    .row-actions { grid-column: 1 / -1; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+    .row-actions .small { font-size: 0.85rem; }
+    footer { padding-top: 0.65rem; border-top: 1px solid var(--color-border); }
+    footer button { min-height: 48px; }
+    footer .primary { flex: 1; font-weight: 700; }
+    .copy-modal { padding: 1rem; max-height: calc(100dvh - 2rem); overflow: auto; }
   }
 </style>

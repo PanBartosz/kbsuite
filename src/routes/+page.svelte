@@ -1044,6 +1044,8 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
 </script>
 
 <div class="home">
+
+  {#if invites.length > 0}
   <section class="panel invites-card">
     <div class="panel-head">
       <div>
@@ -1093,6 +1095,8 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     {/if}
   </section>
 
+  {/if}
+
   <div class="split">
     <section class="panel today-card">
       <div class="panel-head today-head">
@@ -1120,6 +1124,16 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
         <button class="ghost" on:click={loadTodayPlan}>Retry</button>
       {:else if todayPlan}
         <div class="today-body">
+          <div class="actions">
+            <a class="btn primary" href={`/timer?planned=${todayPlan.id}`}>Start workout</a>
+            <a class="btn ghost" href={`/big-picture?planned=${todayPlan.id}`}>Big Picture</a>
+            <a class="btn ghost" href="/plan">Edit plan</a>
+          </div>
+          {#if planTotals}
+            <SessionOverview totals={planTotals} roundCount={todayPlanParsed?.rounds?.length ?? 0} />
+          {/if}
+          <details class="session-details">
+            <summary>Session details</summary>
           {#if todayPlan.tags?.length}
             <div class="tags">
               {#each todayPlan.tags.slice(0, 4) as tag}
@@ -1134,10 +1148,6 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
             <p class="muted">{todayPlan.notes}</p>
           {/if}
           {#if todayPlanParsed}
-            <SessionOverview
-              totals={planTotals ?? { work: 0, rest: 0, total: 0 }}
-              roundCount={todayPlanParsed?.rounds?.length ?? 0}
-            />
             {#if todaySummary.length}
               <div class="compact-summary rich planner-summary">
                 {#each todaySummary as block}
@@ -1179,14 +1189,8 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
                 {/each}
               </div>
             {/if}
-          {:else if planTotals}
-            <SessionOverview totals={planTotals} roundCount={todayPlan?.yaml_source ? 0 : 0} />
           {/if}
-          <div class="actions">
-            <a class="btn primary" href={`/timer?planned=${todayPlan.id}`}>Start timer</a>
-            <a class="btn ghost" href={`/big-picture?planned=${todayPlan.id}`}>Big picture</a>
-            <a class="btn ghost" href="/plan">Edit plan</a>
-          </div>
+          </details>
         </div>
       {:else}
         <div class="empty">
@@ -1312,11 +1316,11 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
         <div class="insights-row">
           <button class="btn ghost" type="button" on:click={() => (insightsModalOpen = true)}>Ask AI (7d)</button>
         </div>
-        <div class="balance">
+        <details class="balance">
+          <summary>Movement mix</summary>
           <div class="balance-head">
             <div class="balance-title">
-              <p class="label">Movement mix</p>
-              <span class="muted small">Last {rangeLabel(movementRange)}, name heuristic</span>
+              <span class="muted small">Last {rangeLabel(movementRange)} · estimated from exercise names</span>
             </div>
             <div class="balance-actions">
               <div class="range-toggle small" aria-label="Select movement range">
@@ -1350,7 +1354,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
               <canvas bind:this={movementChartEl} style={`height:${movementBalance.length * 36 + 20}px`}></canvas>
             </div>
           {/if}
-        </div>
+        </details>
       {/if}
     </section>
   </div>
@@ -1459,7 +1463,7 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
     max-width: 1420px;
     width: 100%;
     margin: 0 auto;
-    overflow-x: hidden;
+    min-width: 0;
   }
 
   .page-head {
@@ -1470,8 +1474,10 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   }
 
   .split {
+    order: -1;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    align-items: start;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
     gap: 1rem;
   }
 
@@ -1598,9 +1604,9 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
   }
 
   .btn.primary {
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+    background: var(--color-accent);
     border: none;
-    color: var(--color-text-inverse);
+    color: var(--color-on-accent);
   }
 
   .btn.ghost {
@@ -2052,4 +2058,13 @@ const safeTotalsFromYaml = (yaml?: string | null): Totals | null => {
       grid-template-columns: 80px 1fr 40px;
     }
   }
+  .today-body { display: grid; gap: 1rem; margin-top: 1rem; min-width: 0; }
+  .session-details { border-top: 1px solid var(--color-border); padding-top: 0.35rem; }
+  .session-details summary { padding: 0.6rem 0; min-height: 44px; cursor: pointer; font-weight: 600; }
+  .session-details[open] summary { margin-bottom: 0.5rem; }
+  .today-body .actions { margin: 0; }
+  .today-body .actions .btn { min-height: 44px; display: inline-flex; align-items: center; }
+  .balance > summary { min-height: 44px; padding: 0.6rem 0; cursor: pointer; font-weight: 600; }
+  .balance { border-top: 1px solid var(--color-border); }
+  .balance[open] > summary { margin-bottom: 0.5rem; }
 </style>

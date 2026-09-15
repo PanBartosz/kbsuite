@@ -1,6 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 :root {
+  color-scheme: dark;
+  --color-on-accent: #0b1220;
+  --color-on-accent-hover: #0b1220;
   --color-bg: #050914;
   --color-surface-1: #0b1224;
   --color-surface-2: #0f172a;
@@ -62,6 +65,8 @@
 }
 
 :root[data-theme='light'] {
+  --color-on-accent: #ffffff;
+  --color-on-accent-hover: #ffffff;
   color-scheme: light;
   --color-bg: #f5f7fb;
   --color-surface-1: #ffffff;
@@ -74,8 +79,8 @@
   --color-border-hover: #c3cce1;
   --color-text-primary: #1f2937;
   --color-text-secondary: #364152;
-  --color-text-muted: #6b7280;
-  --color-text-soft: #94a3b8;
+  --color-text-muted: #606875;
+  --color-text-soft: #475569;
   --color-text-inverse: #ffffff;
   --color-placeholder: #94a3b8;
   --color-accent: #2563eb;
@@ -117,6 +122,8 @@
 }
 
 :root[data-theme='vibrant'] {
+  --color-on-accent: #061208;
+  --color-on-accent-hover: #061208;
   color-scheme: dark;
   --color-bg: #061208;
   --color-surface-1: #0b1a0d;
@@ -172,6 +179,8 @@
 }
 
 :root[data-theme='neon'] {
+  --color-on-accent: #ffffff;
+  --color-on-accent-hover: #03040a;
   color-scheme: dark;
   --color-bg: #050510;
   --color-surface-1: #0a0a1a;
@@ -227,6 +236,8 @@
 }
 
 :root[data-theme='midnight'] {
+  --color-on-accent: #0a0f1a;
+  --color-on-accent-hover: #ffffff;
   color-scheme: dark;
   --color-bg: #050910;
   --color-surface-1: #0b1220;
@@ -282,6 +293,8 @@
 }
 
 :root[data-theme='sand'] {
+  --color-on-accent: #2d2620;
+  --color-on-accent-hover: #ffffff;
   color-scheme: light;
   --color-bg: #f7f1e8;
   --color-surface-1: #ffffff;
@@ -294,8 +307,8 @@
   --color-border-hover: #c5b7a4;
   --color-text-primary: #2d2620;
   --color-text-secondary: #4b433a;
-  --color-text-muted: #7a6f63;
-  --color-text-soft: #a09080;
+  --color-text-muted: #6c6156;
+  --color-text-soft: #65594d;
   --color-text-inverse: #ffffff;
   --color-placeholder: #9b8d7d;
   --color-accent: #e07628;
@@ -422,4 +435,17 @@ button {
 .hint {
   color: var(--color-text-muted);
   font-size: 0.95rem;
+}
+
+/* Shared keyboard and form treatment across routes. */
+:where(button, a, summary, input, select, textarea):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+input, select, textarea { font-family: inherit; }
+@media (max-width: 640px) {
+  input, select, textarea { font-size: max(1rem, 16px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
