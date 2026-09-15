@@ -32,6 +32,8 @@
 
   export let open = false
   export let entries: SummaryEntry[] = []
+  export let saving = false
+  export let saveError = ''
 
   const dispatch = createEventDispatcher()
 
@@ -95,8 +97,12 @@
     localEntries = localEntries.map((row) => (row.id === id ? { ...row, weight: value ?? null } : row))
   }
 
-  const handleSave = () => dispatch('save', { entries: localEntries })
-  const handleClose = () => dispatch('close', { entries: localEntries })
+  const handleSave = () => {
+    if (!saving) dispatch('save', { entries: localEntries })
+  }
+  const handleClose = () => {
+    if (!saving) dispatch('close', { entries: localEntries })
+  }
 
   const openCopyConfirm = (entry: SummaryEntry) => {
     pendingCopy = {
@@ -197,9 +203,10 @@
     <header>
       <div>
         <p class="eyebrow">Workout summary</p>
-        <h2>Log your reps</h2>
+        <h2>Review and save</h2>
+        <p class="save-hint">Save this completed session to History.</p>
       </div>
-      <button class="ghost" on:click={handleClose} aria-label="Close summary">✕</button>
+      <button class="ghost" disabled={saving} on:click={handleClose} aria-label="Close summary">✕</button>
     </header>
 
     <section class="toolbar">
@@ -255,6 +262,7 @@
                 }}
                 placeholder="0"
                 aria-label={`Logged reps: ${entry.roundLabel}, ${entry.setLabel}`}
+                disabled={saving}
               />
             </label>
             <label class="input-cell">
@@ -272,6 +280,7 @@
                 }}
                 placeholder="kg / lb"
                 aria-label={`Weight: ${entry.roundLabel}, ${entry.setLabel}`}
+                disabled={saving}
               />
             </label>
             <div class="row-actions">
@@ -281,7 +290,7 @@
                 <button
                   class="ghost small copy-btn"
                   type="button"
-                  disabled={!hasSourceData || !targetCount}
+                  disabled={saving || !hasSourceData || !targetCount}
                   on:click={() => openCopyConfirm(entry)}
                   title={targetCount ? `Copy to ${targetCount} matching set(s)` : 'Copy to matching sets'}
                 >
@@ -329,14 +338,24 @@
       </div>
     {/if}
 
+    {#if saveError}
+      <div class="save-error" role="alert">
+        <strong>Session not saved</strong>
+        <span>{saveError} Your entries are still here.</span>
+      </div>
+    {/if}
     <footer>
-      <button class="ghost" type="button" on:click={handleClose}>Close</button>
-      <button class="primary" type="button" on:click={handleSave}>Save</button>
+      <button class="ghost" type="button" disabled={saving} on:click={handleClose}>Close</button>
+      <button class="primary" type="button" disabled={saving || !localEntries.length} on:click={handleSave}>
+        {saving ? 'Saving…' : saveError ? 'Retry save' : 'Save session'}
+      </button>
     </footer>
   </div>
 {/if}
 
 <style>
+  .save-hint { margin: 0.25rem 0 0; color: var(--color-text-muted); font-size: 0.9rem; }
+  .save-error { flex-shrink: 0; display: grid; gap: 0.2rem; padding: 0.65rem; border: 1px solid var(--color-danger); border-radius: 10px; font-size: 0.9rem; }
   .backdrop {
     position: fixed;
     inset: 0;

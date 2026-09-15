@@ -7,19 +7,8 @@
   import { computePlanTotals as computeTotals } from '$lib/timer/lib/planTotals'
   import { buildPlannedSummary, type PlannedSummaryBlock } from '$lib/timer/lib/planSummary'
   import { settings, openSettingsModal } from '$lib/stores/settings'
-  import LibraryModal from '$lib/timer/components/LibraryModal.svelte'
-  import PhaseQueue from '$lib/timer/components/PhaseQueue.svelte'
-  import { libraryTemplates } from '$lib/timer/library/index.js'
   import TimelineView from '$lib/timer/components/shared/TimelineView.svelte'
-  import SessionOverview from '$lib/timer/components/shared/SessionOverview.svelte'
   import RoundsSetsView from '$lib/timer/components/shared/RoundsSetsView.svelte'
-  import AiAssistantPanel from '$lib/timer/components/shared/AiAssistantPanel.svelte'
-  import YamlConfigEditor from '$lib/timer/components/shared/YamlConfigEditor.svelte'
-  import YamlHelpModal from '$lib/timer/components/YamlHelpModal.svelte'
-  import PlanEditorModal from '$lib/timer/components/PlanEditorModal.svelte'
-  import RoundEditorModal from '$lib/timer/components/RoundEditorModal.svelte'
-  import SetEditorModal from '$lib/timer/components/SetEditorModal.svelte'
-  import SharePlanModal from '$lib/components/SharePlanModal.svelte'
   import { defaultAiSystemPrompt } from '$lib/ai/prompts'
   import { loadInvites, loadPendingCount, shares } from '$lib/stores/shares'
   import { pushToast } from '$lib/stores/toasts'
@@ -43,6 +32,10 @@
   let selectedDateKey = ''
   let calendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()
   let editOpen = false
+  let advancedOpen = false
+  let editSaving = false
+  let editError = ''
+  let workoutChosen = false
   let editId: string | null = null
   let editTitle = ''
   let editDate = new Date().toISOString().slice(0, 10)
@@ -52,6 +45,8 @@
   let newTag = ''
   let libraryWorkouts: WorkoutTemplate[] = []
   let libraryModalOpen = false
+  let libraryLoading = false
+  let libraryError = ''
   let todayPlan: Planned | null = null
   let previewResult: { plan: any | null; error: Error | null } = { plan: null, error: null }
   let previewTotals: { work: number; rest: number; total: number } | null = null
@@ -147,6 +142,7 @@
     try {
       const res = await fetch('/api/planned-workouts')
       const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? 'Failed to load plans')
       plans = data?.items ?? []
     } catch (err) {
       error = (err as any)?.message ?? 'Failed to load plans'
@@ -161,45 +157,53 @@
     todayPlan = plans.find((p) => dayKey(p.planned_for) === key) ?? null
   }
 
-  const buildLibraryWorkouts = () =>
-    libraryTemplates
-      .map((template) => {
-        try {
-          const source = (template?.source ?? '').trim()
-          if (!source) return null
-          const parsed = YAML.parse(source)
-          const plan = normalizePlan(parsed)
-          const totals = computeTotals(plan)
-          return {
-            id: template?.id ?? plan.title ?? crypto.randomUUID(),
-            name: plan.title ?? 'Untitled session',
-            description: plan.description ?? '',
-            roundCount: plan.rounds.length,
-            totals,
-            yaml_source: source
-          }
-        } catch {
-          return null
-        }
-      })
-      .filter(Boolean) as WorkoutTemplate[]
-
   const selectTemplate = (tmpl: WorkoutTemplate) => {
     if (tmpl?.yaml_source) {
       editTitle = tmpl.name ?? editTitle
       editYaml = tmpl.yaml_source
+      workoutChosen = true
+      editError = ''
     }
     libraryModalOpen = false
   }
 
+  const openLibrary = async () => {
+    libraryModalOpen = true
+    if (libraryLoading) return
+    libraryLoading = true
+    libraryError = ''
+    try {
+      const res = await fetch('/api/workouts')
+      if (!res.ok) throw new Error('Could not load your workouts. Please try again.')
+      const data = await res.json()
+      libraryWorkouts = (data.workouts ?? []).map((workout: any) => {
+        const parsed = tryParsePlan(workout.yaml_source ?? '')
+        return { ...workout, roundCount: parsed.plan?.rounds?.length, totals: parsed.plan ? computeTotals(parsed.plan) : null }
+      }).sort((a: any, b: any) => Number(a.is_template) - Number(b.is_template))
+    } catch (err) {
+      libraryError = (err as Error).message
+    } finally {
+      libraryLoading = false
+    }
+  }
+
+  const buildCustom = () => {
+    workoutChosen = true
+    advancedOpen = true
+    if (!editTitle) editTitle = previewResult.plan?.title || 'Custom workout'
+  }
+
   const openNew = (dateKey?: string) => {
+    advancedOpen = false
+    workoutChosen = false
+    editError = ''
     editId = null
     editTitle = ''
     editYaml = defaultPlanSource
     editNotes = ''
     editTags = []
     newTag = ''
-    editDate = dateKey ?? new Date().toISOString().slice(0, 10)
+    editDate = dateKey ?? dayKey(Date.now())
     editOpen = true
   }
 
@@ -227,7 +231,9 @@
   }
 
   const closeEdit = () => {
+    if (editSaving) return
     editOpen = false
+    libraryModalOpen = false
   }
 
   const closeDeleteConfirm = () => {
@@ -237,21 +243,27 @@
   }
 
   const openEdit = (plan: Planned) => {
+    advancedOpen = false
+    workoutChosen = true
+    editError = ''
     editId = plan.id
     editTitle = plan.title ?? ''
     editYaml = plan.yaml_source ?? ''
     editNotes = plan.notes ?? ''
     editTags = (plan.tags ?? []).map((t) => t.trim()).filter(Boolean)
-    editDate = new Date(plan.planned_for).toISOString().slice(0, 10)
+    editDate = dayKey(plan.planned_for)
     editOpen = true
   }
 
   const savePlan = async () => {
-    const plannedFor = Date.parse(editDate)
-    if (!plannedFor) {
-      error = 'Invalid date'
+    if (editSaving || !workoutChosen) return
+    const plannedFor = new Date(`${editDate}T12:00:00`).getTime()
+    if (!Number.isFinite(plannedFor) || !editTitle.trim() || previewResult.error) {
+      editError = 'Choose a date, enter a title, and check the workout configuration.'
       return
     }
+    editSaving = true
+    editError = ''
     try {
       const res = await fetch('/api/planned-workouts', {
         method: 'POST',
@@ -282,8 +294,9 @@
       computeToday()
       pushToast('Planned workout saved.', 'success')
     } catch (err) {
-      error = (err as any)?.message ?? 'Failed to save plan'
-      pushToast(error, 'error')
+      editError = (err as any)?.message ?? 'Failed to save plan'
+    } finally {
+      editSaving = false
     }
   }
 
@@ -870,7 +883,7 @@
     return d.getFullYear() === m.getFullYear() && d.getMonth() === m.getMonth()
   })
   $: selectedDayPlans = selectedDateKey ? plans.filter((p) => dayKey(p.planned_for) === selectedDateKey) : []
-  $: mobileWeekStart = selectedDateKey ? startOfWeek(Date.parse(selectedDateKey)) : mobileWeekStart
+  $: mobileWeekStart = selectedDateKey ? startOfWeek(new Date(`${selectedDateKey}T12:00:00`).getTime()) : mobileWeekStart
   $: mobileWeekDays = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(mobileWeekStart)
     d.setDate(d.getDate() + i)
@@ -908,14 +921,16 @@
 
   onMount(() => {
     loadPlans()
-    libraryWorkouts = buildLibraryWorkouts()
+    selectedDateKey = dayKey(Date.now())
+    lastScrolledDay = selectedDateKey
+    mobileWeekStart = startOfWeek(Date.now())
     loadPendingCount()
     loadInvites('incoming', 'pending')
   })
 
   $: confirmDeletePlan = confirmDeleteId ? plans.find((p) => p.id === confirmDeleteId) ?? null : null
 
-  $: if (browser && selectedDateKey && dayDetailEl && selectedDateKey !== lastScrolledDay) {
+  $: if (browser && selectedDateKey && dayDetailEl && selectedDateKey !== lastScrolledDay && window.innerWidth < 760) {
     lastScrolledDay = selectedDateKey
     requestAnimationFrame(() =>
       dayDetailEl?.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' })
@@ -973,8 +988,8 @@
 </script>
 
 <div class="planner-page">
-  <header>
-    <h1>Planner</h1>
+  <header class="route-heading">
+    <div><p class="eyebrow">Your schedule</p><h1>Planner</h1><p class="route-description">Make time for your next session.</p></div>
   </header>
 
   {#if loading}
@@ -1218,6 +1233,7 @@
       {/if}
     </section>
 
+    {#if $shares.pending.length}
     <section class="shares-block">
       <div class="shares-head">
         <div>
@@ -1326,9 +1342,10 @@
       {/if}
     </section>
 
+    {/if}
     <section class="day-detail" bind:this={dayDetailEl}>
       <div class="day-head">
-        <h3>{selectedDateKey || 'Select a day'}</h3>
+        <h3>{selectedDateKey ? new Date(`${selectedDateKey}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : 'Select a day'}</h3>
         {#if selectedDateKey}
           <button class="ghost" on:click={() => openNew(selectedDateKey)}>Add workout</button>
         {/if}
@@ -1492,20 +1509,24 @@
 {/if}
 
 {#if shareModalOpen && shareTarget}
-  <SharePlanModal
-    open={shareModalOpen}
-    title={shareTarget.title || 'Planned workout'}
-    defaultDate={shareDefaultDate}
-    plannedId={shareTarget.id}
-    on:shared={() => {
-      loadPendingCount()
-      loadInvites('incoming', 'pending')
-      pushToast('Workout shared.', 'success')
-      closeShare()
-    }}
-    on:error={(e) => pushToast(e.detail?.message || 'Failed to share workout', 'error')}
-    on:close={closeShare}
-  />
+  {#await import('$lib/components/SharePlanModal.svelte') then module}
+    <svelte:component this={module.default}
+      open={shareModalOpen}
+      title={shareTarget.title || 'Planned workout'}
+      defaultDate={shareDefaultDate}
+      plannedId={shareTarget.id}
+      on:shared={() => {
+        loadPendingCount()
+        loadInvites('incoming', 'pending')
+        pushToast('Workout shared.', 'success')
+        closeShare()
+      }}
+      on:error={(e) => pushToast(e.detail?.message || 'Failed to share workout', 'error')}
+      on:close={closeShare}
+    />
+  {:catch}
+    <p class="error">The sharing dialog could not be loaded.</p>
+  {/await}
 {/if}
 
 {#if editOpen}
@@ -1517,12 +1538,24 @@
     on:click={closeEdit}
     on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeEdit()}
   ></div>
-	  <div class="edit-modal" use:modal={{ onClose: closeEdit, closeOnEscape: !($settings.editor?.vimMode ?? false) }}>
+	  <div class="edit-modal" role="dialog" aria-modal="true" aria-label={editId ? 'Edit planned workout' : 'Add planned workout'} tabindex="-1" use:modal={{ onClose: closeEdit, closeOnEscape: !($settings.editor?.vimMode ?? false) }}>
       <header>
         <h3>{editId ? 'Edit planned workout' : 'Add planned workout'}</h3>
-        <button class="ghost" on:click={closeEdit} aria-label="Close">✕</button>
+        <button class="ghost" disabled={editSaving} on:click={closeEdit} aria-label="Close">✕</button>
       </header>
-      <div class="form">
+      <div class="form" inert={editSaving}>
+        <div class="library-picker">
+          <div>
+            <p class="eyebrow">Start with a workout</p>
+            <strong>{workoutChosen ? editTitle || 'Your workout' : 'What are you training?'}</strong>
+            <p class="muted small">Your saved workouts and ready-to-use templates.</p>
+          </div>
+          <div class="picker-actions">
+            <button class="primary" type="button" on:click={openLibrary}>{workoutChosen ? 'Change workout' : 'Choose from library'}</button>
+            {#if !workoutChosen}<button class="ghost" type="button" on:click={buildCustom}>Build my own</button>{/if}
+          </div>
+        </div>
+        {#if workoutChosen}
         <label>
           <span class="muted small">Title</span>
           <input type="text" bind:value={editTitle} placeholder="Planned workout" />
@@ -1532,65 +1565,71 @@
           <input type="date" bind:value={editDate} />
         </label>
         <label>
-          <span class="muted small">Tags</span>
-          <div class="tag-editor">
-            {#each editTags as tag}
-              <span class="tag-chip">
-                {tag}
-                <button class="ghost icon-btn" aria-label="Remove tag" on:click={() => (editTags = editTags.filter((t) => t !== tag))}>×</button>
-              </span>
-            {/each}
-            <div class="tag-input-wrap">
-              <input type="text" placeholder="Add tag" bind:value={newTag} />
-              <button class="ghost small" type="button" on:click={addTag}>Add</button>
-            </div>
-          </div>
-        </label>
-        <label>
           <span class="muted small">Notes</span>
-          <input type="text" bind:value={editNotes} placeholder="Optional notes" />
+          <textarea rows="2" bind:value={editNotes} placeholder="Optional notes"></textarea>
         </label>
-        <YamlConfigEditor
-          title="Configuration (YAML)"
-          bind:value={editYaml}
-          parseError={previewResult.error}
-          hasPendingChanges={false}
-          previewTotals={previewTotals}
-          showActions={false}
-          showShare={false}
-          showNameInput={false}
-          on:valueChange={(e) => (editYaml = e.detail)}
-          on:openHelp={() => (showYamlHelp = true)}
-        />
-        <button class="ghost small" type="button" on:click={() => (libraryModalOpen = true)}>
-          Load from library
-        </button>
-        <LibraryModal
-          open={libraryModalOpen}
-          workouts={libraryWorkouts}
-          on:close={() => (libraryModalOpen = false)}
-          on:select={(e) => selectTemplate(e.detail?.workout)}
-        />
-        <AiAssistantPanel
-          bind:prompt={aiPrompt}
-          bind:editInstructions={aiEditInstructions}
-          isGenerating={isGenerating}
-          status={aiStatus}
-          error={aiError}
-          isEditing={isAiEditing}
-          editStatus={aiEditStatus}
-          editError={aiEditError}
-          on:generate={() => generateWorkoutFromAi()}
-          on:modify={() => modifyWorkoutWithAi()}
-          on:openSettings={openSettings}
-        />
-
+        {#if previewTotals}
+          <dl class="chosen-summary" aria-label="Workout overview">
+            <div><dt>Total time</dt><dd>{formatDuration(previewTotals.total)}</dd></div>
+            <div><dt>Work / rest</dt><dd>{formatDuration(previewTotals.work)} / {formatDuration(previewTotals.rest)}</dd></div>
+            <div><dt>Rounds</dt><dd>{previewResult.plan?.rounds?.length ?? 0}</dd></div>
+          </dl>
+        {/if}
+        <details class="advanced-editor" bind:open={advancedOpen}>
+          <summary>Advanced workout details</summary>
+          {#if advancedOpen}
+          <p class="muted small">Tags, YAML, AI assistance, and structural editing are optional.</p>
+          <label>
+            <span class="muted small">Tags</span>
+            <div class="tag-editor">
+              {#each editTags as tag}
+                <span class="tag-chip">
+                  {tag}
+                  <button class="ghost icon-btn" aria-label="Remove tag" on:click={() => (editTags = editTags.filter((t) => t !== tag))}>×</button>
+                </span>
+              {/each}
+              <div class="tag-input-wrap">
+                <input type="text" placeholder="Add tag" bind:value={newTag} />
+                <button class="ghost small" type="button" on:click={addTag}>Add</button>
+              </div>
+            </div>
+          </label>
+          {#await import('$lib/timer/components/shared/YamlConfigEditor.svelte') then module}
+            <svelte:component this={module.default}
+              title="Configuration (YAML)"
+              bind:value={editYaml}
+              parseError={previewResult.error}
+              hasPendingChanges={false}
+              previewTotals={previewTotals}
+              showActions={false}
+              showShare={false}
+              showNameInput={false}
+              on:valueChange={(e) => (editYaml = e.detail)}
+              on:openHelp={() => (showYamlHelp = true)}
+            />
+          {:catch}
+            <p class="error small">The enhanced editor could not be loaded. You can edit the YAML below.</p>
+            <label>Workout YAML<textarea rows="12" bind:value={editYaml}></textarea></label>
+          {/await}
+          {#await import('$lib/timer/components/shared/AiAssistantPanel.svelte') then module}
+            <svelte:component this={module.default}
+              bind:prompt={aiPrompt}
+              bind:editInstructions={aiEditInstructions}
+              isGenerating={isGenerating}
+              status={aiStatus}
+              error={aiError}
+              isEditing={isAiEditing}
+              editStatus={aiEditStatus}
+              editError={aiEditError}
+              on:generate={() => generateWorkoutFromAi()}
+              on:modify={() => modifyWorkoutWithAi()}
+              on:openSettings={openSettings}
+            />
+          {:catch}
+            <p class="error small">The AI assistant could not be loaded.</p>
+          {/await}
         {#if timelinePreview.length}
           <TimelineView phases={timelinePreview} activeIndex={-1} title="Timeline preview" />
-          <SessionOverview
-            totals={previewTotals ?? { work: 0, rest: 0, total: 0 }}
-            roundCount={previewResult.plan?.rounds?.length ?? 0}
-          />
           <RoundsSetsView
             plan={previewResult.plan}
             timeline={timelinePreview}
@@ -1601,39 +1640,84 @@
             on:editSet={(e) => openSetEditor(e.detail.roundIndex, e.detail.setIndex)}
           />
         {/if}
+          {/if}
+        </details>
+        {/if}
       </div>
+      {#if editError}<p class="error" role="alert">{editError}</p>{/if}
       <div class="actions">
-        <button class="primary" on:click={savePlan}>Save</button>
-        <button class="ghost" on:click={closeEdit}>Cancel</button>
+        <button class="primary" disabled={editSaving || !workoutChosen} on:click={savePlan}>{editSaving ? 'Saving…' : 'Save'}</button>
+        <button class="ghost" disabled={editSaving} on:click={closeEdit}>Cancel</button>
       </div>
   </div>
 {/if}
 
-<YamlHelpModal open={showYamlHelp} on:close={() => (showYamlHelp = false)} />
-<PlanEditorModal
-  open={planEditorOpen}
-  title={previewResult.plan?.title}
-  description={previewResult.plan?.description}
-  preStartSeconds={previewResult.plan?.preStartSeconds}
-  preStartLabel={previewResult.plan?.preStartLabel}
-  on:close={closePlanEditor}
-  on:save={handlePlanSave}
-/>
-<RoundEditorModal
-  open={roundEditorOpen}
-  round={roundEditorData}
-  roundIndex={roundEditorIndex ?? 0}
-  on:close={closeRoundEditor}
-  on:save={handleRoundSave}
-/>
-<SetEditorModal
-  open={setEditorOpen}
-  roundIndex={setEditorRoundIndex ?? 0}
-  setIndex={setEditorSetIndex ?? 0}
-  set={setEditorData}
-  on:close={closeSetEditor}
-  on:save={handleSetSave}
-/>
+{#if libraryModalOpen}
+  {#await import('$lib/timer/components/LibraryModal.svelte') then module}
+    <svelte:component this={module.default}
+      open={libraryModalOpen}
+      workouts={libraryWorkouts}
+      loading={libraryLoading}
+      error={libraryError}
+      selectLabel="Use workout"
+      on:retry={openLibrary}
+      on:close={() => (libraryModalOpen = false)}
+      on:select={(e) => selectTemplate(e.detail?.workout)}
+    />
+  {:catch}
+    <p class="error">The workout library could not be loaded.</p>
+  {/await}
+{/if}
+
+{#if showYamlHelp}
+  {#await import('$lib/timer/components/YamlHelpModal.svelte') then module}
+    <svelte:component this={module.default} open={showYamlHelp} on:close={() => (showYamlHelp = false)} />
+  {:catch}
+    <p class="error">The YAML help could not be loaded.</p>
+  {/await}
+{/if}
+{#if planEditorOpen}
+  {#await import('$lib/timer/components/PlanEditorModal.svelte') then module}
+    <svelte:component this={module.default}
+      open={planEditorOpen}
+      title={previewResult.plan?.title}
+      description={previewResult.plan?.description}
+      preStartSeconds={previewResult.plan?.preStartSeconds}
+      preStartLabel={previewResult.plan?.preStartLabel}
+      on:close={closePlanEditor}
+      on:save={handlePlanSave}
+    />
+  {:catch}
+    <p class="error">The session editor could not be loaded.</p>
+  {/await}
+{/if}
+{#if roundEditorOpen}
+  {#await import('$lib/timer/components/RoundEditorModal.svelte') then module}
+    <svelte:component this={module.default}
+      open={roundEditorOpen}
+      round={roundEditorData}
+      roundIndex={roundEditorIndex ?? 0}
+      on:close={closeRoundEditor}
+      on:save={handleRoundSave}
+    />
+  {:catch}
+    <p class="error">The round editor could not be loaded.</p>
+  {/await}
+{/if}
+{#if setEditorOpen}
+  {#await import('$lib/timer/components/SetEditorModal.svelte') then module}
+    <svelte:component this={module.default}
+      open={setEditorOpen}
+      roundIndex={setEditorRoundIndex ?? 0}
+      setIndex={setEditorSetIndex ?? 0}
+      set={setEditorData}
+      on:close={closeSetEditor}
+      on:save={handleSetSave}
+    />
+  {:catch}
+    <p class="error">The set editor could not be loaded.</p>
+  {/await}
+{/if}
 </div>
 
 <style>
@@ -1645,6 +1729,8 @@
     flex-direction: column;
     gap: 1rem;
   }
+  .planner-page > header { grid-area: planner-header; }
+  .mobile-only { display: none; }
   .today-block,
   .calendar-shell,
   .day-detail {
@@ -1653,6 +1739,33 @@
     padding: 1rem;
     background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
   }
+  .library-picker {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface-1));
+  }
+  .library-picker p { margin: 0.2rem 0 0; }
+  .picker-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .picker-actions button { white-space: nowrap; }
+  .chosen-summary { display: grid; grid-template-columns: 1fr 1.5fr 0.7fr; gap: 0.5rem; padding: 0.85rem; margin: 0; border-radius: 12px; background: var(--color-surface-3); }
+  .chosen-summary dt { color: var(--color-text-muted); font-size: 0.8rem; }
+  .chosen-summary dd { margin: 0.2rem 0 0; font-weight: 700; }
+  .advanced-editor > summary { padding-block: 0.6rem; }
+  .advanced-editor {
+    border-top: 1px solid var(--color-border);
+    padding-top: 0.75rem;
+  }
+  .advanced-editor > summary {
+    cursor: pointer;
+    color: var(--color-text-primary);
+    font-weight: 700;
+  }
+  .advanced-editor > .muted { margin: 0.45rem 0 0.75rem; }
   .today-head,
   .day-head,
   .calendar-head {
@@ -1878,9 +1991,6 @@
     color: var(--color-text-primary);
     font-size: 0.9rem;
   }
-  .plan-timeline :global(.phase-queue) {
-    width: 100%;
-  }
   .inline-actions {
     display: flex;
     gap: 0.5rem;
@@ -1947,12 +2057,15 @@
     align-items: center;
     gap: 0.4rem;
   }
-  input {
+  input, textarea {
     border: 1px solid var(--color-border);
     border-radius: 10px;
     padding: 0.5rem 0.65rem;
     background: var(--color-surface-1);
     color: var(--color-text-primary);
+    font: inherit;
+    min-width: 0;
+    max-width: 100%;
   }
   .tag-editor {
     display: flex;
@@ -1980,20 +2093,6 @@
     background: color-mix(in srgb, var(--color-accent) 18%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
     color: var(--color-text-primary);
-  }
-  .mini-rounds {
-    margin-top: 0.35rem;
-  }
-  .mini-rounds__title {
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: var(--color-text-primary);
-    margin: 0 0 0.35rem;
-  }
-  .mini-rounds__scroller {
-    max-height: 360px;
-    overflow-y: auto;
-    padding-right: 0.35rem;
   }
   :global(.mini-rounds .rounds__header) {
     display: none;
@@ -2146,6 +2245,7 @@
     background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
   }
   @media (max-width: 720px) {
+    .library-picker { align-items: stretch; flex-direction: column; }
     .today-head {
       flex-direction: column;
       align-items: flex-start;
@@ -2250,12 +2350,27 @@
       display: block;
     }
   }
-  @media (min-width: 721px) {
+  @media (min-width: 1000px) {
+    .planner-page {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 0.62fr);
+      grid-template-areas:
+        'planner-header planner-header'
+        'today today'
+        'calendar detail'
+        'shares shares';
+      align-items: start;
+    }
+    .today-block { grid-area: today; }
+    .calendar-shell { grid-area: calendar; min-width: 0; }
+    .day-detail { grid-area: detail; min-width: 0; }
+    .shares-block { grid-area: shares; }
     .mobile-only {
       display: none;
     }
   }
   button {
+    min-height: 44px;
     padding: 0.5rem 0.8rem;
     border-radius: 10px;
     border: 1px solid var(--color-border);
@@ -2287,6 +2402,14 @@
   .today-card > div { min-width: 0; }
   .today-actions { flex-shrink: 0; }
   .today-actions button, .card-header .actions button { min-height: 44px; }
+  .shares-block { order: 10; }
+  .edit-modal > .actions { position: sticky; bottom: -1rem; background: var(--color-surface-2); padding-block: 0.75rem; border-top: 1px solid var(--color-border); z-index: 2; }
+  @media (max-width: 640px) {
+    .library-picker { flex-direction: column; align-items: stretch; }
+    .picker-actions button { flex: 1; }
+    .edit-modal { inset: 0; transform: none; width: 100%; max-height: 100dvh; border-radius: 0; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+    .edit-modal > .actions { margin-top: auto; }
+  }
   .calendar-grid { padding: 0.65rem; }
   @media (min-width: 721px) and (max-width: 1100px) {
     .today-card { flex-direction: column; align-items: stretch; }

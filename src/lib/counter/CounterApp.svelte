@@ -4,14 +4,12 @@
   import { runState } from '$lib/counter/stores/session'
   import '$lib/counter/app.css'
   import { repCount, poseStats, exercise } from '$lib/counter/stores/session'
-  let showHero = true
   let sessionRef: any
   const dispatch = createEventDispatcher()
   export let showTips = true
   export let showControls = true
   export let hideHeader = false
 
-  $: if ($runState === 'running') showHero = false
   $: dispatch('state', {
     runState: $runState,
     reps: $repCount,
@@ -30,24 +28,24 @@
   }
 </script>
 
-<main class="page">
+<main class="page counter-app">
   <section class="panel" id="live-session">
     {#if !hideHeader}
       <div class="panel-head">
         <div>
           <p class="eyebrow">Live session</p>
-          <h2>Camera, overlay, and rep counter</h2>
+          <h2>Rep counter</h2>
         </div>
-        <p class="hint">If FPS is low, switch to better light, lower resolution, or enable low-FPS mode.</p>
+        <p class="hint">Choose your movement, then start. Keep your full body in view.</p>
       </div>
     {/if}
     <PoseSession bind:this={sessionRef} showControls={showControls} />
   </section>
 
   {#if showTips}
-    <section class="panel tips">
-      <div>
-        <p class="eyebrow">Tips</p>
+    <details class="panel tips">
+      <summary><span class="eyebrow">Tips</span><strong>Get more reliable counts</strong></summary>
+      <div class="tips-body">
         <ul>
           <li>Face the camera (frontal view); keep full body in frame and steady light.</li>
           <li>Modes: Swing counts hinge-driven swings; Lockout counts overhead lockouts (snatch style).</li>
@@ -55,6 +53,6 @@
           <li>Enable low-FPS mode on mobile if tracking lags.</li>
         </ul>
       </div>
-    </section>
+    </details>
   {/if}
 </main>

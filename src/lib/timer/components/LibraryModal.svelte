@@ -4,6 +4,11 @@
 
   export let open = false
   export let workouts = []
+  export let loading = false
+  export let error = ''
+  export let selectLabel = 'Load template'
+  let search = ''
+  $: filtered = workouts.filter(workout => `${workout.name} ${workout.description ?? ''}`.toLowerCase().includes(search.trim().toLowerCase()))
 
   const dispatch = createEventDispatcher()
 
@@ -35,31 +40,45 @@
     class="modal-backdrop"
     role="dialog"
     aria-modal="true"
+    aria-label="Workout library"
     tabindex="-1"
     on:click={handleBackdropClick}
+    on:keydown={(event) => {
+      if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault()
+        close()
+      }
+    }}
     use:modal={{ onClose: close }}
   >
     <section class="modal" role="document">
       <header class="modal__header">
         <div>
           <h2>Workout library</h2>
-          <p>Select a template to load it into the editor.</p>
+          <p>Choose a saved workout or a ready-to-use template.</p>
         </div>
         <button type="button" class="modal__close" on:click={close} aria-label="Close">×</button>
       </header>
       <div class="modal__content">
-        {#if workouts.length === 0}
-          <p class="library-empty">No templates available yet.</p>
+        <input class="library-search" type="search" aria-label="Search workout library" placeholder="Search workouts…" bind:value={search} />
+        {#if loading}
+          <p role="status" class="library-empty">Loading your workouts…</p>
+        {:else if error}
+          <p role="alert">{error}</p>
+          <button type="button" on:click={() => dispatch('retry')}>Try again</button>
+        {:else if filtered.length === 0}
+          <p class="library-empty">{search ? 'No workouts match your search.' : 'No workouts available yet.'}</p>
         {:else}
           <ul class="library-list">
-            {#each workouts as workout (workout.id)}
+            {#each filtered as workout (workout.id)}
               <li class="library-item">
                 <div class="library-item__info">
                   <div class="library-item__heading">
                     <h3>{workout.name}</h3>
                     <div class="library-item__chips">
-                      <span>{workout.roundCount} {workout.roundCount === 1 ? 'round' : 'rounds'}</span>
-                      <span>{formatDuration(workout.totals?.total ?? 0)} total</span>
+                      {#if workout.is_template !== undefined}<span>{workout.is_template ? 'Template' : 'Saved workout'}</span>{/if}
+                      {#if workout.roundCount != null}<span>{workout.roundCount} {workout.roundCount === 1 ? 'round' : 'rounds'}</span>{/if}
+                      {#if workout.totals}<span>{formatDuration(workout.totals.total)} total</span>{/if}
                     </div>
                   </div>
                   {#if workout.description}
@@ -68,7 +87,7 @@
                 </div>
                 <div class="library-item__actions">
                   <button type="button" on:click={() => selectWorkout(workout)}>
-                    Load template
+                    {selectLabel}
                   </button>
                 </div>
               </li>
@@ -140,6 +159,17 @@
     padding: 0 1.5rem 1.5rem;
     overflow-y: auto;
   }
+  .library-search {
+    width: 100%;
+    min-height: 44px;
+    padding: 0.7rem 0.85rem;
+    background: var(--color-surface-1);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    color: var(--color-text-primary);
+    font: inherit;
+    margin-bottom: 1rem;
+  }
 
   .library-empty {
     margin: 1.25rem 0;
@@ -170,7 +200,7 @@
 
   .library-item__info {
     flex: 1;
-    min-width: 240px;
+    min-width: min(240px, 100%);
     display: flex;
     flex-direction: column;
     gap: 0.5rem;

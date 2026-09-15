@@ -3,6 +3,7 @@ import { ensureSessionUser, getDb } from '$lib/server/db'
 import crypto from 'node:crypto'
 import { computeCompletedProgramMetrics } from '$lib/programming/metrics'
 import { syncProgramWorkoutCompletion } from '$lib/server/programming'
+import { readHrMetadataBatch } from '$lib/server/hr'
 
 const COOKIE_NAME = 'kb_session'
 
@@ -69,7 +70,8 @@ export const GET = async ({ cookies }) => {
   const setsStmt = db.prepare(
     'SELECT * FROM completed_sets WHERE completed_workout_id = ? ORDER BY position ASC'
   )
-  const items = rows.map((row) => serializeCompleted(row, setsStmt.all(row.id)))
+  const metadata = await readHrMetadataBatch(rows.map(row => row.id))
+  const items = rows.map((row) => ({ ...serializeCompleted(row, setsStmt.all(row.id)), hr: metadata[row.id] }))
   return json({ items })
 }
 

@@ -163,7 +163,10 @@ Validation/editor experience:
 - The summary modal is global (mounted in `src/routes/+layout.svelte`) and driven by `src/lib/stats/summaryStore.ts`.
 - `TimerApp` builds “summary entries” from the timeline and writes rep counts into them (auto-fill) based on the live rep counter.
 - Saving the summary creates a `completed_workouts` + `completed_sets` record via `POST /api/completed-workouts`.
+- The summary stays open during saving, blocks repeated submissions, and only clears its draft after the server returns a saved session ID. Errors remain in the dialog with editable values and a retry action.
 - `/history` provides editing of existing completed workouts via `PUT /api/completed-workouts/[id]` and supports HR attachment via `/hr`.
+- `GET /api/completed-workouts` batches cached heart-rate metadata into each row; sample arrays are omitted until `/hr?details=1` is requested. History uses `src/lib/hr/detailCache.ts` to deduplicate and bound visible-card detail requests.
+- HR backfill uses `readHrAttachment(..., { details: true, cachedOnly: true })` to distinguish existing samples from newly rebuilt samples. Normal detail reads can recover samples from originals; list metadata reads never parse FIT/TCX files.
 
 ## Sharing Planned Workouts
 
@@ -181,10 +184,11 @@ Validation/editor experience:
 ## Shared interface behavior
 
 - `src/lib/components/ActionMenu.svelte` provides the native disclosure used by card actions and the Train navigation group. It retains ordinary button/link keyboard behavior, dismisses on selection/Escape/outside click, and positions its options within the viewport.
+- Planner loads its library and editor/dialog bundles on demand. Its desktop grid keeps the calendar beside the selected-day detail while phones use a selected-day scroll target.
 - Navigation exposes the active route; the summary draft is available contextually from the timer or Train group.
 - `WorkoutSummaryModal` uses a scrolling table on desktop and labeled set cards with a persistent footer on phones. `actions/modal.ts` gives only the top modal ownership of focus trapping.
 - Programs secondary-work forms use responsive labeled grids; Home session details and movement analysis, and TimerApp editing/timeline, use native disclosures. Collapsing the timer editor does not unmount it or the timer/camera.
-- `src/app.css` owns shared font/focus behavior and separate accent foreground tokens. `src/lib/format/date.ts` formats readable timestamps without seconds.
+- `src/app.css` owns shared font/focus behavior, self-hosted Space Grotesk, and separate accent foreground tokens. Remix Icon assets live in `static/icons`. `src/lib/format/date.ts` formats readable timestamps without seconds.
 - See `docs/interface-refinement.md` and `tests/browser/design.spec.ts` for the workflow and responsive checks.
 
 ## Deployment

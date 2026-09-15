@@ -67,9 +67,31 @@ const withSamplePreview = (summary: HrSummary): HrSummary => {
   return { ...summary, samples: downsampleSeconds(summary.samples, HR_SAMPLE_PREVIEW_LIMIT) }
 }
 
+// Lists never parse an original FIT/TCX file or send graph samples. Older
+// attachments without a summary are still discoverable and parsed on demand.
+export const readHrMetadataBatch = async (ids: string[]) => {
+  const results: Record<string, { attached: boolean; summary: Omit<HrSummary, 'samples'> | null }> = {}
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(4, ids.length) }, async () => {
+    while (next < ids.length) {
+      const id = ids[next++]
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)) continue
+      const { dir, files } = await resolveAttachmentDir(id)
+      let summary = null
+      try {
+        const cached = JSON.parse(await fs.readFile(path.join(dir, 'summary.json'), 'utf-8'))
+        summary = { avgHr: cached.avgHr ?? null, maxHr: cached.maxHr ?? null,
+          startTime: cached.startTime ?? null, durationSeconds: cached.durationSeconds ?? null }
+      } catch { /* A visible card can recover an absent or invalid summary. */ }
+      results[id] = { attached: files.length > 0, summary }
+    }
+  }))
+  return results
+}
+
 export const readHrAttachment = async (
   completedWorkoutId: string,
-  options: { details?: boolean; full?: boolean } = {}
+  options: { details?: boolean; full?: boolean; cachedOnly?: boolean } = {}
 ) => {
   const wantDetails = options.details === true
   const wantFullSamples = options.full === true
@@ -84,7 +106,7 @@ export const readHrAttachment = async (
     try {
       summary = JSON.parse(await fs.readFile(summaryPath, 'utf-8'))
     } catch {
-      if (files[0]) {
+      if (files[0] && !options.cachedOnly) {
         const buffer = await fs.readFile(path.join(dir, files[0]))
         summary = await parseHrFile(buffer, files[0], wantDetails, maxSamples)
         parsedFromFile = true
@@ -95,7 +117,7 @@ export const readHrAttachment = async (
       }
     }
 
-    if (wantDetails && wantFullSamples && files[0] && !parsedFromFile) {
+    if (!options.cachedOnly && wantDetails && wantFullSamples && files[0] && !parsedFromFile) {
       const buffer = await fs.readFile(path.join(dir, files[0]))
       const detailed = await parseHrFile(buffer, files[0], true, 0)
       if (detailed) {
@@ -104,7 +126,7 @@ export const readHrAttachment = async (
       }
     }
 
-    if (wantDetails && !wantFullSamples && summary && !summary.samples && files[0]) {
+    if (!options.cachedOnly && wantDetails && !wantFullSamples && summary && !summary.samples?.length && files[0]) {
       const buffer = await fs.readFile(path.join(dir, files[0]))
       const detailed = await parseHrFile(buffer, files[0], true, HR_SAMPLE_PREVIEW_LIMIT)
       if (detailed) {
@@ -113,6 +135,10 @@ export const readHrAttachment = async (
       }
     }
 
+    if (!wantDetails && summary) {
+      const { samples: _samples, ...metadata } = summary
+      return { attached: files.length > 0, files, summary: metadata }
+    }
     return { attached: files.length > 0, files, summary }
   } catch {
     return { attached: false, files: [] as string[], summary: null }

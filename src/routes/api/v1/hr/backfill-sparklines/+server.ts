@@ -32,15 +32,16 @@ export const POST = async ({ request }) => {
   for (const row of rows) {
     scanned += 1
     try {
-      const current = await readHrAttachment(row.id)
+      const current = await readHrAttachment(row.id, { details: true, cachedOnly: true })
       if (!current.attached) {
         skipped += 1
         items.push({ id: row.id, status: 'missing_hr' })
         continue
       }
 
-      const existingSamples = Array.isArray(current.summary?.samples)
-        ? current.summary.samples.length
+      const cachedSummary = current.summary as { samples?: unknown[] } | null
+      const existingSamples = Array.isArray(cachedSummary?.samples)
+        ? cachedSummary.samples.length
         : 0
       if (existingSamples > 0) {
         skipped += 1

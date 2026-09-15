@@ -22,6 +22,8 @@
 
 	let { children } = $props();
 	let menuOpen = $state(false);
+	let summarySaving = $state(false);
+	let summarySaveError = $state('');
 	let pendingShareCount = $derived($shares.count ?? 0);
 	let trainActive = $derived(['/timer', '/counter', '/big-picture'].includes(page.url.pathname));
 
@@ -37,11 +39,13 @@
 	const closeMenu = () => (menuOpen = false);
 
 	const handleSummaryClose = (event: CustomEvent<{ entries: any[] }>) => {
+		if (summarySaving) return;
 		const nextEntries = event?.detail?.entries;
 		if (Array.isArray(nextEntries)) {
 			setSummaryEntries(nextEntries);
 		}
 		closeSummaryModal();
+		summarySaveError = '';
 	};
 
 	onMount(() => {
@@ -65,7 +69,10 @@
 
 	const saveCompleted = async (entries: any[]): Promise<string | null> => {
 		const meta = $summaryMetadata ?? {};
-		if (!entries?.length) return null;
+		if (summarySaving || !entries?.length) return null;
+		summarySaving = true;
+		summarySaveError = '';
+		setSummaryEntries(entries);
 		try {
 			const res = await fetch('/api/completed-workouts', {
 				method: 'POST',
@@ -85,7 +92,10 @@
 				throw new Error(data?.error ?? 'Failed to save workout');
 			}
 			const id = data?.item?.id ? String(data.item.id) : '';
-			pushToast('Workout saved.', 'success', 3200, {
+			if (!id) throw new Error('The server did not confirm the saved session.');
+			closeSummaryModal();
+			clearSummaryDraft();
+			pushToast('Session saved to History.', 'success', 3200, {
 				label: 'Open history',
 				onClick: () => {
 					if (id) {
@@ -98,8 +108,10 @@
 			return id || null;
 		} catch (err) {
 			console.warn('Failed to save completed workout', err);
-			pushToast((err as any)?.message ?? 'Failed to save workout', 'error');
+			summarySaveError = err instanceof Error ? err.message : 'Failed to save session';
 			return null;
+		} finally {
+			summarySaving = false;
 		}
 	};
 </script>
@@ -108,7 +120,7 @@
 	<link rel="icon" href={favicon} />
 	<link
 		rel="stylesheet"
-		href="https://cdn.jsdelivr.net/npm/remixicon@4.2.0/fonts/remixicon.css"
+		href="/icons/remixicon.css"
 	/>
 </svelte:head>
 
@@ -158,15 +170,10 @@
 	<WorkoutSummaryModal
 		open={$summaryModalOpen}
 		entries={$summaryEntries}
+		saving={summarySaving}
+		saveError={summarySaveError}
 		on:close={handleSummaryClose}
-		on:save={(event) => {
-			const nextEntries = event.detail?.entries ?? [];
-			setSummaryEntries(nextEntries);
-			closeSummaryModal();
-			saveCompleted(nextEntries).then((id) => {
-				if (id) clearSummaryDraft();
-			});
-		}}
+		on:save={(event) => saveCompleted(event.detail?.entries ?? [])}
 	/>
 	<ToastStack />
 </div>
@@ -180,12 +187,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 0.75rem 1rem;
+		padding: 0.75rem max(1rem, calc((100vw - 1320px) / 2));
 		position: sticky;
 		top: 0;
 		z-index: 9;
-		background: color-mix(in srgb, var(--color-surface-1) 85%, transparent);
-		backdrop-filter: blur(10px);
+		background: var(--color-surface-1);
 		border-bottom: 1px solid var(--color-border);
 	}
 

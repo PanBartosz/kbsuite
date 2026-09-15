@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { defaultDepTotalWorkSpec, type DepTotalWorkSpec } from '$lib/programming/adapters/dep-total-work'
+  import { modal } from '$lib/actions/modal'
   import { pushToast } from '$lib/stores/toasts'
 
   type ProgramWorkout = {
@@ -39,6 +40,13 @@
     plannedMetrics: Record<string, any>
   }
 
+  let view: 'overview' | 'builder' = 'overview'
+  let reviewedRun: ProgramRun | null = null
+  let reviewedWorkouts: PreviewWorkout[] = []
+  let reviewing = false
+  let previewKey = ''
+  $: previewCurrent = !!previewWorkouts.length && previewKey === JSON.stringify(spec)
+  $: nextWorkout = selectedRun?.workouts?.filter(workout => workout.planned_workout_id && !workout.completed_workout_id && workout.status !== 'completed').sort((a, b) => (a.planned_for ?? 0) - (b.planned_for ?? 0))[0]
   let spec: DepTotalWorkSpec = defaultDepTotalWorkSpec()
   let runs: ProgramRun[] = []
   let selectedRun: ProgramRun | null = null
@@ -112,19 +120,23 @@
   }
 
   const previewSpec = async () => {
+    if (previewLoading) return
+    const requestedSpec = JSON.stringify(spec)
     previewLoading = true
     error = ''
     try {
       const res = await fetch('/api/program-runs/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spec })
+        body: `{"spec":${requestedSpec}}`
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data?.error ?? 'Preview failed')
+      if (JSON.stringify(spec) !== requestedSpec) return
       spec = data.spec
       previewWorkouts = data.workouts ?? []
       selectedPreview = previewWorkouts[0] ?? null
+      previewKey = JSON.stringify(spec)
     } catch (err) {
       error = (err as any)?.message ?? 'Preview failed'
       pushToast(error, 'error')
@@ -134,6 +146,7 @@
   }
 
   const createRun = async () => {
+    if (saving || !previewCurrent || previewLoading) return null
     saving = true
     error = ''
     try {
@@ -146,7 +159,8 @@
       if (!res.ok) throw new Error(data?.error ?? 'Failed to save program')
       selectedRun = data.item
       runs = [data.item, ...runs.filter((run) => run.id !== data.item.id)]
-      pushToast('Program saved.', 'success')
+      view = 'overview'
+      pushToast('Program draft saved.', 'success')
       return data.item as ProgramRun
     } catch (err) {
       error = (err as any)?.message ?? 'Failed to save program'
@@ -158,7 +172,7 @@
   }
 
   const generateRun = async (run: ProgramRun | null = selectedRun) => {
-    if (!run) return
+    if (!run || generating) return
     generating = true
     error = ''
     try {
@@ -167,7 +181,8 @@
       if (!res.ok) throw new Error(data?.error ?? 'Failed to generate planner entries')
       selectedRun = data.item
       runs = runs.map((item) => (item.id === data.item.id ? data.item : item))
-      pushToast(`Generated ${data?.planned?.length ?? 0} planner entries.`, 'success')
+      reviewedRun = null
+      pushToast(`Added ${data?.planned?.length ?? 0} workouts to Planner.`, 'success')
     } catch (err) {
       error = (err as any)?.message ?? 'Failed to generate planner entries'
       pushToast(error, 'error')
@@ -176,9 +191,20 @@
     }
   }
 
-  const saveAndGenerate = async () => {
-    const run = await createRun()
-    if (run) await generateRun(run)
+  const reviewSchedule = async (run: ProgramRun) => {
+    if (reviewing) return
+    reviewing = true
+    error = ''
+    try {
+      const response = await fetch('/api/program-runs/preview', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: run.spec })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Could not preview schedule')
+      reviewedWorkouts = data.workouts ?? []
+      reviewedRun = run
+    } catch (err) { error = err instanceof Error ? err.message : 'Could not preview schedule' }
+    finally { reviewing = false }
   }
 
   const selectRun = async (run: ProgramRun) => {
@@ -223,65 +249,17 @@
 </script>
 
 <div class="programs-page">
-  <header class="programs-header">
-    <div>
-      <p class="eyebrow">Programming</p>
-      <h1>Programs</h1>
-      <p class="muted">Generate program blocks as normal planner workouts, then compare completed runs over time.</p>
-    </div>
-    <div class="header-actions">
-      <button type="button" class="ghost" on:click={resetToDefaults}>DEP defaults</button>
-      <button type="button" on:click={previewSpec} disabled={previewLoading}>
-        {previewLoading ? 'Previewing...' : 'Preview'}
-      </button>
-      <button type="button" on:click={saveAndGenerate} disabled={saving || generating}>
-        {saving || generating ? 'Working...' : 'Save + generate'}
-      </button>
-    </div>
+  <header class="programs-header route-heading">
+    <div><p class="eyebrow">Training blocks</p><h1>Programs</h1><p class="muted">{view === 'overview' ? 'Your schedule, progress and next session.' : 'Build a block, review it, then add it to your calendar.'}</p></div>
+    {#if view === 'overview'}<button class="primary" type="button" on:click={() => view = 'builder'}>Create program</button>
+    {:else}<button class="ghost" type="button" on:click={() => view = 'overview'}>Back to my programs</button>{/if}
   </header>
-
-  {#if error}
-    <p class="error">{error}</p>
-  {/if}
-
-  <section class="panel runs runs-bar">
-    <div class="section-head">
-      <div>
-        <h2>Saved Runs</h2>
-        <p class="muted small">Select a saved run, generate planner entries, or compare completed blocks.</p>
-      </div>
-      <div class="header-actions">
-        <button type="button" class="ghost small" on:click={loadPrograms} disabled={loading}>
-          Refresh
-        </button>
-        <button type="button" class="ghost small" on:click={createRun} disabled={saving}>
-          {saving ? 'Saving...' : 'Save draft'}
-        </button>
-      </div>
-    </div>
-    {#if loading}
-      <p class="muted">Loading...</p>
-    {:else if runs.length === 0}
-      <p class="muted compact-empty">No saved runs yet. Build the wizard below, then preview or save the run.</p>
-    {:else}
-      <div class="run-list">
-        {#each runs as run}
-          <button
-            type="button"
-            class:active={selectedRun?.id === run.id}
-            on:click={() => selectRun(run)}
-          >
-            <strong>{run.title}</strong>
-            <span>{run.status} · {run.workouts?.length ?? 0} days</span>
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </section>
-
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if view === 'builder'}
+    <div class="builder-intro"><span class="step-marker">1</span><span>Configure your program</span><span class="step-divider">→</span><span class="step-marker">2</span><span>Preview & save draft</span><span class="step-divider">→</span><span class="step-marker">3</span><span>Add to Planner</span></div>
   <section class="panel wizard">
       <div class="section-head">
-        <h2>DEP Total Work Wizard</h2>
+        <h2>DEP Total Work</h2><button class="ghost small" type="button" on:click={resetToDefaults}>Restore defaults</button>
 
       </div>
 
@@ -446,7 +424,7 @@
     <section class="panel">
       <div class="section-head">
         <h2>Preview</h2>
-        <p class="muted small">{previewWorkouts.length} generated workouts</p>
+        <p class="muted small">{previewCurrent ? `${previewWorkouts.length} workouts ready to review` : 'Settings changed — refresh the preview'}</p>
       </div>
       <div class="day-table">
         <div class="table-head">
@@ -464,13 +442,52 @@
         {/each}
       </div>
       {#if selectedPreview}
-        <details class="yaml-preview" open>
+        <details class="yaml-preview">
           <summary>{selectedPreview.title}</summary>
           <pre>{selectedPreview.yamlSource}</pre>
         </details>
       {/if}
     </section>
   {/if}
+
+    <div class="builder-actions">
+      <p>Saving a draft does not add workouts to your calendar.</p>
+      <button class="ghost" type="button" disabled={previewLoading || saving} on:click={previewSpec}>{previewLoading ? 'Previewing…' : 'Preview'}</button>
+      <button class="primary" type="button" disabled={saving || previewLoading || !previewCurrent} on:click={createRun}>{saving ? 'Saving…' : 'Save draft'}</button>
+    </div>
+  {:else}
+  <section class="panel runs runs-bar">
+    <div class="section-head">
+      <div>
+        <h2>My programs</h2>
+        <p class="muted small">Select a program to see its schedule and progress.</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="ghost small" on:click={loadPrograms} disabled={loading}>
+          Refresh
+        </button>
+
+      </div>
+    </div>
+    {#if loading}
+      <p class="muted">Loading...</p>
+    {:else if runs.length === 0}
+      <p class="muted compact-empty">No programs yet. Create a program to organize your next training block.</p>
+    {:else}
+      <div class="run-list">
+        {#each runs as run}
+          <button
+            type="button"
+            class:active={selectedRun?.id === run.id}
+            on:click={() => selectRun(run)}
+          >
+            <strong>{run.title}</strong>
+            <span>{run.status} · {run.workouts?.length ?? 0} days</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </section>
 
   {#if selectedRun}
     <section class="panel">
@@ -480,8 +497,8 @@
           <p class="muted small">{selectedRun.status} · {selectedRun.kind}</p>
         </div>
         <div class="header-actions">
-          <button type="button" class="ghost" on:click={() => generateRun(selectedRun)} disabled={generating || selectedRun.workouts.length > 0}>
-            {generating ? 'Generating...' : 'Generate planner entries'}
+          <button type="button" class="ghost" on:click={() => selectedRun && reviewSchedule(selectedRun)} disabled={reviewing || generating || selectedRun.workouts.length > 0}>
+            {reviewing ? 'Preparing review…' : selectedRun.workouts.length ? 'Added to Planner' : 'Add to Planner'}
           </button>
           <button type="button" class="ghost" on:click={compareRun} disabled={compareLoading}>
             {compareLoading ? 'Comparing...' : 'Compare'}
@@ -489,6 +506,13 @@
         </div>
       </div>
 
+      {#if nextWorkout}
+        <div class="next-workout">
+          <div><p class="eyebrow">Next session</p><h3>{nextWorkout.title}</h3><p>{formatDate(nextWorkout.planned_for)} · {nextWorkout.planned_metrics.primaryReps ?? '—'} reps @ {nextWorkout.planned_metrics.primaryLoad ?? '—'} kg</p></div>
+          <button class="primary" type="button" on:click={() => openBigPicture(nextWorkout.planned_workout_id)}>Start workout</button>
+        </div>
+      {/if}
+      {#if selectedRun.summary.totalDays}<progress aria-label="Program completion" max={selectedRun.summary.totalDays} value={selectedRun.summary.completedDays ?? 0}></progress>{/if}
       <div class="metric-strip">
         <div><span>Days</span><strong>{selectedRun.summary.completedDays ?? 0}/{selectedRun.summary.totalDays ?? 0}</strong></div>
         <div><span>Planned work</span><strong>{formatWork(selectedRun.summary.plannedPrimaryWork)}</strong></div>
@@ -554,15 +578,49 @@
       <p class="muted">No other {selectedRun.kind} runs are available yet.</p>
     </section>
   {/if}
+  {/if}
 </div>
 
+{#if reviewedRun}
+  <div class="schedule-backdrop">
+    <div class="schedule-review" role="dialog" aria-modal="true" aria-label="Review program schedule" tabindex="-1" use:modal={{ onClose: () => { if (!generating) reviewedRun = null } }}>
+      <p class="eyebrow">Ready for your calendar</p><h2>Add {reviewedWorkouts.length} workouts?</h2>
+      <p>{reviewedRun.title}</p>
+      {#if reviewedWorkouts.length}<p class="muted">{formatDate(reviewedWorkouts[0].plannedFor)} – {formatDate(reviewedWorkouts.at(-1)?.plannedFor)}</p>{/if}
+      <div class="schedule-list">{#each reviewedWorkouts as workout}<div><span>{formatDate(workout.plannedFor)}</span><strong>{workout.title}</strong><span>{workout.plannedMetrics.primaryReps} reps @ {workout.plannedMetrics.primaryLoad} kg</span></div>{/each}</div>
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      <div class="header-actions"><button class="ghost" disabled={generating} on:click={() => reviewedRun = null}>Cancel</button><button class="primary" disabled={generating || !reviewedWorkouts.length} on:click={() => generateRun(reviewedRun)}>{generating ? 'Adding…' : 'Confirm and add to Planner'}</button></div>
+    </div>
+  </div>
+{/if}
+
 <style>
+  .builder-intro { display: flex; gap: 0.65rem; flex-wrap: wrap; align-items: center; margin-bottom: 1.5rem; color: var(--color-text-muted); font-size: 0.85rem; }
+  .step-marker { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--color-surface-3); color: var(--color-text-primary); font-weight: 700; }
+  .builder-actions { position: sticky; bottom: 0.5rem; z-index: 8; display: flex; align-items: center; gap: 0.65rem; padding: 0.85rem; background: var(--color-surface-1); border: 1px solid var(--color-border); border-radius: 14px; box-shadow: var(--shadow-card); }
+  .builder-actions p { margin: 0 auto 0 0; color: var(--color-text-muted); font-size: 0.85rem; }
+  .next-workout { display: flex; align-items: center; justify-content: space-between; gap: 1rem; background: var(--color-surface-2); padding: 1.25rem; border-radius: 16px; margin-block: 1.25rem; }
+  .next-workout h3 { margin-bottom: 0.35rem; } .next-workout p { margin-bottom: 0; }
+  progress { accent-color: var(--color-accent); width: 100%; height: 7px; }
+  .schedule-backdrop { position: fixed; inset: 0; z-index: 180; background: rgba(0,0,0,0.5); display: grid; place-items: center; padding: 1rem; }
+  .schedule-review { width: min(620px, 100%); max-height: calc(100dvh - 2rem); overflow: auto; padding: 1.5rem; border-radius: 20px; background: var(--color-surface-1); }
+  .schedule-list { display: grid; gap: 0.5rem; max-height: 45dvh; overflow-y: auto; margin-block: 1rem; }
+  .schedule-list > div { display: grid; gap: 0.25rem; padding: 0.65rem; border-bottom: 1px solid var(--color-border); font-size: 0.85rem; }
+  .primary { background: var(--color-accent); color: var(--color-on-accent); }
+  @media (max-width: 720px) {
+    .next-workout { align-items: stretch; flex-direction: column; }
+    .builder-actions { bottom: 0; flex-wrap: wrap; padding-bottom: max(0.85rem, env(safe-area-inset-bottom)); }
+    .builder-actions p { flex-basis: 100%; }
+    .builder-actions button { flex: 1; min-height: 48px; }
+    .builder-intro { gap: 0.4rem; } .step-divider { display: none; }
+  }
+
   .programs-page {
     max-width: 1680px;
     width: 100%;
     min-width: 0;
     margin: 0 auto;
-    padding: clamp(0.8rem, 1.6vw, 1.5rem);
+    padding: 0;
   }
 
   .programs-header,
@@ -625,6 +683,7 @@
   }
 
   button {
+    min-height: 44px;
     border: 1px solid var(--color-accent);
     background: var(--color-accent);
     color: var(--color-on-accent);

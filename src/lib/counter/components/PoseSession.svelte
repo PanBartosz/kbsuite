@@ -669,7 +669,7 @@
         </div>
       </div>
 
-      <div class="row">
+      <div class="row session-actions">
         <button class="primary large" on:click={$runState === 'paused' ? resumeSession : startSession} disabled={$runState === 'running'}>
           {$runState === 'running' ? 'Running' : $runState === 'paused' ? 'Resume' : 'Start'}
         </button>
@@ -681,7 +681,9 @@
   {/if}
 
   {#if showStats !== false}
-    <div class="row stats">
+    <details class="diagnostics">
+      <summary>Diagnostics <span>FPS, backend, confidence, and calibration</span></summary>
+      <div class="row stats">
       <div>
         <div class="label">Reps</div>
         <div class="value">{$repCount}</div>
@@ -704,9 +706,9 @@
           <div class="value">{lastActiveHand ?? 'auto'}</div>
         </div>
       {/if}
-    </div>
+      </div>
 
-    <div class="row stats calib">
+      <div class="row stats calib">
       {#if currentExercise.type === 'swing'}
         <div>
           <div class="label">Apex height</div>
@@ -742,7 +744,8 @@
           </div>
         {/if}
       {/if}
-    </div>
+      </div>
+    </details>
   {/if}
 
     {#if cameraError}
@@ -755,10 +758,11 @@
 
 {#if showControls !== false}
   <div class="mobile-bar">
-    <button class="primary" on:click={$runState === 'running' ? pauseSession : startSession}>
-      {$runState === 'running' ? 'Pause' : 'Start'}
+    <button class="primary" on:click={$runState === 'running' ? pauseSession : $runState === 'paused' ? resumeSession : startSession}>
+      {$runState === 'running' ? 'Pause' : $runState === 'paused' ? 'Resume' : 'Start'}
     </button>
-    <button on:click={stopSession}>Stop</button>
+    <button disabled={$runState === 'idle'} on:click={stopSession}>Stop</button>
+    <button class="ghost" on:click={() => resetCount('Counter reset', true)}>Reset</button>
   </div>
 {/if}
 
@@ -779,7 +783,7 @@
 
   .session {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 1.25rem;
     align-items: flex-start;
   }
@@ -846,7 +850,7 @@
   .rep-badge .rep-label {
     font-size: 0.9rem;
     letter-spacing: 0.04em;
-    color: #93c5fd;
+    color: var(--color-text-muted);
   }
   .rep-badge .rep-number {
     font-size: 5rem;
@@ -868,7 +872,7 @@
   .phase-badge .phase-label {
     font-size: 0.85rem;
     letter-spacing: 0.04em;
-    color: #93c5fd;
+    color: var(--color-text-muted);
   }
   .phase-badge .phase-value {
     font-size: 2.4rem;
@@ -877,17 +881,17 @@
   }
   .phase-badge .phase-sub {
     font-size: 0.95rem;
-    color: #cbd5e1;
+    color: var(--color-text-muted);
   }
   .mode-badge {
     position: absolute;
     top: 12px;
     right: 12px;
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
     border-radius: 14px;
     padding: 0.5rem 1rem 0.7rem;
-    min-width: 180px;
+    max-width: 50%;
     text-align: center;
   }
   .mode-badge.lockout {
@@ -910,7 +914,7 @@
     opacity: 0.8;
   }
   .mode-value {
-    font-size: 1.9rem;
+    font-size: clamp(0.9rem, 2vw, 1.25rem);
     font-weight: 900;
     line-height: 1.05;
   }
@@ -961,16 +965,16 @@
   .mode-btn.active {
     border-color: var(--color-accent);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 20%, transparent);
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
   }
   button:disabled {
     opacity: 0.6;
     cursor: not-allowed;
   }
   .primary {
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-    color: var(--color-text-inverse);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
     border: none;
   }
   .ghost {
@@ -986,11 +990,26 @@
     font-weight: 600;
   }
   .feedback {
-    color: #22d3ee;
+    color: var(--color-accent);
   }
   .mobile-bar {
     display: none;
   }
+  .diagnostics {
+    grid-column: 1 / -1;
+    margin-top: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--color-surface-1) 55%, transparent);
+  }
+  .diagnostics summary {
+    cursor: pointer;
+    padding: 0.65rem 0.75rem;
+    color: var(--color-text-primary);
+    font-weight: 700;
+  }
+  .diagnostics summary span { color: var(--color-text-muted); font-size: 0.82rem; font-weight: 400; margin-left: 0.35rem; }
+  .diagnostics .stats { padding: 0.5rem 0.85rem 0.85rem; }
   @media (max-width: 960px) {
     .session {
       grid-template-columns: 1fr;
@@ -1001,11 +1020,17 @@
   }
   @media (max-width: 640px) {
     .video-panel {
-      aspect-ratio: auto;
+      min-height: 205px;
     }
+    .rep-badge { top: 8px; left: 8px; padding: 0.45rem 0.65rem; }
+    .rep-badge .rep-number { font-size: 3rem; }
+    .mode-badge { top: 8px; right: 8px; padding: 0.45rem 0.6rem; }
+    .mode-label { font-size: 0.7rem; }
+    .mode-btn { font-size: 1rem; padding: 0.65rem 0.5rem; min-height: 48px; }
     .controls {
       padding: 0.85rem;
     }
+    .session-actions { display: none; }
   button {
     min-height: 44px;
   }
@@ -1013,15 +1038,17 @@
       position: sticky;
       bottom: 0;
       inset-inline: 0;
-      display: flex;
+      display: grid;
+      grid-template-columns: 1.3fr 1fr 1fr;
       gap: 0.5rem;
-      padding: 0.65rem 0.4rem 0.75rem;
-      background: linear-gradient(180deg, rgba(5, 9, 20, 0.2), #050914);
-      border-top: 1px solid #1f2937;
+      padding: 0.65rem 0 max(0.65rem, env(safe-area-inset-bottom));
+      background: var(--color-surface-2);
+      border-top: 1px solid var(--color-border);
       z-index: 10;
     }
     .ghost {
       border-style: solid;
     }
+    .mobile-bar button { min-width: 0; padding: 0.65rem 0.35rem; font-size: 1rem; min-height: 48px; }
   }
 </style>

@@ -85,6 +85,12 @@
     tabindex="-1"
     use:modal={{ onClose: close }}
     on:click={handleBackdropClick}
+    on:keydown={(event) => {
+      if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault()
+        close()
+      }
+    }}
   >
     <section class="modal" role="document">
       <header class="modal__header">

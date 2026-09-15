@@ -73,6 +73,12 @@
     aria-modal="true"
     tabindex="-1"
     on:click={handleBackdropClick}
+    on:keydown={(event) => {
+      if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault()
+        close()
+      }
+    }}
     use:modal={{ onClose: close }}
   >
     <section class="modal" role="document">

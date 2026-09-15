@@ -128,8 +128,8 @@
 </script>
 
 <div class="workouts-page">
-  <header>
-    <h1>Workouts</h1>
+  <header class="route-heading">
+    <div><p class="eyebrow">Your library</p><h1>Workouts</h1><p class="route-description">Pick a favourite or try a ready-to-use session.</p></div>
   </header>
 
   {#if loading}
@@ -142,16 +142,18 @@
     <div class="toolbar">
       <input
         type="search"
+        aria-label="Search workouts"
         placeholder="Search workouts…"
         bind:value={searchTerm}
         autocomplete="off"
       />
       <div class="segmented" role="group" aria-label="Workout filters">
-        <button class:active={filterMode === 'all'} type="button" on:click={() => (filterMode = 'all')}>
+        <button class:active={filterMode === 'all'} aria-pressed={filterMode === 'all'} type="button" on:click={() => (filterMode = 'all')}>
           All
         </button>
         <button
           class:active={filterMode === 'mine'}
+          aria-pressed={filterMode === 'mine'}
           type="button"
           on:click={() => (filterMode = 'mine')}
         >
@@ -159,6 +161,7 @@
         </button>
         <button
           class:active={filterMode === 'templates'}
+          aria-pressed={filterMode === 'templates'}
           type="button"
           on:click={() => (filterMode = 'templates')}
         >
@@ -169,7 +172,7 @@
     </div>
 
     {#if visibleWorkouts.length === 0}
-      <p class="muted">No matching workouts.</p>
+      <div class="empty-state"><h2>No matching workouts</h2><p>Try another search or show the full library.</p><button class="ghost" on:click={() => { searchTerm = ''; filterMode = 'all' }}>Clear filters</button></div>
     {:else}
     <div class="list">
       {#each visibleWorkouts as workout}
@@ -239,8 +242,8 @@
 
 <style>
   .workouts-page {
-    max-width: 900px;
-    width: min(900px, 100%);
+    max-width: 1120px;
+    width: 100%;
     margin: 0 auto;
     display: flex;
     flex-direction: column;

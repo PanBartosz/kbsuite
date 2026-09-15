@@ -1,8 +1,10 @@
 <script lang="ts">
   import ActionMenu from '$lib/components/ActionMenu.svelte'
+  import HistorySetEditor, { type CompletedSet } from '$lib/stats/HistorySetEditor.svelte'
   import { formatDateTime } from '$lib/format/date'
-  import { onMount, tick } from 'svelte'
+  import { onDestroy, onMount, tick } from 'svelte'
   import YAML from 'yaml'
+  import { createDetailCache } from '$lib/hr/detailCache'
   import { buildTimeline } from '$lib/timer/lib/timeline'
   import { browser } from '$app/environment'
   import { buildWorkoutSummary } from '$lib/stats/workoutSummary'
@@ -12,21 +14,8 @@
   import { pushToast } from '$lib/stores/toasts'
 	  import { getInsightsPrompt, defaultInsightsPrompt } from '$lib/ai/prompts'
 	  import { modal } from '$lib/actions/modal'
-	  import ManualHrIntervals from '$lib/hr/ManualHrIntervals.svelte'
 	  import { normalizeHrSamples } from '$lib/hr/manualIntervals'
-	  import MarkdownNotesModal from '$lib/components/MarkdownNotesModal.svelte'
 	  import { renderMarkdownToHtml } from '$lib/markdown/render'
-
-  type CompletedSet = {
-    phase_index?: number
-    round_label?: string
-    set_label?: string
-    reps?: number | null
-    weight?: number | null
-    duration_s?: number | null
-    type?: string | null
-    rpe?: number | null
-  }
 
   type CompletedWorkout = {
     id: string
@@ -40,6 +29,7 @@
     rpe?: number | null
     tags?: string[]
     sets: CompletedSet[]
+    hr?: { attached: boolean; summary: { avgHr: number | null; maxHr: number | null } | null }
   }
 
   type CompareTotals = {
@@ -76,6 +66,8 @@
   let loading = false
   let error = ''
   let editingId: string | null = null
+  let editSaving = false
+  let editSaveError = ''
   let editSets: CompletedSet[] = []
   let editTitle = ''
   let editStartedAt = ''
@@ -100,6 +92,9 @@
 		  let dateFilter: 'all' | '7' | '30' = 'all'
   let visibleItems: CompletedWorkout[] = []
   let selectedTags: string[] = []
+  let filtersOpen = false
+  $: activeFilterCount = (dateFilter !== 'all' ? 1 : 0) + (filterHasHr ? 1 : 0) + selectedTags.length
+  const clearFilters = () => { searchTerm = ''; dateFilter = 'all'; filterHasHr = false; selectedTags = [] }
   let availableTags: string[] = []
   let templates: { id: string; name: string; description?: string; yaml_source?: string; plan_json?: any }[] = []
   let templateModalOpen = false
@@ -155,10 +150,7 @@
   let hrAttached: Record<string, boolean> = {}
   let hrRemoveTarget: string | null = null
   let hrRemoveSession: CompletedWorkout | null = null
-  const HR_PROBE_CONCURRENCY = 4
-  let hrProbeQueue: string[] = []
-  let hrProbeInFlight = 0
-  let hrProbeToken = 0
+
   let confirmDeleteSession: CompletedWorkout | null = null
   let hrRemoveError = ''
   let hrRemoveStatus = ''
@@ -275,6 +267,7 @@
       const res = await fetch(`/api/completed-workouts/${id}/hr`, { method: 'DELETE' })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? 'Failed to remove')
+      detailCache.invalidate(id)
       const { [id]: _summary, ...restSummary } = hrSummary
       const { [id]: _details, ...restDetails } = hrDetails
       hrSummary = restSummary
@@ -308,6 +301,7 @@
   const toggleExpanded = (id: string, state?: boolean) => {
     const next = { ...expanded, [id]: state ?? !expanded[id] }
     expanded = next
+    if (next[id] && (hrAttached[id] || hrSummary[id])) void loadHrDetails(id)
   }
 
   const toggleNotesExpanded = (id: string, fallbackOpen = false) => {
@@ -370,6 +364,7 @@
       hoverTotals = null
       return
     }
+    if (hrAttached[workout.id] || hrSummary[workout.id]) void loadHrDetails(workout.id)
     hoverAlignX = alignX
     if (anchorEl && calendarShellEl) {
       const shellRect = calendarShellEl.getBoundingClientRect()
@@ -583,21 +578,14 @@
             .filter(Boolean)
         )
       ).slice(0, 30)
-      // probe HR (includes samples for sparklines; concurrency-limited)
-      queueHrProbes(items.map((it) => it.id))
+      hrAttached = Object.fromEntries(items.map(item => [item.id, !!item.hr?.attached]))
+      hrSummary = Object.fromEntries(items.filter(item => item.hr?.summary).map(item => [item.id, item.hr!.summary!]))
     } catch (err) {
       const message = (err as any)?.message ?? 'Failed to load history'
       error = message
     } finally {
       loading = false
     }
-  }
-
-  const queueHrProbes = (ids: string[]) => {
-    hrProbeToken += 1
-    hrProbeQueue = (ids ?? []).filter(Boolean)
-    hrProbeInFlight = 0
-    drainHrProbes(hrProbeToken)
   }
 
   const scrollToWorkoutCard = async (id: string) => {
@@ -609,83 +597,38 @@
     }
   }
 
-  const drainHrProbes = (token: number) => {
-    if (token !== hrProbeToken) return
-    while (hrProbeInFlight < HR_PROBE_CONCURRENCY && hrProbeQueue.length) {
-      const nextId = hrProbeQueue.shift()
-      if (!nextId) continue
-      hrProbeInFlight += 1
-      checkHrStatus(nextId)
-        .catch(() => {})
-        .finally(() => {
-          if (token !== hrProbeToken) return
-          hrProbeInFlight = Math.max(hrProbeInFlight - 1, 0)
-          drainHrProbes(token)
-        })
+  const detailCache = createDetailCache(async (id, signal) => {
+    const response = await fetch(`/api/completed-workouts/${encodeURIComponent(id)}/hr?details=1`, { signal })
+    if (!response.ok) throw new Error('Could not load heart rate')
+    return response.json()
+  }, (id, data) => {
+    hrAttached = { ...hrAttached, [id]: !!data.attached }
+    if (data.summary) {
+      hrSummary = { ...hrSummary, [id]: { avgHr: data.summary.avgHr ?? null, maxHr: data.summary.maxHr ?? null } }
+      hrDetails = { ...hrDetails, [id]: { ...data.summary, samples: data.summary.samples ?? [] } }
     }
-  }
-
-  const checkHrStatus = async (id: string) => {
-    try {
-      const res = await fetch(`/api/completed-workouts/${id}/hr?details=1`)
-      const data = await res.json().catch(() => ({}))
-      hrAttached = { ...hrAttached, [id]: !!data?.attached }
-      if (data?.summary) {
-        hrSummary = {
-          ...hrSummary,
-          [id]: {
-            avgHr: data.summary.avgHr ?? null,
-            maxHr: data.summary.maxHr ?? null
-          }
-        }
-        if (data.summary.samples?.length) {
-          hrDetails = {
-            ...hrDetails,
-            [id]: {
-              avgHr: data.summary.avgHr ?? null,
-              maxHr: data.summary.maxHr ?? null,
-              startTime: data.summary.startTime ?? null,
-              durationSeconds: data.summary.durationSeconds ?? null,
-              samples: data.summary.samples ?? []
-            }
-          }
-        }
+  })
+  const loadHrDetails = async (id: string) => (await detailCache.get(id))?.summary ?? null
+  let cardObserver: IntersectionObserver | null = null
+  const observedCards = new Map<Element, string>()
+  const observeHr = (node: HTMLElement, id: string) => {
+    if (!cardObserver) cardObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue
+        const currentId = observedCards.get(entry.target)
+        if (currentId && (hrAttached[currentId] || hrSummary[currentId])) void loadHrDetails(currentId)
+        cardObserver?.unobserve(entry.target)
       }
-    } catch {
-      hrAttached = { ...hrAttached, [id]: false }
+    }, { rootMargin: '100px' })
+    const observe = (currentId: string) => {
+      observedCards.set(node, currentId)
+      cardObserver!.unobserve(node)
+      cardObserver!.observe(node)
     }
+    observe(id)
+    return { update: observe, destroy() { cardObserver?.unobserve(node); observedCards.delete(node) } }
   }
-
-  const loadHrDetails = async (id: string) => {
-    try {
-      const res = await fetch(`/api/completed-workouts/${id}/hr?details=1`)
-      const data = await res.json().catch(() => ({}))
-      if (data?.summary) {
-        hrSummary = {
-          ...hrSummary,
-          [id]: {
-            avgHr: data.summary.avgHr ?? null,
-            maxHr: data.summary.maxHr ?? null
-          }
-        }
-        hrDetails = {
-          ...hrDetails,
-          [id]: {
-            avgHr: data.summary.avgHr ?? null,
-            maxHr: data.summary.maxHr ?? null,
-            startTime: data.summary.startTime ?? null,
-            durationSeconds: data.summary.durationSeconds ?? null,
-            samples: data.summary.samples ?? []
-          }
-        }
-        hrAttached = { ...hrAttached, [id]: !!data.attached }
-      }
-      return data?.summary ?? null
-    } catch {
-      // ignore
-    }
-    return null
-  }
+  onDestroy(() => { cardObserver?.disconnect(); detailCache.destroy() })
 
   const downsampleHrPreview = (samples: { t: number; hr: number }[], target = 200) => {
     if (!samples.length) return []
@@ -705,7 +648,9 @@
     return result
   }
 
+  let intervalRequest = 0
   const closeIntervalsModal = () => {
+    intervalRequest++
     intervalsModalOpen = false
     intervalsItem = null
     intervalsSamples = []
@@ -715,6 +660,7 @@
 
   const openIntervalsModal = async (item: CompletedWorkout) => {
     if (!browser || !item?.id) return
+    const request = ++intervalRequest
     intervalsModalOpen = true
     intervalsItem = item
     intervalsSamples = []
@@ -723,6 +669,8 @@
     try {
       const res = await fetch(`/api/completed-workouts/${item.id}/hr?details=1&full=1`)
       const data = await res.json().catch(() => ({}))
+      if (request !== intervalRequest) return
+      if (!res.ok) throw new Error('Failed to load HR samples')
       hrAttached = { ...hrAttached, [item.id]: !!data?.attached }
       if (data?.summary) {
         hrSummary = {
@@ -757,6 +705,7 @@
       }
       intervalsStatus = ''
     } catch (err) {
+      if (request !== intervalRequest) return
       console.warn('Failed to load HR interval samples', err)
       intervalsError = 'Failed to load HR samples.'
       intervalsStatus = ''
@@ -1340,7 +1289,9 @@
     }
   }
 
-  const startEdit = (item: CompletedWorkout) => {
+  const startEdit = async (item: CompletedWorkout) => {
+    if (editSaving) return
+    editSaveError = ''
     editingId = item.id
     expanded = { ...expanded, [item.id]: true }
     const ts = item.started_at ?? item.created_at
@@ -1358,9 +1309,15 @@
     editRpe = item.rpe ?? null
     editTags = (item.tags ?? []).map((t) => t.trim()).filter(Boolean)
     newTagInput = ''
+    await tick()
+    if (browser && window.matchMedia('(max-width: 1099px)').matches) {
+      document.getElementById(`cw-${item.id}`)?.querySelector('.set-editor')?.scrollIntoView({ block: 'center' })
+    }
   }
 
 	  const cancelEdit = () => {
+        if (editSaving) return
+        editSaveError = ''
 	    editingId = null
 	    editSets = []
 	    editTitle = ''
@@ -1394,10 +1351,6 @@
     } else {
       selectedTags = [...selectedTags, tag]
     }
-  }
-
-  const updateSet = (index: number, key: 'reps' | 'weight', value: number | null) => {
-    editSets = editSets.map((s, i) => (i === index ? { ...s, [key]: value } : s))
   }
 
   const updateSetField = (index: number, patch: Partial<CompletedSet>) => {
@@ -2305,6 +2258,9 @@
   }
 
   const saveEdit = async (id: string) => {
+    if (editSaving) return
+    editSaving = true
+    editSaveError = ''
     try {
       const res = await fetch(`/api/completed-workouts/${id}`, {
         method: 'PUT',
@@ -2344,9 +2300,12 @@
           : it
       )
       pushToast('Session updated.', 'success')
+      editSaving = false
       cancelEdit()
     } catch (err) {
-      pushToast((err as any)?.message ?? 'Save failed', 'error')
+      editSaveError = err instanceof Error ? err.message : 'Save failed'
+    } finally {
+      editSaving = false
     }
   }
 
@@ -2406,7 +2365,9 @@
     confirmDeleteId = null
   }
 
+  let sharePreviewRequest = 0
   const closeShareModal = () => {
+    sharePreviewRequest++
     shareItem = null
     sharePreviewUrl = ''
   }
@@ -2421,6 +2382,10 @@
 
   const refreshSharePreview = async () => {
     if (!browser || !shareItem) return
+    const request = ++sharePreviewRequest
+    const item = shareItem
+    if (shareShowHrBlock && (hrAttached[item.id] || hrSummary[item.id])) await loadHrDetails(item.id)
+    if (request !== sharePreviewRequest || shareItem?.id !== item.id) return
     // Build rows exactly as the renderer uses (filtered/merged)
     const filtered = (shareItem.sets ?? []).filter((s) => (s.type ?? '').toLowerCase() !== 'prep')
     const merged = mergeRests(filtered)
@@ -2453,7 +2418,7 @@
       highlights: shareHighlightEnabled ? shareHighlights : new Set(),
       previewEl: img
     })
-    sharePreviewUrl = img.src
+    if (request === sharePreviewRequest && shareItem?.id === item.id) sharePreviewUrl = img.src
   }
 
   $: shareHighlightsKey = JSON.stringify([...shareHighlights])
@@ -2515,9 +2480,9 @@
 {/snippet}
 
 
-<div class="history-page">
-  <header class="history-heading">
-    <h1>History</h1>
+<div class="history-page" class:editing={editingId !== null}>
+  <header class="history-heading route-heading">
+    <div><p class="eyebrow">Training log</p><h1>History</h1><p class="route-description">Every session, and the progress behind it.</p></div>
     <div class="history-tools">
       <button class="primary" on:click={createEmptyCompletedWorkout} disabled={loading}>Log workout</button>
       <ActionMenu label="Tools" context="History">
@@ -2535,53 +2500,42 @@
   {:else if error}
     <p class="error">{error}</p>
   {:else if items.length === 0}
-    <p>No completed workouts yet.</p>
+    <div class="empty-state"><i class="ri-history-line" aria-hidden="true"></i><h2>Your history starts here</h2><p>Finish a workout or log a session you have already completed.</p><button class="primary" on:click={() => templateModalOpen = true}>Log from template</button></div>
   {:else}
-    <div class="toolbar">
-      <div class="filters">
-        <input
-          type="search"
-          placeholder="Search title, notes, labels…"
-          aria-label="Search history"
-          bind:value={searchTerm}
-        />
-        <select bind:value={dateFilter} aria-label="Date range">
-          <option value="all">All time</option>
-          <option value="7">Past 7 days</option>
-          <option value="30">Past 30 days</option>
-        </select>
-        <select bind:value={sortBy} class="compact" aria-label="Sort sessions">
-          <option value="dateDesc">Newest first</option>
-          <option value="dateAsc">Oldest first</option>
-          <option value="durationDesc">Longest duration</option>
-          <option value="durationAsc">Shortest duration</option>
-          <option value="hrDesc">Highest avg HR</option>
-          <option value="rpeDesc">Highest RPE</option>
-        </select>
-        <label class="inline-filter">
-          <input type="checkbox" bind:checked={filterHasHr} />
-          Has HR
+    <div class="history-filter-bar">
+      <div class="filter-search-row">
+        <label class="search-field"><i class="ri-search-line" aria-hidden="true"></i>
+          <input type="search" placeholder="Search your sessions" aria-label="Search history" bind:value={searchTerm} />
         </label>
+        <button class="ghost filter-toggle" type="button" aria-expanded={filtersOpen} aria-controls="history-filters" on:click={() => filtersOpen = !filtersOpen}>
+          <i class="ri-equalizer-line" aria-hidden="true"></i> Filters{activeFilterCount ? ` (${activeFilterCount})` : ''}
+        </button>
+        <div class="view-toggle" aria-label="History view">
+          <button class:active={viewMode === 'list'} aria-pressed={viewMode === 'list'} on:click={() => (viewMode = 'list')}>List</button>
+          <button class:active={viewMode === 'calendar'} aria-pressed={viewMode === 'calendar'} on:click={() => (viewMode = 'calendar')}>Calendar</button>
+        </div>
+      </div>
+      <div id="history-filters" class="filter-options" class:open={filtersOpen}>
+        <label>Date range
+          <select bind:value={dateFilter} aria-label="Date range"><option value="all">All time</option><option value="7">Past 7 days</option><option value="30">Past 30 days</option></select>
+        </label>
+        <label>Sort by
+          <select bind:value={sortBy} aria-label="Sort sessions">
+            <option value="dateDesc">Newest first</option><option value="dateAsc">Oldest first</option>
+            <option value="durationDesc">Longest duration</option><option value="durationAsc">Shortest duration</option>
+            <option value="hrDesc">Highest avg HR</option><option value="rpeDesc">Highest RPE</option>
+          </select>
+        </label>
+        <label class="inline-filter"><input type="checkbox" bind:checked={filterHasHr} /> Has heart rate</label>
         {#if availableTags.length}
-          <div class="tag-filter">
-            {#each availableTags as tag}
-              <button
-                class:selected={selectedTags.includes(tag)}
-                class="tag-chip"
-                type="button"
-                on:click={() => toggleFilterTag(tag)}
-              >
-                {tag}
-              </button>
-            {/each}
+          <div class="tag-filter" aria-label="Filter by tag">
+            {#each availableTags as tag}<button class:selected={selectedTags.includes(tag)} class="tag-chip" type="button" aria-pressed={selectedTags.includes(tag)} on:click={() => toggleFilterTag(tag)}>{tag}</button>{/each}
           </div>
         {/if}
-        <div class="view-toggle">
-          <button class:active={viewMode === 'list'} on:click={() => (viewMode = 'list')}>List</button>
-          <button class:active={viewMode === 'calendar'} on:click={() => (viewMode = 'calendar')}>
-            Calendar
-          </button>
-        </div>
+      </div>
+      <div class="filter-result">
+        <span>{visibleItems.length} of {items.length} sessions</span>
+        {#if activeFilterCount || searchTerm}<button class="ghost small" type="button" on:click={clearFilters}>Clear filters</button>{/if}
       </div>
     </div>
 
@@ -2594,7 +2548,7 @@
             <button class="ghost" on:click={() => shiftWeek(1)}>→</button>
           </div>
           <p class="muted small">
-            Showing {selectedDayItems.length} session{selectedDayItems.length === 1 ? '' : 's'} this week (filters applied).
+            Showing {mobileWeekDays.reduce((total, day) => total + (dailyBuckets[day.key]?.length ?? 0), 0)} sessions this week (filters applied).
           </p>
         </div>
         <div class="week-list mobile-only">
@@ -2864,7 +2818,7 @@
               {@const totals = computeTotals(item)}
               {@const isExpanded = editingId === item.id || expanded[item.id]}
               {@const summary = buildWorkoutSummary(item.sets)}
-              <article class="card" id={`cw-${item.id}`}>
+              <article class="card" use:observeHr={item.id} id={`cw-${item.id}`} inert={editingId === item.id && editSaving} aria-busy={editingId === item.id && editSaving}>
                 <div class="card-header two-col">
                   <div class="header-left">
                     {#if editingId === item.id}
@@ -3023,7 +2977,9 @@
                   {/if}
                 {/if}
                 {#if editingId === item.id}
-                  <div class="meta-edit">
+                  <details class="session-edit-details">
+                    <summary>Session details <span class="muted small">Date, duration, notes and tags</span></summary>
+                    <div class="meta-edit">
                     <label>
                       <span class="muted small">Started at</span>
                       <input type="datetime-local" bind:value={editStartedAt} />
@@ -3098,6 +3054,7 @@
                       </div>
                     </label>
                   </div>
+                  </details>
 	                {:else}
 	                  {#if item.notes}
 	                    {@const noteOpen = notesExpanded[item.id] ?? isExpanded}
@@ -3126,156 +3083,11 @@
 	                {/if}
                 {#if editingId === item.id}
                   <div class="sets">
-                    <div class="set-grid-labels desktop-only">
-                      <span></span>
-                      <span></span>
-                      <span>Duration (sec)</span>
-                      <span>Reps</span>
-                      <span>Weight</span>
-                      <span>RPE</span>
-                      <span>Actions</span>
-                    </div>
                     {#each editSets as set, idx}
-                      {@const isRest = set.type && set.type !== 'work'}
-                      <div class="set-row edit-row" class:rest-row={isRest}>
-                        <div class="row-main" class:rest-row={isRest}>
-                          {#if isRest}
-                            <span class="desktop-only"></span>
-                            <span class="desktop-only"></span>
-                            <div class="field">
-                              <span class="mobile-label">Rest (sec)</span>
-                              <input
-                                class="duration-input narrow"
-                                type="number"
-                                min="0"
-                                step="1"
-                                inputmode="numeric"
-                                enterkeyhint="done"
-                                placeholder="sec"
-                                value={set.duration_s ?? ''}
-                                on:input={(e) => {
-                                  const val = e.currentTarget.value.trim()
-                                  updateSetField(idx, { duration_s: val === '' ? null : Number(val) })
-                                }}
-                              />
-                            </div>
-                            <span class="desktop-only"></span>
-                            <span class="desktop-only"></span>
-                            <span class="desktop-only"></span>
-                          {:else}
-                            <div class="field">
-                              <span class="mobile-label">Round</span>
-                              <input
-                                class="round-input"
-                                placeholder="Round"
-                                value={set.round_label ?? ''}
-                                on:input={(e) => updateSetField(idx, { round_label: e.currentTarget.value })}
-                              />
-                            </div>
-                            <div class="field">
-                              <span class="mobile-label">Label</span>
-                              <input
-                                class="label-input"
-                                placeholder="Set label"
-                                value={set.set_label ?? ''}
-                                on:input={(e) => updateSetField(idx, { set_label: e.currentTarget.value })}
-                              />
-                            </div>
-                            <div class="field">
-                              <span class="mobile-label">Duration (sec)</span>
-                              <input
-                                class="duration-input narrow"
-                                type="number"
-                                min="0"
-                                step="1"
-                                inputmode="numeric"
-                                enterkeyhint="next"
-                                placeholder="sec"
-                                value={set.duration_s ?? ''}
-                                on:input={(e) => {
-                                  const val = e.currentTarget.value.trim()
-                                  updateSetField(idx, { duration_s: val === '' ? null : Number(val) })
-                                }}
-                              />
-                            </div>
-                            <div class="field">
-                              <span class="mobile-label">Reps</span>
-                              <input
-                                class="narrow"
-                                type="number"
-                                min="0"
-                                step="1"
-                                inputmode="numeric"
-                                enterkeyhint="next"
-                                value={set.reps ?? ''}
-                                on:input={(e) => {
-                                  const val = e.currentTarget.value.trim()
-                                  updateSet(idx, 'reps', val === '' ? null : Number(val))
-                                }}
-                              />
-                            </div>
-                            <div class="field">
-                              <span class="mobile-label">Weight</span>
-                              <input
-                                class="narrow"
-                                type="number"
-                                min="0"
-                                step="0.5"
-                                inputmode="decimal"
-                                enterkeyhint="next"
-                                value={set.weight ?? ''}
-                                on:input={(e) => {
-                                  const val = e.currentTarget.value.trim()
-                                  updateSet(idx, 'weight', val === '' ? null : Number(val))
-                                }}
-                                placeholder="Weight"
-                              />
-                            </div>
-                            <div class="field">
-                              <span class="mobile-label">RPE</span>
-                              <input
-                                class="narrow"
-                                type="number"
-                                min="1"
-                                max="10"
-                                step="1"
-                                inputmode="numeric"
-                                enterkeyhint="done"
-                                value={set.rpe ?? ''}
-                                placeholder="RPE"
-                                on:input={(e) => {
-                                  const val = e.currentTarget.value.trim()
-                                  updateSetField(idx, { rpe: val === '' ? null : Number(val) })
-                                }}
-                              />
-                            </div>
-                          {/if}
-                          <div class="inline-actions">
-                            <select
-                              value={set.type ?? 'work'}
-                              on:change={(e) => updateSetField(idx, { type: e.currentTarget.value })}
-                            >
-                              <option value="work">Work</option>
-                              <option value="rest">Rest</option>
-                              <option value="transition">Transition</option>
-                            </select>
-                            <div class="mini-buttons">
-                              <button class="ghost small icon-btn" aria-label="Copy row" on:click={() => copySet(idx)}>
-                                <i class="ri-file-copy-line"></i>
-                              </button>
-                              <button class="ghost small icon-btn" aria-label="Move up" on:click={() => moveSet(idx, -1)} disabled={idx === 0}>
-                                <i class="ri-arrow-up-line"></i>
-                              </button>
-                              <button class="ghost small icon-btn" aria-label="Move down" on:click={() => moveSet(idx, 1)} disabled={idx === editSets.length - 1}>
-                                <i class="ri-arrow-down-line"></i>
-                              </button>
-                              <button class="ghost small danger icon-btn" aria-label="Delete row" on:click={() => requestDeleteSet(idx)}>
-                                <i class="ri-delete-bin-6-line"></i>
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      <HistorySetEditor {set} index={idx} last={idx === editSets.length - 1}
+                        on:change={(event) => updateSetField(idx, event.detail)}
+                        on:copy={() => copySet(idx)} on:move={(event) => moveSet(idx, event.detail)}
+                        on:remove={() => requestDeleteSet(idx)} />
                     {/each}
                     <div class="add-row">
                       <button class="ghost" on:click={() => addSet('work')}>Add work set</button>
@@ -3284,8 +3096,6 @@
                     </div>
                   </div>
                   <div class="actions">
-                    <button class="primary" on:click={() => saveEdit(item.id)}>Save</button>
-                    <button class="ghost" on:click={cancelEdit}>Cancel</button>
                     <button
                       class="ghost"
                       on:click={() => {
@@ -3355,14 +3165,14 @@
         {/if}
       </div>
     {:else if visibleItems.length === 0}
-      <p class="muted">No matching workouts.</p>
+      <div class="empty-state"><h2>No matching sessions</h2><p>Try a different search or clear your filters.</p><button class="ghost" on:click={clearFilters}>Clear filters</button></div>
     {:else}
       <div class="list">
         {#each visibleItems as item}
         {@const totals = computeTotals(item)}
         {@const isExpanded = editingId === item.id || expanded[item.id]}
         {@const summary = buildWorkoutSummary(item.sets)}
-        <article class="card" id={`cw-${item.id}`}>
+        <article class="card" use:observeHr={item.id} id={`cw-${item.id}`} inert={editingId === item.id && editSaving} aria-busy={editingId === item.id && editSaving}>
           <div class="card-header two-col">
             <div class="header-left">
               {#if editingId === item.id}
@@ -3521,7 +3331,9 @@
             {/if}
           {/if}
           {#if editingId === item.id}
-            <div class="meta-edit">
+            <details class="session-edit-details">
+                    <summary>Session details <span class="muted small">Date, duration, notes and tags</span></summary>
+                    <div class="meta-edit">
               <label>
                 <span class="muted small">Started at</span>
                 <input type="datetime-local" bind:value={editStartedAt} />
@@ -3596,6 +3408,7 @@
                 </div>
               </label>
             </div>
+                  </details>
 		          {:else}
 		            {#if item.notes}
 		              {@const noteOpen = notesExpanded[item.id] ?? isExpanded}
@@ -3624,157 +3437,12 @@
 		          {/if}
           {#if editingId === item.id}
             <div class="sets">
-              <div class="set-grid-labels desktop-only">
-                <span></span>
-                <span></span>
-                <span>Duration (sec)</span>
-                <span>Reps</span>
-                <span>Weight</span>
-                <span>RPE</span>
-                <span>Actions</span>
-              </div>
-              {#each editSets as set, idx}
-                {@const isRest = set.type && set.type !== 'work'}
-                <div class="set-row edit-row" class:rest-row={isRest}>
-                  <div class="row-main" class:rest-row={isRest}>
-                    {#if isRest}
-                      <span class="desktop-only"></span>
-                      <span class="desktop-only"></span>
-                      <div class="field">
-                        <span class="mobile-label">Rest (sec)</span>
-                        <input
-                          class="duration-input narrow"
-                          type="number"
-                          min="0"
-                          step="1"
-                          inputmode="numeric"
-                          enterkeyhint="done"
-                          placeholder="sec"
-                          value={set.duration_s ?? ''}
-                          on:input={(e) => {
-                            const val = e.currentTarget.value.trim()
-                            updateSetField(idx, { duration_s: val === '' ? null : Number(val) })
-                          }}
-                        />
-                      </div>
-                      <span class="desktop-only"></span>
-                      <span class="desktop-only"></span>
-                      <span class="desktop-only"></span>
-                    {:else}
-                      <div class="field">
-                        <span class="mobile-label">Round</span>
-                        <input
-                          class="round-input"
-                          placeholder="Round"
-                          value={set.round_label ?? ''}
-                          on:input={(e) => updateSetField(idx, { round_label: e.currentTarget.value })}
-                        />
-                      </div>
-                      <div class="field">
-                        <span class="mobile-label">Label</span>
-                        <input
-                          class="label-input"
-                          placeholder="Set label"
-                          value={set.set_label ?? ''}
-                          on:input={(e) => updateSetField(idx, { set_label: e.currentTarget.value })}
-                        />
-                      </div>
-                      <div class="field">
-                        <span class="mobile-label">Duration (sec)</span>
-                        <input
-                          class="duration-input narrow"
-                          type="number"
-                          min="0"
-                          step="1"
-                          inputmode="numeric"
-                          enterkeyhint="next"
-                          placeholder="sec"
-                          value={set.duration_s ?? ''}
-                          on:input={(e) => {
-                            const val = e.currentTarget.value.trim()
-                            updateSetField(idx, { duration_s: val === '' ? null : Number(val) })
-                          }}
-                        />
-                      </div>
-                      <div class="field">
-                        <span class="mobile-label">Reps</span>
-                        <input
-                          class="narrow"
-                          type="number"
-                          min="0"
-                          step="1"
-                          inputmode="numeric"
-                          enterkeyhint="next"
-                          value={set.reps ?? ''}
-                          on:input={(e) => {
-                            const val = e.currentTarget.value.trim()
-                            updateSet(idx, 'reps', val === '' ? null : Number(val))
-                          }}
-                        />
-                      </div>
-                      <div class="field">
-                        <span class="mobile-label">Weight</span>
-                        <input
-                          class="narrow"
-                          type="number"
-                          min="0"
-                          step="0.5"
-                          inputmode="decimal"
-                          enterkeyhint="next"
-                          value={set.weight ?? ''}
-                          on:input={(e) => {
-                            const val = e.currentTarget.value.trim()
-                            updateSet(idx, 'weight', val === '' ? null : Number(val))
-                          }}
-                          placeholder="Weight"
-                        />
-                      </div>
-                      <div class="field">
-                        <span class="mobile-label">RPE</span>
-                        <input
-                          class="narrow"
-                          type="number"
-                          min="1"
-                          max="10"
-                          step="1"
-                          inputmode="numeric"
-                          enterkeyhint="done"
-                          value={set.rpe ?? ''}
-                          placeholder="RPE"
-                          on:input={(e) => {
-                            const val = e.currentTarget.value.trim()
-                            updateSetField(idx, { rpe: val === '' ? null : Number(val) })
-                          }}
-                        />
-                      </div>
-                    {/if}
-                    <div class="inline-actions">
-                      <select
-                        value={set.type ?? 'work'}
-                        on:change={(e) => updateSetField(idx, { type: e.currentTarget.value })}
-                      >
-                        <option value="work">Work</option>
-                        <option value="rest">Rest</option>
-                        <option value="transition">Transition</option>
-                      </select>
-                      <div class="mini-buttons">
-                        <button class="ghost small icon-btn" aria-label="Copy row" on:click={() => copySet(idx)}>
-                          <i class="ri-file-copy-line"></i>
-                        </button>
-                        <button class="ghost small icon-btn" aria-label="Move up" on:click={() => moveSet(idx, -1)} disabled={idx === 0}>
-                          <i class="ri-arrow-up-line"></i>
-                        </button>
-                        <button class="ghost small icon-btn" aria-label="Move down" on:click={() => moveSet(idx, 1)} disabled={idx === editSets.length - 1}>
-                          <i class="ri-arrow-down-line"></i>
-                        </button>
-                        <button class="ghost small danger icon-btn" aria-label="Delete row" on:click={() => requestDeleteSet(idx)}>
-                          <i class="ri-delete-bin-6-line"></i>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              {/each}
+                    {#each editSets as set, idx}
+                      <HistorySetEditor {set} index={idx} last={idx === editSets.length - 1}
+                        on:change={(event) => updateSetField(idx, event.detail)}
+                        on:copy={() => copySet(idx)} on:move={(event) => moveSet(idx, event.detail)}
+                        on:remove={() => requestDeleteSet(idx)} />
+                    {/each}
               <div class="add-row">
                 <button class="ghost" on:click={() => addSet('work')}>Add work set</button>
                 <button class="ghost" on:click={() => addSet('rest')}>Add rest</button>
@@ -3782,8 +3450,6 @@
               </div>
             </div>
             <div class="actions">
-              <button class="primary" on:click={() => saveEdit(item.id)}>Save</button>
-              <button class="ghost" on:click={cancelEdit}>Cancel</button>
               <button
                 class="ghost"
                 on:click={() => {
@@ -4732,7 +4398,11 @@
 
       {#if intervalsSamples.length}
         {#key intervalsItem.id}
-          <ManualHrIntervals samples={intervalsSamples} completedWorkoutId={intervalsItem.id} />
+          {#await import('$lib/hr/ManualHrIntervals.svelte') then module}
+            <svelte:component this={module.default} samples={intervalsSamples} completedWorkoutId={intervalsItem.id} />
+          {:catch}
+            <p class="error small">The interval editor could not be loaded. Close and try again.</p>
+          {/await}
         {/key}
       {/if}
     </div>
@@ -4775,20 +4445,26 @@
     </div>
 	  {/if}
 
-	  <MarkdownNotesModal
-	    open={notesModalOpen}
-	    title={notesModalTitle}
-	    subtitle={notesModalSubtitle}
-	    value={notesModalValue}
-	    statsMarkdown={notesModalStatsMarkdown}
-	    saving={notesModalSaving}
-	    saveStatus={notesModalSaveStatus}
-	    saveError={notesModalSaveError}
-	    saveDisabled={!notesModalWorkoutId || notesModalValue === notesModalLastSavedValue}
-	    on:close={closeNotesModal}
-	    on:valueChange={(e) => handleNotesValueChange(e.detail)}
-	    on:save={(e) => saveNotes(e.detail)}
-	  />
+	  {#if notesModalOpen}
+	    {#await import('$lib/components/MarkdownNotesModal.svelte') then module}
+	      <svelte:component this={module.default}
+	        open={notesModalOpen}
+	        title={notesModalTitle}
+	        subtitle={notesModalSubtitle}
+	        value={notesModalValue}
+	        statsMarkdown={notesModalStatsMarkdown}
+	        saving={notesModalSaving}
+	        saveStatus={notesModalSaveStatus}
+	        saveError={notesModalSaveError}
+	        saveDisabled={!notesModalWorkoutId || notesModalValue === notesModalLastSavedValue}
+	        on:close={closeNotesModal}
+	        on:valueChange={(e) => handleNotesValueChange(e.detail)}
+	        on:save={(e) => saveNotes(e.detail)}
+	      />
+	    {:catch}
+	      <div class="confirm-modal" use:modal={{ onClose: closeNotesModal }}><p role="alert">The notes editor could not be loaded.</p><button on:click={closeNotesModal}>Close</button></div>
+	    {/await}
+	  {/if}
 	  <input
 	    type="file"
 	    accept=".fit,.tcx"
@@ -4801,20 +4477,24 @@
         return
       }
       const form = new FormData()
+      const targetId = uploadTargetId
+      uploadTargetId = null
+      e.currentTarget.value = ''
       form.append('file', file)
-      fetch(`/api/completed-workouts/${uploadTargetId}/hr`, {
+      uploadStatus = { ...uploadStatus, [targetId]: 'Uploading…' }
+      fetch(`/api/completed-workouts/${targetId}/hr`, {
         method: 'POST',
         body: form
       })
         .then((res) => res.json())
         .then((data) => {
-          uploadStatus = { ...uploadStatus, [uploadTargetId!]: data?.ok ? 'Uploaded' : 'Failed' }
+          uploadStatus = { ...uploadStatus, [targetId]: data?.ok ? 'Uploaded' : 'Failed' }
           if (data?.ok) {
-            hrAttached = { ...hrAttached, [uploadTargetId!]: true }
+            hrAttached = { ...hrAttached, [targetId]: true }
             if (data.summary?.avgHr || data.summary?.maxHr) {
               hrSummary = {
                 ...hrSummary,
-                [uploadTargetId!]: {
+                [targetId]: {
                   avgHr: data.summary.avgHr ?? null,
                   maxHr: data.summary.maxHr ?? null
                 }
@@ -4823,7 +4503,7 @@
             if (data.summary?.samples) {
               hrDetails = {
                 ...hrDetails,
-                [uploadTargetId!]: {
+                [targetId]: {
                   avgHr: data.summary.avgHr ?? null,
                   maxHr: data.summary.maxHr ?? null,
                   samples: data.summary.samples ?? []
@@ -4832,7 +4512,7 @@
             }
             if (data.summary?.durationSeconds) {
               items = items.map((it) =>
-                it.id === uploadTargetId
+                it.id === targetId
                   ? {
                       ...it,
                       duration_s: data.summary.durationSeconds,
@@ -4845,27 +4525,73 @@
                   : it
               )
             }
-            checkHrStatus(uploadTargetId!)
+            detailCache.invalidate(targetId)
+            void loadHrDetails(targetId)
           }
           setTimeout(() => {
-            uploadStatus = { ...uploadStatus, [uploadTargetId!]: '' }
+            uploadStatus = { ...uploadStatus, [targetId]: '' }
           }, 2000)
         })
         .catch(() => {
-          uploadStatus = { ...uploadStatus, [uploadTargetId!]: 'Failed' }
-          setTimeout(() => {
-            uploadStatus = { ...uploadStatus, [uploadTargetId!]: '' }
-          }, 2000)
-        })
-        .finally(() => {
-          uploadTargetId = null
-          if (fileInputEl) fileInputEl.value = ''
+          uploadStatus = { ...uploadStatus, [targetId]: 'Upload failed. Please try again.' }
         })
     }}
   />
+  {#if editingId}
+    <div class="edit-save-bar" role="region" aria-label="Save session changes">
+      {#if editSaveError}<p class="edit-save-error" role="alert">{editSaveError} Your changes are still here.</p>{/if}
+      <div class="edit-save-actions">
+        <span class="edit-save-label">Editing <strong>{editTitle || 'Workout'}</strong></span>
+        <button class="ghost" type="button" disabled={editSaving} on:click={cancelEdit}>Cancel</button>
+        <button class="primary" type="button" disabled={editSaving} on:click={() => editingId && saveEdit(editingId)}>
+          {editSaving ? 'Saving…' : editSaveError ? 'Retry save' : 'Save changes'}
+        </button>
+      </div>
+    </div>
+  {/if}
+
 </div>
 
 <style>
+  .history-filter-bar { display: grid; gap: 0.85rem; }
+  .filter-search-row { display: flex; align-items: center; gap: 0.65rem; }
+  .search-field { display: flex; align-items: center; flex: 1; gap: 0.65rem; border: 1px solid var(--color-border); background: var(--color-surface-1); border-radius: 12px; padding-left: 0.9rem; min-width: 0; }
+  .search-field input { border: 0; background: transparent; width: 100%; min-width: 0; min-height: 48px; }
+  .search-field i { color: var(--color-text-muted); }
+  .filter-options { display: flex; flex-wrap: wrap; align-items: end; gap: 0.75rem; }
+  .filter-options > label:not(.inline-filter) { display: grid; gap: 0.3rem; font-size: 0.8rem; color: var(--color-text-muted); }
+  .filter-options select { min-height: 44px; width: 100%; }
+  .filter-options .inline-filter { min-height: 44px; }
+  .filter-result { display: flex; gap: 1rem; align-items: center; justify-content: space-between; font-size: 0.85rem; color: var(--color-text-muted); min-height: 36px; }
+  .filter-toggle { display: none; min-height: 48px; white-space: nowrap; }
+  .history-filter-bar .view-toggle button.active { color: var(--color-on-accent); background: var(--color-accent); }
+  @media (max-width: 720px) {
+    .filter-search-row { flex-wrap: wrap; }
+    .filter-search-row .search-field { flex-basis: calc(100% - 120px); }
+    .filter-toggle { display: inline-flex; align-items: center; gap: 0.4rem; }
+    .filter-options { display: none; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0.85rem; background: var(--color-surface-1); border-radius: 14px; border: 1px solid var(--color-border); }
+    .filter-options.open { display: grid; }
+    .filter-options .tag-filter { grid-column: 1 / -1; }
+    .filter-options > label { min-width: 0; }
+    .filter-search-row .view-toggle { margin-left: auto; }
+  }
+
+  .history-page.editing { padding-bottom: 8rem; }
+  .edit-save-bar { position: fixed; z-index: 90; bottom: max(0.75rem, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: min(720px, calc(100% - 1.5rem)); padding: 0.75rem; background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 14px; box-shadow: 0 4px 24px rgba(0,0,0,0.25); }
+  .edit-save-actions { display: flex; gap: 0.5rem; align-items: center; }
+  .edit-save-actions button { min-height: 48px; flex-shrink: 0; }
+  .edit-save-label { flex: 1; min-width: 0; font-size: 0.85rem; color: var(--color-text-muted); }
+  .edit-save-label strong { display: block; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .edit-save-error { margin: 0 0 0.65rem; font-size: 0.9rem; color: var(--color-danger); }
+  .session-edit-details > summary { cursor: pointer; min-height: 44px; align-content: center; font-weight: 600; }
+  .session-edit-details > summary span { display: block; font-weight: 400; }
+  .session-edit-details .meta-edit { margin-top: 0.75rem; }
+  @media (max-width: 720px) {
+    .edit-save-bar { bottom: 0; width: 100%; border-radius: 0; padding: 0.65rem 0.85rem max(0.65rem, env(safe-area-inset-bottom)); }
+    .edit-save-label { display: none; }
+    .edit-save-actions .primary { flex: 1; }
+  }
+
   .history-page {
     display: flex;
     flex-direction: column;
@@ -5569,34 +5295,6 @@
 	    accent-color: var(--color-accent);
 	    transform: translateY(1px);
 	  }
-	  .toolbar {
-	    display: flex;
-	    flex-wrap: wrap;
-	    gap: 0.75rem;
-    align-items: center;
-    margin-bottom: 0.25rem;
-  }
-  .filters {
-    width: 100%;
-    min-width: 0;
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  .filters input,
-  .filters select {
-    min-height: 44px;
-    min-width: 0;
-    border: 1px solid var(--color-border);
-    border-radius: 10px;
-    padding: 0.4rem 0.6rem;
-    background: var(--color-surface-1);
-    color: var(--color-text-primary);
-  }
-  .filters select.compact {
-    min-width: 150px;
-  }
   .inline-filter {
     display: inline-flex;
     align-items: center;
@@ -5649,19 +5347,6 @@
     padding: 0.4rem 0.55rem;
     background: var(--color-surface-1);
     color: var(--color-text-primary);
-  }
-  .set-grid-labels {
-    display: none;
-  }
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-  }
-  .mobile-label {
-    display: none;
-    font-size: 0.82rem;
-    color: var(--color-text-muted);
   }
   .template-modal {
     position: fixed;
@@ -5719,43 +5404,6 @@
     grid-template-columns: 1fr;
     background: color-mix(in srgb, var(--color-surface-2) 50%, transparent);
   }
-  .edit-row {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.6rem;
-  }
-  .row-main {
-    display: grid;
-    grid-template-columns: 1fr 1.25fr 0.55fr 0.55fr 0.55fr 0.55fr 1fr;
-    gap: 0.35rem;
-    align-items: center;
-  }
-  .row-main.rest-row {
-    grid-template-columns: 1fr 1.25fr 0.55fr 0.55fr 0.55fr 0.55fr 1fr;
-  }
-  .inline-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    justify-content: flex-end;
-    grid-column: 7 / 8;
-  }
-  .edit-row.rest-row {
-    opacity: 0.85;
-    grid-template-columns: 1fr;
-    background: color-mix(in srgb, var(--color-surface-2) 50%, transparent);
-  }
-  .set-row input {
-    width: 100%;
-    border: 1px solid var(--color-border);
-    border-radius: 10px;
-    padding: 0.4rem 0.55rem;
-    background: var(--color-surface-1);
-    color: var(--color-text-primary);
-  }
-  .set-row input.narrow {
-    max-width: 120px;
-  }
   .rest-label {
     grid-column: 1 / -1;
   }
@@ -5793,44 +5441,6 @@
   @media (max-width: 720px) {
     .meta-edit {
       grid-template-columns: 1fr;
-    }
-    .row-main {
-      grid-template-columns: 1fr;
-      gap: 0.4rem;
-    }
-    .inline-actions {
-      grid-column: 1 / -1;
-      justify-content: flex-start;
-    }
-    .set-row input,
-    .set-row input.narrow {
-      max-width: 100%;
-    }
-    .mobile-label {
-      display: block;
-    }
-    .row-main {
-      align-items: stretch;
-    }
-  }
-
-  @media (min-width: 721px) {
-    .set-grid-labels {
-      display: grid;
-      grid-template-columns: 1fr 1.2fr 0.6fr 0.45fr 0.45fr 0.45fr 1fr;
-      gap: 0.35rem;
-      align-items: center;
-      margin-bottom: 0.15rem;
-      color: var(--color-text-muted);
-      font-size: 0.85rem;
-      padding: 0 0.15rem;
-    }
-    .row-main,
-    .row-main.rest-row {
-      grid-template-columns: 1fr 1.2fr 0.6fr 0.45fr 0.45fr 0.45fr 1fr;
-    }
-    .inline-actions {
-      grid-column: 7 / 8;
     }
   }
 
@@ -6199,11 +5809,6 @@
   .mini-buttons button {
     padding: 0.35rem 0.55rem;
   }
-  .icon-btn i {
-    font-size: 1rem;
-    line-height: 1;
-    display: inline-block;
-  }
   .modal-backdrop {
     position: fixed;
     inset: 0;
@@ -6386,14 +5991,10 @@
     .actions {
       justify-content: flex-start;
     }
-    .row-main {
-      grid-template-columns: 1fr;
-    }
   }
   .history-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
   .history-tools { display: flex; gap: 0.5rem; align-items: center; }
   .history-tools > button, .view-toggle button { min-height: 44px; }
-  .filters input[type='search'] { flex: 1 1 220px; width: 100%; }
   .inline-filter { min-height: 44px; }
   .inline-filter input { min-height: 0; }
   .card h3 { margin: 0; }
@@ -6401,8 +6002,5 @@
     .history-heading { align-items: flex-start; }
     .history-tools { width: 100%; }
     .history-tools > button { flex: 1; }
-    .filters { gap: 0.6rem; }
-    .filters input[type='search'] { flex-basis: 100%; }
-    .filters select { flex: 1; max-width: 100%; }
   }
 </style>

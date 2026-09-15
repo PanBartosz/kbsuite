@@ -7,7 +7,8 @@ const dir = await mkdtemp(join(tmpdir(), 'kb-suite-tests-'))
 try {
   const outfile = join(dir, 'tests.mjs')
   await build({
-    entryPoints: ['tests/counter.test.ts'], bundle: true, platform: 'node', format: 'esm', outfile,
+    entryPoints: ['tests/index.ts'], bundle: true, platform: 'node', format: 'esm', outfile,
+    banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
     plugins: [{ name: 'worker-stub', setup(build) {
       build.onResolve({ filter: /\?worker$/ }, () => ({ path: 'worker', namespace: 'test' }))
       build.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export default class Worker {}' }))

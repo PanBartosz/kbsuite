@@ -132,3 +132,24 @@ and counting accuracy validated, compare original and refined builds on that pho
 Full offline page reload/background OS execution were not expanded in this refinement;
 existing browser/platform limitations still apply. Model and WASM downloads continue
 using the existing external providers.
+
+## Page-level performance pass (2026-09-16)
+
+The History route now receives cached heart-rate metadata in the list response and
+loads sample arrays only for cards entering the viewport. With 200 synthetic sessions,
+4× CPU slowdown, and a 390 × 844 viewport, it initially loads two graphs / 7,758 decoded
+bytes, then one more / 3,879 bytes after searching. The list response includes metadata
+and contributes another 56,191 bytes. The historical baseline made 145 graph requests /
+562,455 bytes during the combined observation window.
+
+Planner's Add flow now keeps the advanced editor unmounted until opened, reducing
+decoded JavaScript through Add from about 3.06 MB in the reviewed pass to 0.32 MB.
+The earlier JavaScript report included interaction downloads; it was not an initial-load
+measurement. Fonts now use one 49 KB variable WOFF2 instead of four TTFs totalling 277 KB.
+
+Run `node scripts/profile-pages.mjs` to measure initial and interaction phases separately.
+APIs are mocked; timings are single observations and do not measure real server latency,
+camera inference, phone battery or thermals. See [interface-refinement.md](interface-refinement.md)
+for the scope and regression coverage (40 standard browser checks, a real detector smoke
+test with simulated camera, and 18 unit tests passed). Samsung A35 sustained-use and
+real-motion recognition checks remain manual; no USB connection is available.
