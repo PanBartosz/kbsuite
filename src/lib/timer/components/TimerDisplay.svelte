@@ -162,6 +162,7 @@
 
   .timer-display__total {
     color: var(--color-text-primary);
+    font-variant-numeric: tabular-nums;
   }
 
   .timer-display__current {
@@ -169,6 +170,7 @@
     flex-direction: column;
     align-items: center;
     text-align: center;
+    min-width: 0;
   gap: 0.6rem;
   padding: 2rem;
   border-radius: 20px;
@@ -192,6 +194,7 @@
     margin: 0;
     font-size: clamp(3.2rem, 12vw, 4rem);
     font-weight: 700;
+    font-variant-numeric: tabular-nums;
     letter-spacing: 0.04em;
     color: var(--color-phase-foreground);
   }
@@ -217,7 +220,7 @@
     align-items: stretch;
   }
   .timer-display__body.with-inline {
-    grid-template-columns: 3fr 2fr; /* ~60/40 split */
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); /* ~60/40 split */
     align-items: stretch;
   }
   .inline-slot {

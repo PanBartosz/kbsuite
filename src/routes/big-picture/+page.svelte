@@ -66,6 +66,8 @@
 <style>
   .big-shell {
     padding: 0.5rem;
+    width: 100%;
+    min-width: 0;
     max-width: 1200px;
     margin: 0 auto;
   }
